@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="CRM_ComputerRepair.api/CRM_ComputerRepair.api.csproj" />
+  <Project Path="CRM_ComputerRepair.domain/CRM_ComputerRepair.domain.csproj" />
+  <Project Path="CRM_ComputerRepair.infrastructure/CRM_ComputerRepair.infrastructure.csproj" />
+  <Project Path="CRM_ComputerRepair/CRM.winforms.csproj" />
+</Solution>
