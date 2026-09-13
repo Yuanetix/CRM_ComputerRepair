@@ -18,6 +18,11 @@ public class TenantCrmDbContext : DbContext
     public DbSet<RepairStatusHistory> RepairStatusHistories => Set<RepairStatusHistory>();
     public DbSet<Payment> Payments => Set<Payment>();
 
+    // Lab 5 additions
+    public DbSet<Supplier> Suppliers => Set<Supplier>();
+    public DbSet<Part> Parts => Set<Part>();
+    public DbSet<RepairPart> RepairParts => Set<RepairPart>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -87,9 +92,59 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.ReferenceNumber).HasMaxLength(100);
         });
 
+        // ═══════════ Supplier (Lab 5) ═══════════
+        builder.Entity<Supplier>(entity =>
+        {
+            entity.HasKey(x => x.SupplierId);
+            entity.Property(x => x.SupplierCode).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.SupplierName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.ContactPerson).HasMaxLength(100);
+            entity.Property(x => x.ContactNumber).HasMaxLength(50);
+            entity.Property(x => x.EmailAddress).HasMaxLength(200);
+            entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => x.SupplierCode).IsUnique();
+        });
+
+        // ═══════════ Part (Lab 5) ═══════════
+        builder.Entity<Part>(entity =>
+        {
+            entity.HasKey(x => x.PartId);
+            entity.Property(x => x.PartCode).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.PartName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Category).HasMaxLength(100);
+            entity.Property(x => x.Manufacturer).HasMaxLength(100);
+            entity.Property(x => x.Model).HasMaxLength(100);
+            entity.Property(x => x.UnitCost).HasPrecision(18, 2);
+            entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            entity.HasIndex(x => x.PartCode).IsUnique();
+
+            entity.HasOne(x => x.Supplier)
+                .WithMany(s => s.Parts)
+                .HasForeignKey(x => x.SupplierId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ═══════════ RepairPart (Lab 5) ═══════════
+        builder.Entity<RepairPart>(entity =>
+        {
+            entity.HasKey(x => x.RepairPartId);
+            entity.Property(x => x.UnitCostAtTime).HasPrecision(18, 2);
+            entity.Property(x => x.UnitPriceAtTime).HasPrecision(18, 2);
+
+            entity.HasOne(x => x.RepairRequest)
+                .WithMany(r => r.RepairParts)
+                .HasForeignKey(x => x.RepairRequestId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(x => x.Part)
+                .WithMany(p => p.RepairParts)
+                .HasForeignKey(x => x.PartId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // ═══════════════════════════════════════════════════════════
         // MASTER-ONLY ENTITIES — should NOT exist in the tenant DB.
-        // Ignore them so EF doesn't map them transitively.
         // ═══════════════════════════════════════════════════════════
         builder.Ignore<Company>();
         builder.Ignore<CompanyDatabase>();

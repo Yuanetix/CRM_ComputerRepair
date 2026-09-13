@@ -19,7 +19,14 @@ builder.Services.AddDbContext<TenantCrmDbContext>(options =>
 builder.Services.AddScoped<ITenantDatabaseResolver, TenantDatabaseResolver>();
 builder.Services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
 
-builder.Services.AddControllers();
+// ── Controllers + JSON cycle handling ──
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.ReferenceHandler =
+            System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+    });
+
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
@@ -48,9 +55,7 @@ app.MapPost("/companies", async (Company company, MasterCrmDbContext db) =>
 
 app.MapGet("/companies", async (MasterCrmDbContext db) =>
 {
-    var companies = await db.Companies
-        .Include(c => c.Devices)
-        .ToListAsync();
+    var companies = await db.Companies.Include(c => c.Devices).ToListAsync();
     return Results.Ok(companies);
 });
 
@@ -71,9 +76,7 @@ app.MapPost("/devices", async (Device device, MasterCrmDbContext db) =>
 
 app.MapGet("/devices", async (MasterCrmDbContext db) =>
 {
-    var devices = await db.Devices
-        .Include(d => d.Company)
-        .ToListAsync();
+    var devices = await db.Devices.Include(d => d.Company).ToListAsync();
     return Results.Ok(devices);
 });
 
@@ -85,7 +88,6 @@ app.MapGet("/devices/{id:int}", async (int id, MasterCrmDbContext db) =>
     return device is null ? Results.NotFound() : Results.Ok(device);
 });
 
-// ── Company Databases (tenant registry) ──
 app.MapPost("/company-databases", async (CompanyDatabase companyDatabase, MasterCrmDbContext db) =>
 {
     db.CompanyDatabases.Add(companyDatabase);
@@ -97,14 +99,12 @@ app.MapPost("/company-databases", async (CompanyDatabase companyDatabase, Master
 
 app.MapGet("/company-databases", async (MasterCrmDbContext db) =>
 {
-    var dbs = await db.CompanyDatabases
-        .AsNoTracking()
-        .ToListAsync();
+    var dbs = await db.CompanyDatabases.AsNoTracking().ToListAsync();
     return Results.Ok(dbs);
 });
 
 // ═══════════════════════════════════════════════════════════
-// TENANT DB ENDPOINTS (factory-based, per company)
+// TENANT DB ENDPOINTS
 // ═══════════════════════════════════════════════════════════
 
 app.MapGet("/test-tenant/{companyId:int}", async (
@@ -112,16 +112,60 @@ app.MapGet("/test-tenant/{companyId:int}", async (
     ITenantDbContextFactory tenantFactory) =>
 {
     await using var tenantDb = await tenantFactory.CreateAsync(companyId);
-
     var repairCount = await tenantDb.RepairRequests.CountAsync();
-
-    return Results.Ok(new
-    {
-        companyId,
-        repairCount
-    });
+    return Results.Ok(new { companyId, repairCount });
 });
 
+// ── Customers ──
+app.MapPost("/tenant/{companyId:int}/customers", async (
+    int companyId,
+    Customer customer,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    tenantDb.Customers.Add(customer);
+    await tenantDb.SaveChangesAsync();
+    return Results.Created(
+        $"/tenant/{companyId}/customers/{customer.CustomerId}",
+        new
+        {
+            customer.CustomerId,
+            customer.FirstName,
+            customer.LastName,
+            customer.Email,
+            customer.Phone,
+            customer.Address,
+            customer.LoyaltyPoints,
+            customer.IsActive,
+            customer.CreatedAt
+        });
+});
+
+app.MapGet("/tenant/{companyId:int}/customers", async (
+    int companyId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    var customers = await tenantDb.Customers
+        .AsNoTracking()
+        .OrderBy(x => x.CustomerId)
+        .Select(x => new
+        {
+            x.CustomerId,
+            x.FirstName,
+            x.LastName,
+            x.Email,
+            x.Phone,
+            x.Address,
+            x.LoyaltyPoints,
+            x.IsActive,
+            x.CreatedAt
+        })
+        .ToListAsync();
+    return Results.Ok(customers);
+});
+
+// ── Repair Requests ──
 app.MapPost("/tenant/{companyId:int}/repair-requests", async (
     int companyId,
     RepairRequest repairRequest,
@@ -129,7 +173,6 @@ app.MapPost("/tenant/{companyId:int}/repair-requests", async (
 {
     await using var tenantDb = await tenantFactory.CreateAsync(companyId);
 
-    // Auto-generate RequestNumber if not supplied
     if (string.IsNullOrWhiteSpace(repairRequest.RequestNumber))
     {
         repairRequest.RequestNumber =
@@ -141,7 +184,27 @@ app.MapPost("/tenant/{companyId:int}/repair-requests", async (
 
     return Results.Created(
         $"/tenant/{companyId}/repair-requests/{repairRequest.RepairRequestId}",
-        repairRequest);
+        new
+        {
+            repairRequest.RepairRequestId,
+            repairRequest.RequestNumber,
+            repairRequest.CustomerId,
+            repairRequest.DeviceId,
+            repairRequest.DeviceModel,
+            repairRequest.SerialNumber,
+            repairRequest.IssueDescription,
+            repairRequest.Status,
+            repairRequest.Priority,
+            repairRequest.RequestDate,
+            repairRequest.CompletionDate,
+            repairRequest.EstimatedCost,
+            repairRequest.ActualCost,
+            repairRequest.PartsCost,
+            repairRequest.LaborCost,
+            repairRequest.TechnicianNotes,
+            repairRequest.AssignedToStaffId,
+            repairRequest.AssignedToManagerId
+        });
 });
 
 app.MapGet("/tenant/{companyId:int}/repair-requests", async (
@@ -149,13 +212,213 @@ app.MapGet("/tenant/{companyId:int}/repair-requests", async (
     ITenantDbContextFactory tenantFactory) =>
 {
     await using var tenantDb = await tenantFactory.CreateAsync(companyId);
-
     var repairRequests = await tenantDb.RepairRequests
         .AsNoTracking()
         .OrderBy(x => x.RepairRequestId)
+        .Select(x => new
+        {
+            x.RepairRequestId,
+            x.RequestNumber,
+            x.CustomerId,
+            x.DeviceId,
+            x.DeviceModel,
+            x.SerialNumber,
+            x.IssueDescription,
+            x.Status,
+            x.Priority,
+            x.RequestDate,
+            x.CompletionDate,
+            x.EstimatedCost,
+            x.ActualCost,
+            x.PartsCost,
+            x.LaborCost,
+            x.TechnicianNotes,
+            x.AssignedToStaffId,
+            x.AssignedToManagerId
+        })
         .ToListAsync();
-
     return Results.Ok(repairRequests);
+});
+
+// ── Suppliers ──
+app.MapPost("/tenant/{companyId:int}/suppliers", async (
+    int companyId,
+    Supplier supplier,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    tenantDb.Suppliers.Add(supplier);
+    await tenantDb.SaveChangesAsync();
+    return Results.Created(
+        $"/tenant/{companyId}/suppliers/{supplier.SupplierId}",
+        new
+        {
+            supplier.SupplierId,
+            supplier.SupplierCode,
+            supplier.SupplierName,
+            supplier.ContactPerson,
+            supplier.ContactNumber,
+            supplier.EmailAddress,
+            supplier.Address,
+            supplier.Notes,
+            supplier.IsActive,
+            supplier.CreatedAt
+        });
+});
+
+app.MapGet("/tenant/{companyId:int}/suppliers", async (
+    int companyId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    var suppliers = await tenantDb.Suppliers
+        .AsNoTracking()
+        .OrderBy(x => x.SupplierId)
+        .Select(x => new
+        {
+            x.SupplierId,
+            x.SupplierCode,
+            x.SupplierName,
+            x.ContactPerson,
+            x.ContactNumber,
+            x.EmailAddress,
+            x.Address,
+            x.Notes,
+            x.IsActive,
+            x.CreatedAt
+        })
+        .ToListAsync();
+    return Results.Ok(suppliers);
+});
+
+// ── Parts ──
+app.MapPost("/tenant/{companyId:int}/parts", async (
+    int companyId,
+    Part part,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    tenantDb.Parts.Add(part);
+    await tenantDb.SaveChangesAsync();
+    return Results.Created(
+        $"/tenant/{companyId}/parts/{part.PartId}",
+        new
+        {
+            part.PartId,
+            part.PartCode,
+            part.PartName,
+            part.Category,
+            part.Manufacturer,
+            part.Model,
+            part.UnitCost,
+            part.UnitPrice,
+            part.QuantityOnHand,
+            part.ReorderLevel,
+            part.SupplierId,
+            part.IsActive,
+            part.CreatedAt,
+            part.UpdatedAt
+        });
+});
+
+app.MapGet("/tenant/{companyId:int}/parts", async (
+    int companyId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    var parts = await tenantDb.Parts
+        .AsNoTracking()
+        .OrderBy(x => x.PartId)
+        .Select(x => new
+        {
+            x.PartId,
+            x.PartCode,
+            x.PartName,
+            x.Category,
+            x.Manufacturer,
+            x.Model,
+            x.UnitCost,
+            x.UnitPrice,
+            x.QuantityOnHand,
+            x.ReorderLevel,
+            x.SupplierId,
+            x.IsActive,
+            x.CreatedAt,
+            x.UpdatedAt
+        })
+        .ToListAsync();
+    return Results.Ok(parts);
+});
+
+// ── Repair Parts (parts used in a repair) ──
+app.MapPost("/tenant/{companyId:int}/repair-requests/{repairRequestId:int}/parts", async (
+    int companyId,
+    int repairRequestId,
+    RepairPart repairPart,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var repair = await tenantDb.RepairRequests
+        .FirstOrDefaultAsync(r => r.RepairRequestId == repairRequestId);
+
+    if (repair is null)
+        return Results.NotFound($"RepairRequest {repairRequestId} not found.");
+
+    repairPart.RepairRequestId = repairRequestId;
+
+    var part = await tenantDb.Parts
+        .FirstOrDefaultAsync(p => p.PartId == repairPart.PartId);
+
+    if (part is null)
+        return Results.NotFound($"Part {repairPart.PartId} not found.");
+
+    repairPart.UnitCostAtTime = part.UnitCost;
+    repairPart.UnitPriceAtTime = part.UnitPrice;
+
+    tenantDb.RepairParts.Add(repairPart);
+
+    part.QuantityOnHand -= repairPart.QuantityUsed;
+    part.UpdatedAt = DateTime.UtcNow;
+
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Created(
+        $"/tenant/{companyId}/repair-requests/{repairRequestId}/parts/{repairPart.RepairPartId}",
+        new
+        {
+            repairPart.RepairPartId,
+            repairPart.RepairRequestId,
+            repairPart.PartId,
+            repairPart.QuantityUsed,
+            repairPart.UnitCostAtTime,
+            repairPart.UnitPriceAtTime,
+            repairPart.UsedAt
+        });
+});
+
+app.MapGet("/tenant/{companyId:int}/repair-requests/{repairRequestId:int}/parts", async (
+    int companyId,
+    int repairRequestId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    var repairParts = await tenantDb.RepairParts
+        .AsNoTracking()
+        .Where(rp => rp.RepairRequestId == repairRequestId)
+        .OrderBy(rp => rp.RepairPartId)
+        .Select(rp => new
+        {
+            rp.RepairPartId,
+            rp.RepairRequestId,
+            rp.PartId,
+            rp.QuantityUsed,
+            rp.UnitCostAtTime,
+            rp.UnitPriceAtTime,
+            rp.UsedAt
+        })
+        .ToListAsync();
+    return Results.Ok(repairParts);
 });
 
 app.Run();

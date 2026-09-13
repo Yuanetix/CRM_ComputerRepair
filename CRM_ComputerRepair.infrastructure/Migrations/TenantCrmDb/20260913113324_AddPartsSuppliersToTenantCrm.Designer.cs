@@ -4,6 +4,7 @@ using CRM_ComputerRepair.infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
 {
     [DbContext(typeof(TenantCrmDbContext))]
-    partial class TenantCrmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913113324_AddPartsSuppliersToTenantCrm")]
+    partial class AddPartsSuppliersToTenantCrm
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

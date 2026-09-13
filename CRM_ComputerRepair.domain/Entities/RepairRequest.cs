@@ -43,4 +43,5 @@ public class RepairRequest
     public Customer? Customer { get; set; }
     public Device? Device { get; set; }
     public ICollection<CustomerInteraction> CustomerInteractions { get; set; } = new List<CustomerInteraction>();
+    public ICollection<RepairPart> RepairParts { get; set; } = new List<RepairPart>();
 }
