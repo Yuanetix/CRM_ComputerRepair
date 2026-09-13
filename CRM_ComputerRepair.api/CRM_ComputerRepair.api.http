@@ -1,6 +1,33 @@
-@CRM_ComputerRepair.api_HostAddress = http://localhost:5213
+@CRM_ComputerRepair.api_HostAddress = https://localhost:7042
 
-GET {{CRM_ComputerRepair.api_HostAddress}}/weatherforecast/
+### ── 1. Get all companies ──
+GET {{CRM_ComputerRepair.api_HostAddress}}/companies
 Accept: application/json
 
-###
+### ── 2. Get all company databases ──
+GET {{CRM_ComputerRepair.api_HostAddress}}/company-databases
+Accept: application/json
+
+### ── 3. Test tenant connection for Company 1 ──
+GET {{CRM_ComputerRepair.api_HostAddress}}/test-tenant/1
+Accept: application/json
+
+### ── 4. Create a repair request in Company 1's tenant DB ──
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "deviceId": 1,
+  "deviceModel": "Dell XPS 13",
+  "serialNumber": "SN-TEST-001",
+  "issueDescription": "Laptop won't turn on",
+  "status": 0,
+  "priority": 1,
+  "requestDate": "2026-09-13T10:00:00",
+  "estimatedCost": 2500.00
+}
+
+### ── 5. Get all repair requests for Company 1 ──
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests
+Accept: application/json

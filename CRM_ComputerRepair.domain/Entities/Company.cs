@@ -8,6 +8,9 @@ public class Company
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    // Navigation property to Devices
+    // Navigation properties
     public ICollection<Device> Devices { get; set; } = new List<Device>();
+    public ICollection<Subscription> Subscriptions { get; set; } = new List<Subscription>();
+    public ICollection<LoyaltyProgram> LoyaltyPrograms { get; set; } = new List<LoyaltyProgram>();
+    public ICollection<CompanyDatabase> CompanyDatabases { get; set; } = new List<CompanyDatabase>();
 }
