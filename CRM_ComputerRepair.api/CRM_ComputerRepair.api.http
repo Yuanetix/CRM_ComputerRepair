@@ -1,119 +1,103 @@
 @CRM_ComputerRepair.api_HostAddress = https://localhost:7042
 
 ### ═══════════════════════════════════════════════════════════
+### MASTER DB
+### ═══════════════════════════════════════════════════════════
+
 ### 1. Get companies
 GET {{CRM_ComputerRepair.api_HostAddress}}/companies
 Accept: application/json
 
-### ═══════════════════════════════════════════════════════════
 ### 2. Get company databases
 GET {{CRM_ComputerRepair.api_HostAddress}}/company-databases
 Accept: application/json
 
 ### ═══════════════════════════════════════════════════════════
-### 3. Test tenant connection
+### COMPANY 1 (TenantA) — existing data
+### ═══════════════════════════════════════════════════════════
+
+### 3. Test tenant 1 connection
 GET {{CRM_ComputerRepair.api_HostAddress}}/test-tenant/1
 Accept: application/json
 
-### ═══════════════════════════════════════════════════════════
-### 4. Create Customer (run FIRST)
-POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/customers
-Content-Type: application/json
-
-{
-  "firstName": "Juan",
-  "lastName": "Dela Cruz",
-  "email": "juan@example.com",
-  "phone": "09171234567",
-  "address": "Davao City",
-  "isActive": true,
-  "createdAt": "2026-09-13T09:00:00"
-}
-
-### ═══════════════════════════════════════════════════════════
-### 5. Get customers (verify CustomerId = 1 exists)
+### 4. Get customers for Company 1 (should show Juan Dela Cruz)
 GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/customers
 Accept: application/json
 
-### ═══════════════════════════════════════════════════════════
-### 6. Create Supplier (run SECOND)
-POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/suppliers
-Content-Type: application/json
-
-{
-  "supplierCode": "SUP001",
-  "supplierName": "Davao Tech Supply",
-  "contactPerson": "Carlos Reyes",
-  "contactNumber": "09175551234",
-  "emailAddress": "sales@davaotechsupply.com",
-  "address": "Davao City",
-  "notes": "Payment terms: 30 days",
-  "isActive": true,
-  "createdAt": "2026-09-13T09:00:00"
-}
-
-### ═══════════════════════════════════════════════════════════
-### 7. Get suppliers (verify SupplierId = 1 exists)
+### 5. Get suppliers for Company 1 (should show Davao Tech Supply)
 GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/suppliers
 Accept: application/json
 
-### ═══════════════════════════════════════════════════════════
-### 8. Create Part (run THIRD — uses SupplierId = 1)
-POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/parts
-Content-Type: application/json
-
-{
-  "partCode": "SCR-LP-001",
-  "partName": "Laptop Screen 15.6 inch",
-  "category": "Screen",
-  "manufacturer": "Dell",
-  "model": "Inspiron 15",
-  "unitCost": 3000.00,
-  "unitPrice": 4500.00,
-  "quantityOnHand": 10,
-  "reorderLevel": 2,
-  "supplierId": 1,
-  "isActive": true,
-  "createdAt": "2026-09-13T09:15:00"
-}
-
-### ═══════════════════════════════════════════════════════════
-### 9. Get parts (verify PartId = 1 exists)
+### 6. Get parts for Company 1
 GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/parts
 Accept: application/json
 
-### ═══════════════════════════════════════════════════════════
-### 10. Create Repair Request (run FOURTH — uses CustomerId = 1)
-POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests
-Content-Type: application/json
-
-{
-  "customerId": 1,
-  "deviceModel": "Dell Inspiron 15",
-  "serialNumber": "SN-TEST-001",
-  "issueDescription": "Screen is cracked, needs replacement",
-  "status": 0,
-  "priority": 1,
-  "requestDate": "2026-09-13T10:00:00",
-  "estimatedCost": 5000.00
-}
-
-### ═══════════════════════════════════════════════════════════
-### 11. Get repair requests
+### 7. Get repair requests for Company 1
 GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests
 Accept: application/json
 
 ### ═══════════════════════════════════════════════════════════
-### 12. Add Part to Repair (run LAST)
-POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests/1/parts
+### COMPANY 3 (TenantB) — new tenant
+### ═══════════════════════════════════════════════════════════
+
+### 8. Test tenant 3 connection
+GET {{CRM_ComputerRepair.api_HostAddress}}/test-tenant/3
+Accept: application/json
+
+### 9. Create Customer for Company 3
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/3/customers
 Content-Type: application/json
 
 {
-  "partId": 1,
-  "quantityUsed": 1
+  "firstName": "Maria",
+  "lastName": "Santos",
+  "email": "maria@example.com",
+  "phone": "09181234567",
+  "address": "Cebu City",
+  "isActive": true,
+  "createdAt": "2026-09-13T12:00:00"
 }
 
+### 10. Get customers for Company 3 (should ONLY show Maria Santos)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/3/customers
+Accept: application/json
+
+### 11. Create Supplier for Company 3
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/3/suppliers
+Content-Type: application/json
+
+{
+  "supplierCode": "SUP001",
+  "supplierName": "Cebu Office Supply",
+  "contactPerson": "Ana Lim",
+  "contactNumber": "09186667777",
+  "emailAddress": "sales@cebuofficesupply.com",
+  "address": "Cebu City",
+  "notes": "COD",
+  "isActive": true,
+  "createdAt": "2026-09-13T12:05:00"
+}
+
+### 12. Get suppliers for Company 3 (should ONLY show Cebu Office Supply)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/3/suppliers
+Accept: application/json
+
 ### ═══════════════════════════════════════════════════════════
-### 13. Get repair parts
-GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests/1/parts
+### ISOLATION TEST — Compare Company 1 vs Company 3
+### ═══════════════════════════════════════════════════════════
+
+### 13. Company 1 customers (should NOT include Maria Santos)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/customers
+Accept: application/json
+
+### 14. Company 3 customers (should ONLY include Maria Santos)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/3/customers
+Accept: application/json
+
+### 15. Company 1 suppliers (should show only Davao Tech Supply)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/suppliers
+Accept: application/json
+
+### 16. Company 3 suppliers (should show only Cebu Office Supply)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/3/suppliers
 Accept: application/json
