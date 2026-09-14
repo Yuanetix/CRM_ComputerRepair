@@ -1,4 +1,4 @@
-namespace CRM_ComputerRepair
+namespace CRM.winforms
 {
     internal static class Program
     {
@@ -8,10 +8,10 @@ namespace CRM_ComputerRepair
         [STAThread]
         static void Main()
         {
-            // To customize application configuration such as set high DPI settings or default font,
-            // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
-            Application.Run(new Form1());
+
+            // Launch the main shell with sidebar
+            Application.Run(new MainForm());
         }
     }
 }
