@@ -1,160 +1,115 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
 using System.Windows.Forms;
 
 namespace CRM.winforms
 {
+    [DesignerCategory("Code")]
     public partial class MainForm : Form
     {
-        private List<SidebarItem> _menuItems;
-        private string _activeKey = "customers";
-        private readonly Dictionary<string, Button> _sidebarButtons = new();
+        private ProfileMenuControl? _profileMenu;
+        private BellMenuControl? _bellMenu;
 
         public MainForm()
         {
             InitializeComponent();
 
-            _menuItems = SidebarItem.GetMenu();
+            sidebar.MenuSelected += Sidebar_MenuSelected;
+            sidebar.LogoutClicked += Sidebar_LogoutClicked;
+
+            topBar.ProfileClicked += TopBar_ProfileClicked;
+            topBar.BellClicked += TopBar_BellClicked;
 
             this.Load += MainForm_Load;
         }
 
         // ═══════════ LOAD ═══════════
 
-        private void MainForm_Load(object sender, EventArgs e)
+        private void MainForm_Load(object? sender, EventArgs e)
         {
-            BuildSidebar();
-            UpdateUserInfo();
+            topBar.SetUser(UserSession.FullName, UserSession.Role);
 
-            // Open default screen
-            NavigateTo("customers");
-        }
+            sidebar.UserName = UserSession.FullName;
+            sidebar.UserRole = UserSession.Role;
 
-        // ═══════════ USER INFO ═══════════
-
-        private void UpdateUserInfo()
-        {
-            lblUserName.Text = $"👤  {UserSession.FullName}  ({UserSession.Role})";
-
-            // Re-center the label horizontally to the right of the top bar
-            lblUserName.Location = new Point(
-                pnlTopBar.Width - lblUserName.Width - 30,
-                22);
-        }
-
-        // ═══════════ SIDEBAR ═══════════
-
-        private void BuildSidebar()
-        {
-            // Remove existing dynamic controls (but keep lblSidebarBrand and btnLogout)
-            var toRemove = new List<Control>();
-            foreach (Control c in pnlSidebar.Controls)
-            {
-                if (c != lblSidebarBrand && c != btnLogout)
-                    toRemove.Add(c);
-            }
-            foreach (var c in toRemove)
-                pnlSidebar.Controls.Remove(c);
-
-            _sidebarButtons.Clear();
-
-            int y = 70;
-
-            foreach (var item in _menuItems)
-            {
-                var btn = CreateSidebarButton(item);
-
-                btn.Location = new Point(12, y);
-                btn.Size = new Size(pnlSidebar.Width - 24, 44);
-                btn.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-
-                pnlSidebar.Controls.Add(btn);
-                _sidebarButtons[item.Key] = btn;
-
-                y += 48;
-            }
-
-            // Logout button at bottom
-            btnLogout.Location = new Point(12, pnlSidebar.Height - 60);
-            btnLogout.Size = new Size(pnlSidebar.Width - 24, 44);
-            btnLogout.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        }
-
-        private Button CreateSidebarButton(SidebarItem item)
-        {
-            var btn = new Button
-            {
-                Text = $"   {item.Icon}    {item.Title}",
-                Font = FixoryTheme.FontSidebar,
-                ForeColor = FixoryTheme.SidebarText,
-                BackColor = Color.Transparent,
-                FlatStyle = FlatStyle.Flat,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(12, 0, 0, 0),
-                Cursor = Cursors.Hand,
-                Tag = item.Key,
-                UseVisualStyleBackColor = false
-            };
-
-            btn.FlatAppearance.BorderSize = 0;
-            btn.FlatAppearance.MouseOverBackColor = FixoryTheme.SidebarHover;
-            btn.FlatAppearance.MouseDownBackColor = Color.FromArgb(30, 41, 59);
-
-            btn.Click += (s, e) => NavigateTo(item.Key);
-
-            return btn;
+            NavigateTo("dashboard");
         }
 
         // ═══════════ NAVIGATION ═══════════
 
+        private void Sidebar_MenuSelected(object? sender, string key)
+        {
+            HideAllMenus();
+            NavigateTo(key);
+        }
+
         private void NavigateTo(string key)
         {
-            _activeKey = key;
+            sidebar.ActiveKey = key;
 
-            // Highlight active button (HCI: recognition of current state)
-            foreach (var kv in _sidebarButtons)
-            {
-                var isActive = kv.Key == key;
-                kv.Value.BackColor = isActive
-                    ? FixoryTheme.SidebarActive
-                    : Color.Transparent;
-                kv.Value.ForeColor = isActive
-                    ? Color.White
-                    : FixoryTheme.SidebarText;
-            }
-
-            // Swap content
             pnlContent.Controls.Clear();
 
-            if (key == "customers")
+            UserControl page = key switch
             {
-                var control = new CustomerControl
-                {
-                    Dock = DockStyle.Fill
-                };
-                pnlContent.Controls.Add(control);
+                // Staff
+                "customers" => new CustomerControl { Dock = DockStyle.Fill },
+                "follow-ups" => new FollowUpListControl { Dock = DockStyle.Fill },
+                "interactions" => new InteractionListControl(InteractionTypeFilter.Inquiry) { Dock = DockStyle.Fill },
 
-                SetStatus("Customer Data Collection loaded.");
-            }
-            else
+                // Manager / Staff
+                "repairs" => new RepairRequestListControl { Dock = DockStyle.Fill },
+
+                // Everything else → placeholder
+                _ => new PlaceholderControl(GetPageTitle(key)) { Dock = DockStyle.Fill }
+            };
+
+            pnlContent.Controls.Add(page);
+            SetStatus($"{GetPageTitle(key)} loaded.");
+        }
+
+        private static string GetPageTitle(string key)
+        {
+            return key switch
             {
-                var item = _menuItems.Find(m => m.Key == key);
-                var title = item?.Title ?? "Coming Soon";
+                // Common
+                "dashboard" => "Dashboard",
 
-                var control = new PlaceholderControl(title)
-                {
-                    Dock = DockStyle.Fill
-                };
-                pnlContent.Controls.Add(control);
+                // Staff
+                "customers" => "Customers",
+                "follow-ups" => "Follow-Ups",
+                "interactions" => "Interactions",
+                "repairs" => "Repair Requests",
+                "customer-history" => "Customer History",
 
-                SetStatus($"{title} — coming soon.");
-            }
+                // Manager
+                "staff-activity" => "Staff Activity",
+
+                // Admin / Manager / Super Admin
+                "reports" => "Reports",
+                "loyalty" => "Loyalty Programs",
+                "terms" => "Terms & Conditions",
+
+                // Admin / Super Admin
+                "user-accounts" => "User Accounts",
+
+                // Super Admin only
+                "admin-accounts" => "Admin Accounts",
+                "subscriptions" => "Subscriptions",
+                "system-monitor" => "System Monitor",
+
+                _ => "Fixory"
+            };
         }
 
         // ═══════════ LOGOUT ═══════════
 
-        private void btnLogout_Click(object sender, EventArgs e)
+        private void Sidebar_LogoutClicked(object? sender, EventArgs e)
+        {
+            ConfirmLogout();
+        }
+
+        private void ConfirmLogout()
         {
             var result = MessageBox.Show(
                 "Log out of Fixory?",
@@ -163,8 +118,142 @@ namespace CRM.winforms
                 MessageBoxIcon.Question);
 
             if (result == DialogResult.Yes)
-            {
                 Application.Exit();
+        }
+
+        // ═══════════ PROFILE MENU ═══════════
+
+        private void TopBar_ProfileClicked(object? sender, EventArgs e)
+        {
+            if (_profileMenu != null && _profileMenu.Visible)
+            {
+                HideProfileMenu();
+                return;
+            }
+
+            ShowProfileMenu();
+        }
+
+        private void ShowProfileMenu()
+        {
+            HideAllMenus();
+
+            _profileMenu = new ProfileMenuControl();
+
+            int menuW = 200;
+            int x = topBar.Width - menuW - 20;
+            int y = topBar.Bottom + 8;
+
+            _profileMenu.Location = new Point(x, y);
+            _profileMenu.Size = new Size(menuW, _profileMenu.DesiredHeight);
+
+            _profileMenu.ItemClicked += ProfileMenu_ItemClicked;
+
+            this.Controls.Add(_profileMenu);
+            _profileMenu.BringToFront();
+
+            this.MouseDown += Form_ClickOutsideToCloseMenus;
+        }
+
+        private void HideProfileMenu()
+        {
+            if (_profileMenu != null)
+            {
+                this.Controls.Remove(_profileMenu);
+                _profileMenu.Dispose();
+                _profileMenu = null;
+            }
+            this.MouseDown -= Form_ClickOutsideToCloseMenus;
+        }
+
+        // ═══════════ BELL MENU ═══════════
+
+        private void TopBar_BellClicked(object? sender, EventArgs e)
+        {
+            if (_bellMenu != null && _bellMenu.Visible)
+            {
+                HideBellMenu();
+                return;
+            }
+
+            ShowBellMenu();
+        }
+
+        private void ShowBellMenu()
+        {
+            HideAllMenus();
+
+            _bellMenu = new BellMenuControl();
+
+            int x = topBar.Width - _bellMenu.Width - 20 - 60;
+            int y = topBar.Bottom + 8;
+
+            _bellMenu.Location = new Point(x, y);
+
+            this.Controls.Add(_bellMenu);
+            _bellMenu.BringToFront();
+
+            this.MouseDown += Form_ClickOutsideToCloseMenus;
+        }
+
+        private void HideBellMenu()
+        {
+            if (_bellMenu != null)
+            {
+                this.Controls.Remove(_bellMenu);
+                _bellMenu.Dispose();
+                _bellMenu = null;
+            }
+            this.MouseDown -= Form_ClickOutsideToCloseMenus;
+        }
+
+        // ═══════════ OUTSIDE CLICK ═══════════
+
+        private void HideAllMenus()
+        {
+            HideProfileMenu();
+            HideBellMenu();
+        }
+
+        private void Form_ClickOutsideToCloseMenus(object? sender, MouseEventArgs e)
+        {
+            bool clickedInsideProfile = _profileMenu != null &&
+                _profileMenu.ClientRectangle.Contains(
+                    _profileMenu.PointToClient(Cursor.Position));
+
+            bool clickedInsideBell = _bellMenu != null &&
+                _bellMenu.ClientRectangle.Contains(
+                    _bellMenu.PointToClient(Cursor.Position));
+
+            if (!clickedInsideProfile) HideProfileMenu();
+            if (!clickedInsideBell) HideBellMenu();
+        }
+
+        // ═══════════ PROFILE ACTIONS ═══════════
+
+        private void ProfileMenu_ItemClicked(object? sender, string key)
+        {
+            HideProfileMenu();
+
+            switch (key)
+            {
+                case "profile":
+                    SetStatus("Profile viewed.");
+                    MessageBox.Show(
+                        $"Signed in as:\n\n{UserSession.FullName}\n{UserSession.Role}",
+                        "Profile",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    break;
+
+                case "settings":
+                    SetStatus("Settings — coming soon.");
+                    NavigateTo("settings");
+                    break;
+
+                case "signout":
+                    ConfirmLogout();
+                    break;
             }
         }
 
@@ -172,7 +261,7 @@ namespace CRM.winforms
 
         public void SetStatus(string message)
         {
-            lblStatus.ForeColor = FixoryTheme.TextSecondary;
+            lblStatus.ForeColor = AppTheme.TextSecondary;
             lblStatus.Text = message;
         }
     }

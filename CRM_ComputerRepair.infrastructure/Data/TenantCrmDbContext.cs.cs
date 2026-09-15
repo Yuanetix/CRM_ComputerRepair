@@ -23,6 +23,9 @@ public class TenantCrmDbContext : DbContext
     public DbSet<Part> Parts => Set<Part>();
     public DbSet<RepairPart> RepairParts => Set<RepairPart>();
 
+    // Step 1 addition
+    public DbSet<FollowUp> FollowUps => Set<FollowUp>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -69,11 +72,48 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.PurchasePrice).HasPrecision(18, 2);
         });
 
-        // ═══════════ CustomerInteraction ═══════════
+        // ═══════════ CustomerInteraction (Inquiry / Complaint / Feedback) ═══════════
         builder.Entity<CustomerInteraction>(entity =>
         {
             entity.HasKey(x => x.CustomerInteractionId);
-            entity.Property(x => x.Notes).HasMaxLength(1000);
+
+            entity.Property(x => x.Subject).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(2000).IsRequired();
+            entity.Property(x => x.Resolution).HasMaxLength(2000);
+            entity.Property(x => x.InteractionByUserId).HasMaxLength(450);
+
+            entity.HasOne(x => x.Customer)
+                .WithMany(c => c.CustomerInteractions)
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+
+            entity.HasOne(x => x.RepairRequest)
+                .WithMany(r => r.CustomerInteractions)
+                .HasForeignKey(x => x.RepairRequestId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ═══════════ FollowUp (NEW) ═══════════
+        builder.Entity<FollowUp>(entity =>
+        {
+            entity.HasKey(x => x.FollowUpId);
+
+            entity.Property(x => x.Subject).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(2000).IsRequired();
+            entity.Property(x => x.AssignedToUserId).HasMaxLength(450);
+
+            entity.HasOne(x => x.Customer)
+                .WithMany()
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+
+            entity.HasOne(x => x.RepairRequest)
+                .WithMany()
+                .HasForeignKey(x => x.RepairRequestId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
         });
 
         // ═══════════ RepairStatusHistory ═══════════
@@ -152,7 +192,7 @@ public class TenantCrmDbContext : DbContext
         builder.Ignore<Subscription>();
         builder.Ignore<TermsAndConditions>();
         builder.Ignore<AuditLog>();
-        builder.Ignore<Product>();
         builder.Ignore<CustomerLoyaltyAccount>();
+        // NOTE: Product was deleted from the project entirely.
     }
 }

@@ -4,6 +4,7 @@ using CRM_ComputerRepair.infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
 {
     [DbContext(typeof(TenantCrmDbContext))]
-    partial class TenantCrmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260915115319_AddInteractionCrudFields")]
+    partial class AddInteractionCrudFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -198,64 +201,6 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.HasKey("DeviceId");
 
                     b.ToTable("Devices");
-                });
-
-            modelBuilder.Entity("CRM_ComputerRepair.domain.Entities.FollowUp", b =>
-                {
-                    b.Property<int>("FollowUpId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("FollowUpId"));
-
-                    b.Property<string>("AssignedToUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<int>("Channel")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int?>("CustomerId")
-                        .HasColumnType("int");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("Notes")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<int?>("RepairRequestId")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("ScheduledAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Subject")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("FollowUpId");
-
-                    b.HasIndex("CustomerId");
-
-                    b.HasIndex("RepairRequestId");
-
-                    b.ToTable("FollowUps");
                 });
 
             modelBuilder.Entity("CRM_ComputerRepair.domain.Entities.Part", b =>
@@ -576,23 +521,6 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
 
                     b.HasOne("CRM_ComputerRepair.domain.Entities.RepairRequest", "RepairRequest")
                         .WithMany("CustomerInteractions")
-                        .HasForeignKey("RepairRequestId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("Customer");
-
-                    b.Navigation("RepairRequest");
-                });
-
-            modelBuilder.Entity("CRM_ComputerRepair.domain.Entities.FollowUp", b =>
-                {
-                    b.HasOne("CRM_ComputerRepair.domain.Entities.Customer", "Customer")
-                        .WithMany()
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("CRM_ComputerRepair.domain.Entities.RepairRequest", "RepairRequest")
-                        .WithMany()
                         .HasForeignKey("RepairRequestId")
                         .OnDelete(DeleteBehavior.Restrict);
 

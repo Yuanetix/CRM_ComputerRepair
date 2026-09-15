@@ -17,12 +17,12 @@ public class MasterCrmDbContext : IdentityDbContext<User>
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<CustomerInteraction> CustomerInteractions => Set<CustomerInteraction>();
+    public DbSet<FollowUp> FollowUps => Set<FollowUp>();
     public DbSet<CustomerLoyaltyAccount> CustomerLoyaltyAccounts => Set<CustomerLoyaltyAccount>();
     public DbSet<LoyaltyProgram> LoyaltyPrograms => Set<LoyaltyProgram>();
     public DbSet<RepairRequest> RepairRequests => Set<RepairRequest>();
     public DbSet<RepairStatusHistory> RepairStatusHistories => Set<RepairStatusHistory>();
     public DbSet<Payment> Payments => Set<Payment>();
-    public DbSet<Product> Products => Set<Product>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<TermsAndConditions> TermsAndConditionsSet => Set<TermsAndConditions>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
@@ -82,20 +82,48 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.Address).HasMaxLength(500);
         });
 
+        // ═══════════ CustomerInteraction (Inquiry / Complaint / Feedback) ═══════════
         builder.Entity<CustomerInteraction>(entity =>
         {
             entity.HasKey(x => x.CustomerInteractionId);
-            entity.Property(x => x.Notes).HasMaxLength(1000);
+
+            entity.Property(x => x.Subject).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(2000).IsRequired();
+            entity.Property(x => x.Resolution).HasMaxLength(2000);
+            entity.Property(x => x.InteractionByUserId).HasMaxLength(450);
 
             entity.HasOne(x => x.Customer)
                 .WithMany(c => c.CustomerInteractions)
                 .HasForeignKey(x => x.CustomerId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
 
             entity.HasOne(x => x.RepairRequest)
                 .WithMany(r => r.CustomerInteractions)
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ═══════════ FollowUp (NEW) ═══════════
+        builder.Entity<FollowUp>(entity =>
+        {
+            entity.HasKey(x => x.FollowUpId);
+
+            entity.Property(x => x.Subject).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(2000).IsRequired();
+            entity.Property(x => x.AssignedToUserId).HasMaxLength(450);
+
+            entity.HasOne(x => x.Customer)
+                .WithMany()
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+
+            entity.HasOne(x => x.RepairRequest)
+                .WithMany()
+                .HasForeignKey(x => x.RepairRequestId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
         });
 
         builder.Entity<RepairRequest>(entity =>
@@ -145,15 +173,6 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .WithMany()
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict);
-        });
-
-        builder.Entity<Product>(entity =>
-        {
-            entity.HasKey(x => x.ProductId);
-            entity.Property(x => x.ProductCode).HasMaxLength(50).IsRequired();
-            entity.Property(x => x.ProductName).HasMaxLength(200).IsRequired();
-            entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
-            entity.HasIndex(x => x.ProductCode).IsUnique();
         });
 
         builder.Entity<LoyaltyProgram>(entity =>

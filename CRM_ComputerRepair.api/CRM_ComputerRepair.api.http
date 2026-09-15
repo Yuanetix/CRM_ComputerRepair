@@ -121,3 +121,261 @@ Accept: application/json
 ### 20. Company 3 customers (should NOT include Pedro/Juan)
 GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/3/customers
 Accept: application/json
+
+### ═══════════════════════════════════════════════════════════
+### INTERACTIONS — Inquiry / Complaint / Feedback
+### (InteractionType:  0 = Inquiry  |  1 = Complaint  |  2 = Feedback)
+### (Status:           0 = Open     |  1 = InProgress |  2 = Closed)
+### (Priority:         0 = Low      |  1 = Medium     |  2 = High)
+### ═══════════════════════════════════════════════════════════
+
+### 21. CREATE Inquiry
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "interactionType": 0,
+  "priority": 1,
+  "subject": "Warranty question",
+  "notes": "Customer asking if laptop is still under warranty.",
+  "interactionByUserId": "staff-001"
+}
+
+### 22. CREATE Complaint
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "interactionType": 1,
+  "priority": 2,
+  "subject": "Slow repair turnaround",
+  "notes": "Customer unhappy with the delay on repair request REQ-001.",
+  "interactionByUserId": "staff-001"
+}
+
+### 23. CREATE Feedback
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "interactionType": 2,
+  "priority": 0,
+  "subject": "Great service",
+  "notes": "Customer said the technician was very helpful.",
+  "interactionByUserId": "staff-001"
+}
+
+### 24. READ all active interactions
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions
+Accept: application/json
+
+### 25. READ only Inquiries (type=0)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions?type=0
+Accept: application/json
+
+### 26. READ only Complaints (type=1)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions?type=1
+Accept: application/json
+
+### 27. READ only Feedback (type=2)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions?type=2
+Accept: application/json
+
+### 28. READ one interaction (id 1)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions/1
+Accept: application/json
+
+### 29. UPDATE interaction 1 — mark InProgress (status=1)
+PUT {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions/1
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "interactionType": 0,
+  "status": 1,
+  "priority": 1,
+  "subject": "Warranty question (in progress)",
+  "notes": "Updated notes while investigating.",
+  "resolution": null
+}
+
+### 30. UPDATE interaction 1 — mark Closed (status=2) with resolution
+PUT {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions/1
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "interactionType": 0,
+  "status": 2,
+  "priority": 1,
+  "subject": "Warranty question (closed)",
+  "notes": "Updated notes while investigating.",
+  "resolution": "Confirmed warranty covered for 12 more months."
+}
+
+### 31. ARCHIVE interaction 1 (soft delete)
+DELETE {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions/1
+
+### 32. READ all INCLUDING archived
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions?includeArchived=true
+Accept: application/json
+
+### 33. RESTORE interaction 1
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions/1/restore
+
+### 34. CONFIRM restore (should be active again)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/interactions/1
+Accept: application/json
+
+### ═══════════════════════════════════════════════════════════
+### FOLLOW-UPS — Full CRUD
+### (Status:  0 = Scheduled | 1 = Completed | 2 = Cancelled)
+### (Channel: 0 = Call      | 1 = Email     | 2 = SMS       | 3 = Visit)
+### ═══════════════════════════════════════════════════════════
+
+### 40. CREATE Follow-Up (Call)
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "subject": "Call about repair pickup",
+  "notes": "Remind customer that device is ready.",
+  "scheduledAt": "2026-09-20T10:00:00",
+  "channel": 0,
+  "status": 0,
+  "assignedToUserId": "staff-001"
+}
+
+### 41. CREATE Follow-Up (Email)
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "subject": "Send invoice email",
+  "notes": "Email the final invoice.",
+  "scheduledAt": "2026-09-21T09:00:00",
+  "channel": 1,
+  "status": 0,
+  "assignedToUserId": "staff-001"
+}
+
+### 42. READ all active follow-ups
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups
+Accept: application/json
+
+### 43. READ only Scheduled (status=0)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups?status=0
+Accept: application/json
+
+### 44. READ only Completed (status=1)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups?status=1
+Accept: application/json
+
+### 45. READ one follow-up (id 1)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups/1
+Accept: application/json
+
+### 46. UPDATE follow-up 1 — mark Completed (status=1)
+PUT {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups/1
+Content-Type: application/json
+
+{
+  "customerId": null,
+  "repairRequestId": null,
+  "subject": "Call about repair pickup (done)",
+  "notes": "Called customer, will pick up Friday.",
+  "scheduledAt": "2026-09-20T10:00:00",
+  "channel": 0,
+  "status": 1,
+  "assignedToUserId": "staff-001"
+}
+
+### 47. ARCHIVE follow-up 1 (soft delete)
+DELETE {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups/1
+
+### 48. READ all INCLUDING archived
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups?includeArchived=true
+Accept: application/json
+
+### 49. RESTORE follow-up 1
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/follow-ups/1/restore
+
+### ═══════════════════════════════════════════════════════════
+### REPAIR REQUESTS — Full CRUD with status workflow
+### (Status:   0 = Pending | 1 = Approved | 2 = InProgress
+###            3 = Completed | 4 = Rejected | 5 = Reassigned)
+### (Priority: 0 = Low | 1 = Medium | 2 = High | 3 = Urgent)
+### ═══════════════════════════════════════════════════════════
+
+### 60. CREATE Repair Request
+POST {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "deviceId": null,
+  "deviceModel": "Dell Latitude 5420",
+  "serialNumber": "SN-ABC123",
+  "issueDescription": "Laptop won't boot past BIOS screen.",
+  "priority": 2,
+  "estimatedCost": 1500.00
+}
+
+### 61. READ all repair requests
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests
+Accept: application/json
+
+### 62. READ only Pending (status=0)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests?status=0
+Accept: application/json
+
+### 63. READ one repair request (id 1)
+GET {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests/1
+Accept: application/json
+
+### 64. UPDATE repair request 1 — Approved (status=1)
+PUT {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests/1
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "deviceId": null,
+  "deviceModel": "Dell Latitude 5420",
+  "serialNumber": "SN-ABC123",
+  "issueDescription": "Laptop won't boot past BIOS screen.",
+  "status": 1,
+  "priority": 2,
+  "estimatedCost": 1500.00,
+  "technicianNotes": "Approved for repair.",
+  "assignedToStaffId": "staff-001"
+}
+
+### 65. UPDATE repair request 1 — Completed (status=3)
+PUT {{CRM_ComputerRepair.api_HostAddress}}/tenant/1/repair-requests/1
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "deviceId": null,
+  "deviceModel": "Dell Latitude 5420",
+  "serialNumber": "SN-ABC123",
+  "issueDescription": "Laptop won't boot past BIOS screen.",
+  "status": 3,
+  "priority": 2,
+  "estimatedCost": 1500.00,
+  "actualCost": 1400.00,
+  "technicianNotes": "Replaced SSD. Working now.",
+  "assignedToStaffId": "staff-001"
+}

@@ -4,37 +4,51 @@ using System.Windows.Forms;
 
 namespace CRM.winforms
 {
-    /// <summary>
-    /// HCI-aware UI helpers.
-    /// </summary>
     public static class UiHelpers
     {
         // ═══════════ BUTTONS ═══════════
 
-        /// <summary>
-        /// Primary button — filled with brand color.
-        /// </summary>
         public static Button CreatePrimaryButton(string text, Color background)
         {
             var btn = CreateBaseButton(text, background, Color.White);
+
+            if (background == AppTheme.Primary)
+            {
+                btn.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
+                btn.FlatAppearance.MouseDownBackColor = AppTheme.PrimaryActive;
+            }
+            else if (background == AppTheme.Danger)
+            {
+                btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(220, 60, 60);
+                btn.FlatAppearance.MouseDownBackColor = Color.FromArgb(200, 45, 45);
+            }
+            else if (background == AppTheme.Success)
+            {
+                btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(10, 160, 110);
+                btn.FlatAppearance.MouseDownBackColor = Color.FromArgb(5, 145, 100);
+            }
+
             return btn;
         }
 
-        /// <summary>
-        /// Secondary button — white with colored text and border.
-        /// </summary>
         public static Button CreateSecondaryButton(string text, Color border, Color textColor)
         {
             var btn = CreateBaseButton(text, Color.White, textColor);
             btn.FlatAppearance.BorderSize = 1;
             btn.FlatAppearance.BorderColor = border;
-            btn.FlatAppearance.MouseOverBackColor = FixoryTheme.Neutral;
+            btn.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
+            btn.FlatAppearance.MouseDownBackColor = AppTheme.Border;
             return btn;
         }
 
-        /// <summary>
-        /// Legacy helper — safe if you use it elsewhere.
-        /// </summary>
+        public static Button CreateNeutralButton(string text)
+        {
+            var btn = CreateBaseButton(text, AppTheme.Neutral, AppTheme.TextPrimary);
+            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(229, 231, 235);
+            btn.FlatAppearance.MouseDownBackColor = Color.FromArgb(209, 213, 219);
+            return btn;
+        }
+
         public static Button CreateButton(string text, Color background, Color foreground)
         {
             return CreateBaseButton(text, background, foreground);
@@ -45,36 +59,18 @@ namespace CRM.winforms
             var btn = new Button
             {
                 Text = text,
-                Font = FixoryTheme.FontButton,
+                Font = AppTheme.FontButton,
                 BackColor = background,
                 ForeColor = foreground,
                 FlatStyle = FlatStyle.Flat,
-                Height = FixoryTheme.ButtonHeight,
+                Height = AppTheme.ButtonHeight,
                 Cursor = Cursors.Hand,
                 UseVisualStyleBackColor = false,
-                FlatAppearance = { BorderSize = 0 }
+                Padding = new Padding(16, 0, 16, 0)
             };
 
-            // Hover / pressed effects (only for filled buttons)
-            if (background == FixoryTheme.Primary)
-            {
-                btn.FlatAppearance.MouseOverBackColor = FixoryTheme.PrimaryHover;
-                btn.FlatAppearance.MouseDownBackColor = FixoryTheme.PrimaryLight;
-            }
-            else if (background == FixoryTheme.Danger)
-            {
-                btn.FlatAppearance.MouseOverBackColor =
-                    Color.FromArgb(220, 60, 60);
-            }
-            else if (background == FixoryTheme.Success)
-            {
-                btn.FlatAppearance.MouseOverBackColor =
-                    Color.FromArgb(10, 160, 110);
-            }
-
-            // Rounded corners
-            btn.Resize += (s, e) =>
-                ApplyRoundedRegion(btn, FixoryTheme.Radius);
+            btn.FlatAppearance.BorderSize = 0;
+            btn.Resize += (s, e) => ApplyRoundedRegion(btn, 6);
 
             return btn;
         }
@@ -85,11 +81,12 @@ namespace CRM.winforms
         {
             return new TextBox
             {
-                Font = FixoryTheme.FontInput,
+                Font = AppTheme.FontInput,
                 BorderStyle = BorderStyle.FixedSingle,
-                Height = FixoryTheme.InputHeight,
-                BackColor = FixoryTheme.InputBg,
-                ForeColor = FixoryTheme.TextPrimary
+                Height = AppTheme.InputHeight,
+                BackColor = AppTheme.InputBg,
+                ForeColor = AppTheme.TextPrimary,
+                Padding = new Padding(8, 6, 8, 6)
             };
         }
 
@@ -112,24 +109,20 @@ namespace CRM.winforms
             return new Label
             {
                 Text = text,
-                Font = FixoryTheme.FontLabel,
-                ForeColor = FixoryTheme.TextSecondary,
+                Font = AppTheme.FontLabel,
+                ForeColor = AppTheme.TextSecondary,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
         }
 
-        /// <summary>
-        /// Small inline error label — hidden by default.
-        /// HCI: error prevention with immediate feedback.
-        /// </summary>
         public static Label CreateErrorLabel()
         {
             return new Label
             {
                 Text = string.Empty,
-                Font = FixoryTheme.FontError,
-                ForeColor = FixoryTheme.Danger,
+                Font = AppTheme.FontError,
+                ForeColor = AppTheme.Danger,
                 AutoSize = true,
                 BackColor = Color.Transparent,
                 Visible = false
@@ -142,8 +135,8 @@ namespace CRM.winforms
         {
             var panel = new Panel
             {
-                BackColor = FixoryTheme.Surface,
-                Padding = new Padding(FixoryTheme.CardPadding)
+                BackColor = AppTheme.Surface,
+                Padding = new Padding(AppTheme.CardPadding)
             };
 
             panel.Paint += (s, e) =>
@@ -151,9 +144,9 @@ namespace CRM.winforms
                 var p = (Panel)s;
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-                using var pen = new Pen(FixoryTheme.Border, 1);
+                using var pen = new Pen(AppTheme.Border, 1);
                 var rect = new Rectangle(0, 0, p.Width - 1, p.Height - 1);
-                DrawRoundedRectangle(e.Graphics, pen, rect, FixoryTheme.Radius);
+                DrawRoundedRectangle(e.Graphics, pen, rect, AppTheme.Radius);
             };
 
             return panel;
@@ -188,6 +181,8 @@ namespace CRM.winforms
         {
             var path = new GraphicsPath();
             int d = radius * 2;
+            if (d > rect.Width) d = rect.Width;
+            if (d > rect.Height) d = rect.Height;
 
             path.AddArc(rect.X, rect.Y, d, d, 180, 90);
             path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
@@ -200,62 +195,62 @@ namespace CRM.winforms
 
         // ═══════════ GRID ═══════════
 
-        /// <summary>
-        /// HCI: neutral header, subtle stripes, comfortable rows.
-        /// </summary>
         public static void StyleGrid(DataGridView grid)
         {
-            grid.BackgroundColor = FixoryTheme.Surface;
+            grid.BackgroundColor = Color.White;
             grid.BorderStyle = BorderStyle.None;
             grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
-            grid.GridColor = FixoryTheme.Border;
+            grid.GridColor = Color.FromArgb(238, 240, 245);
 
             grid.EnableHeadersVisualStyles = false;
+
+            // Header
             grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
-            grid.ColumnHeadersDefaultCellStyle.BackColor = FixoryTheme.Neutral;
-            grid.ColumnHeadersDefaultCellStyle.ForeColor = FixoryTheme.TextPrimary;
-            grid.ColumnHeadersDefaultCellStyle.Font = FixoryTheme.FontLabel;
-            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(10, 8, 10, 8);
-            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = FixoryTheme.Neutral;
-            grid.ColumnHeadersHeight = 40;
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(249, 250, 252);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = AppTheme.TextPrimary;
+            grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 8.5F);
+            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(12, 10, 12, 10);
+            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(249, 250, 252);
+            grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
+            grid.ColumnHeadersHeight = 44;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
 
-            grid.DefaultCellStyle.Font = FixoryTheme.FontBody;
-            grid.DefaultCellStyle.ForeColor = FixoryTheme.TextPrimary;
-            grid.DefaultCellStyle.BackColor = FixoryTheme.Surface;
-            grid.DefaultCellStyle.SelectionBackColor = FixoryTheme.PrimarySoft;
-            grid.DefaultCellStyle.SelectionForeColor = FixoryTheme.TextPrimary;
-            grid.DefaultCellStyle.Padding = new Padding(10, 6, 10, 6);
-            grid.RowTemplate.Height = 34;
+            // Cells
+            grid.DefaultCellStyle.Font = new Font("Segoe UI", 9F);
+            grid.DefaultCellStyle.ForeColor = AppTheme.TextPrimary;
+            grid.DefaultCellStyle.BackColor = Color.White;
+            grid.DefaultCellStyle.SelectionBackColor = AppTheme.PrimarySoft;
+            grid.DefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
+            grid.DefaultCellStyle.Padding = new Padding(12, 8, 12, 8);
+            grid.RowTemplate.Height = 40;
 
-            grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 251, 252);
+            grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(252, 253, 255);
 
+            // Behavior
             grid.RowHeadersVisible = false;
             grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grid.MultiSelect = false;
             grid.AllowUserToAddRows = false;
             grid.AllowUserToDeleteRows = false;
+            grid.AllowUserToResizeRows = false;
             grid.ReadOnly = true;
+            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         }
 
-        // ═══════════ VALIDATION HELPERS ═══════════
+        // ═══════════ VALIDATION ═══════════
 
-        /// <summary>
-        /// Show inline error below a field + red border.
-        /// </summary>
         public static void ShowFieldError(TextBox input, Label errorLabel, string message)
         {
-            input.BackColor = Color.FromArgb(254, 242, 242);   // very light red
-            errorLabel.Text = "⚠ " + message;
+            input.BackColor = AppTheme.DangerSoft;
+            input.ForeColor = AppTheme.TextPrimary;
+            errorLabel.Text = "⚠  " + message;
             errorLabel.Visible = true;
         }
 
-        /// <summary>
-        /// Clear inline error for a field.
-        /// </summary>
         public static void ClearFieldError(TextBox input, Label errorLabel)
         {
-            input.BackColor = FixoryTheme.InputBg;
+            input.BackColor = AppTheme.InputBg;
+            input.ForeColor = AppTheme.TextPrimary;
             errorLabel.Text = string.Empty;
             errorLabel.Visible = false;
         }

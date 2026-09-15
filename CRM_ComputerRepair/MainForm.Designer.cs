@@ -7,18 +7,9 @@ namespace CRM.winforms
     {
         private System.ComponentModel.IContainer components = null;
 
-        private Panel pnlTopBar;
-        private Label lblLogo;
-        private Label lblUserName;
-        private Panel pnlTopBarDivider;
-
-        private Panel pnlSidebar;
-        private Label lblSidebarBrand;
-        private Button btnLogout;
-        private Panel pnlSidebarDivider;
-
+        private SidebarControl sidebar;
+        private TopBarControl topBar;
         private Panel pnlContent;
-
         private Panel pnlStatus;
         private Label lblStatus;
 
@@ -37,115 +28,61 @@ namespace CRM.winforms
             this.Text = "Fixory — CRM for Computer Repair";
             this.ClientSize = new Size(1920, 1080);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.MinimumSize = new Size(1400, 800);
-            this.BackColor = FixoryTheme.Background;
-            this.Font = FixoryTheme.FontBody;
-
-            // ═══════════ TOP BAR (white) ═══════════
-            pnlTopBar = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 64,
-                BackColor = FixoryTheme.TopBarBg
-            };
-
-            lblLogo = new Label
-            {
-                Text = "🔧  Fixory",
-                Font = new Font("Segoe UI", 15F, FontStyle.Bold),
-                ForeColor = FixoryTheme.TextPrimary,
-                AutoSize = true,
-                Location = new Point(28, 20)
-            };
-
-            lblUserName = new Label
-            {
-                Text = "👤  User",
-                Font = new Font("Segoe UI", 10F),
-                ForeColor = FixoryTheme.TextSecondary,
-                AutoSize = true,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
-
-            pnlTopBarDivider = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 1,
-                BackColor = FixoryTheme.Border
-            };
-
-            pnlTopBar.Controls.Add(lblLogo);
-            pnlTopBar.Controls.Add(lblUserName);
-            pnlTopBar.Controls.Add(pnlTopBarDivider);
-
-            // ═══════════ SIDEBAR (dark) ═══════════
-            pnlSidebar = new Panel
-            {
-                Dock = DockStyle.Left,
-                Width = 260,
-                BackColor = FixoryTheme.SidebarBg
-            };
-
-            lblSidebarBrand = new Label
-            {
-                Text = "NAVIGATION",
-                Font = FixoryTheme.FontSidebarBrand,
-                ForeColor = FixoryTheme.SidebarMuted,
-                AutoSize = true,
-                Location = new Point(24, 24)
-            };
-
-            btnLogout = new Button
-            {
-                Text = "   🚪    Logout",
-                Font = FixoryTheme.FontSidebar,
-                ForeColor = Color.FromArgb(252, 165, 165),
-                BackColor = Color.Transparent,
-                FlatStyle = FlatStyle.Flat,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(12, 0, 0, 0),
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            btnLogout.FlatAppearance.BorderSize = 0;
-            btnLogout.FlatAppearance.MouseOverBackColor =
-                Color.FromArgb(120, 40, 40);
-            btnLogout.Click += btnLogout_Click;
-
-            pnlSidebar.Controls.Add(lblSidebarBrand);
-            pnlSidebar.Controls.Add(btnLogout);
+            this.MinimumSize = new Size(1400, 820);
+            this.BackColor = AppTheme.Background;
+            this.Font = AppTheme.FontBody;
 
             // ═══════════ STATUS BAR ═══════════
             pnlStatus = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 32,
-                BackColor = FixoryTheme.Surface
+                Height = 30,
+                BackColor = AppTheme.Surface
             };
 
             lblStatus = new Label
             {
                 Text = "Ready.",
-                Font = FixoryTheme.FontStatus,
-                ForeColor = FixoryTheme.TextSecondary,
+                Font = AppTheme.FontStatus,
+                ForeColor = AppTheme.TextSecondary,
                 AutoSize = true,
-                Location = new Point(28, 8)
+                Location = new Point(24, 7)
             };
             pnlStatus.Controls.Add(lblStatus);
 
-            // ═══════════ CONTENT AREA ═══════════
+            var pnlStatusDivider = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 1,
+                BackColor = AppTheme.Border
+            };
+            pnlStatus.Controls.Add(pnlStatusDivider);
+
+            // ═══════════ CONTENT ═══════════
             pnlContent = new Panel
             {
                 Dock = DockStyle.Fill,
-                BackColor = FixoryTheme.Background,
+                BackColor = AppTheme.Background,
                 Padding = new Padding(24)
             };
 
-            // ═══════════ ADD IN ORDER ═══════════
+            // ═══════════ TOP BAR ═══════════
+            topBar = new TopBarControl
+            {
+                Dock = DockStyle.Top
+            };
+
+            // ═══════════ SIDEBAR ═══════════
+            sidebar = new SidebarControl
+            {
+                Dock = DockStyle.Left
+            };
+
+            // ═══════════ ADD IN ORDER (Dock fill order matters) ═══════════
             this.Controls.Add(pnlContent);
-            this.Controls.Add(pnlSidebar);
+            this.Controls.Add(sidebar);
+            this.Controls.Add(topBar);
             this.Controls.Add(pnlStatus);
-            this.Controls.Add(pnlTopBar);
 
             this.ResumeLayout(false);
         }

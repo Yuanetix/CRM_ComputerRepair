@@ -113,7 +113,17 @@ app.MapGet("/test-tenant/{companyId:int}", async (
 {
     await using var tenantDb = await tenantFactory.CreateAsync(companyId);
     var repairCount = await tenantDb.RepairRequests.CountAsync();
-    return Results.Ok(new { companyId, repairCount });
+    var customerCount = await tenantDb.Customers.CountAsync();
+    var followUpCount = await tenantDb.FollowUps.CountAsync();
+    var interactionCount = await tenantDb.CustomerInteractions.CountAsync();
+    return Results.Ok(new
+    {
+        companyId,
+        repairCount,
+        customerCount,
+        followUpCount,
+        interactionCount
+    });
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -150,7 +160,7 @@ app.MapPost("/tenant/{companyId:int}/customers", async (
         });
 });
 
-// READ ALL (active by default; includeArchived=true to see all)
+// READ ALL
 app.MapGet("/tenant/{companyId:int}/customers", async (
     int companyId,
     bool? includeArchived,
@@ -161,9 +171,7 @@ app.MapGet("/tenant/{companyId:int}/customers", async (
     var query = tenantDb.Customers.AsNoTracking();
 
     if (includeArchived != true)
-    {
         query = query.Where(c => c.IsActive);
-    }
 
     var customers = await query
         .OrderBy(x => x.CustomerId)
@@ -196,8 +204,7 @@ app.MapGet("/tenant/{companyId:int}/customers/{customerId:int}", async (
         .AsNoTracking()
         .FirstOrDefaultAsync(c => c.CustomerId == customerId);
 
-    if (customer is null)
-        return Results.NotFound();
+    if (customer is null) return Results.NotFound();
 
     return Results.Ok(new
     {
@@ -225,8 +232,7 @@ app.MapPut("/tenant/{companyId:int}/customers/{customerId:int}", async (
     var customer = await tenantDb.Customers
         .FirstOrDefaultAsync(c => c.CustomerId == customerId);
 
-    if (customer is null)
-        return Results.NotFound();
+    if (customer is null) return Results.NotFound();
 
     customer.FirstName = updated.FirstName;
     customer.LastName = updated.LastName;
@@ -261,8 +267,7 @@ app.MapDelete("/tenant/{companyId:int}/customers/{customerId:int}", async (
     var customer = await tenantDb.Customers
         .FirstOrDefaultAsync(c => c.CustomerId == customerId);
 
-    if (customer is null)
-        return Results.NotFound();
+    if (customer is null) return Results.NotFound();
 
     customer.IsActive = false;
     await tenantDb.SaveChangesAsync();
@@ -275,7 +280,7 @@ app.MapDelete("/tenant/{companyId:int}/customers/{customerId:int}", async (
     });
 });
 
-// UNARCHIVE (restore)
+// RESTORE
 app.MapPost("/tenant/{companyId:int}/customers/{customerId:int}/restore", async (
     int companyId,
     int customerId,
@@ -286,8 +291,7 @@ app.MapPost("/tenant/{companyId:int}/customers/{customerId:int}/restore", async 
     var customer = await tenantDb.Customers
         .FirstOrDefaultAsync(c => c.CustomerId == customerId);
 
-    if (customer is null)
-        return Results.NotFound();
+    if (customer is null) return Results.NotFound();
 
     customer.IsActive = true;
     await tenantDb.SaveChangesAsync();
@@ -301,9 +305,448 @@ app.MapPost("/tenant/{companyId:int}/customers/{customerId:int}/restore", async 
 });
 
 // ═══════════════════════════════════════════════════════════
-// REPAIR REQUESTS
+// CUSTOMER INTERACTIONS — Inquiry / Complaint / Feedback
+// Type: 0 = Inquiry | 1 = Complaint | 2 = Feedback
+// Status: 0 = Open | 1 = InProgress | 2 = Closed
 // ═══════════════════════════════════════════════════════════
 
+// CREATE
+app.MapPost("/tenant/{companyId:int}/interactions", async (
+    int companyId,
+    CustomerInteraction interaction,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    interaction.InteractionDate = DateTime.UtcNow;
+    interaction.Status = InteractionStatus.Open;
+    interaction.IsActive = true;
+    interaction.UpdatedAt = null;
+    interaction.ClosedAt = null;
+
+    tenantDb.CustomerInteractions.Add(interaction);
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Created(
+        $"/tenant/{companyId}/interactions/{interaction.CustomerInteractionId}",
+        new
+        {
+            interaction.CustomerInteractionId,
+            interaction.CustomerId,
+            interaction.RepairRequestId,
+            interaction.InteractionType,
+            interaction.Status,
+            interaction.Priority,
+            interaction.Subject,
+            interaction.Notes,
+            interaction.Resolution,
+            interaction.InteractionByUserId,
+            interaction.InteractionDate,
+            interaction.UpdatedAt,
+            interaction.ClosedAt,
+            interaction.IsActive
+        });
+});
+
+// READ ALL — filter by type + includeArchived
+app.MapGet("/tenant/{companyId:int}/interactions", async (
+    int companyId,
+    InteractionType? type,
+    bool? includeArchived,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var query = tenantDb.CustomerInteractions.AsNoTracking();
+
+    if (includeArchived != true)
+        query = query.Where(x => x.IsActive);
+
+    if (type.HasValue)
+        query = query.Where(x => x.InteractionType == type.Value);
+
+    var list = await query
+        .OrderByDescending(x => x.InteractionDate)
+        .Select(x => new
+        {
+            x.CustomerInteractionId,
+            x.CustomerId,
+            x.RepairRequestId,
+            x.InteractionType,
+            x.Status,
+            x.Priority,
+            x.Subject,
+            x.Notes,
+            x.Resolution,
+            x.InteractionByUserId,
+            x.InteractionDate,
+            x.UpdatedAt,
+            x.ClosedAt,
+            x.IsActive
+        })
+        .ToListAsync();
+
+    return Results.Ok(list);
+});
+
+// READ ONE
+app.MapGet("/tenant/{companyId:int}/interactions/{interactionId:int}", async (
+    int companyId,
+    int interactionId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.CustomerInteractions
+        .AsNoTracking()
+        .FirstOrDefaultAsync(x => x.CustomerInteractionId == interactionId);
+
+    if (item is null) return Results.NotFound();
+
+    return Results.Ok(new
+    {
+        item.CustomerInteractionId,
+        item.CustomerId,
+        item.RepairRequestId,
+        item.InteractionType,
+        item.Status,
+        item.Priority,
+        item.Subject,
+        item.Notes,
+        item.Resolution,
+        item.InteractionByUserId,
+        item.InteractionDate,
+        item.UpdatedAt,
+        item.ClosedAt,
+        item.IsActive
+    });
+});
+
+// UPDATE
+app.MapPut("/tenant/{companyId:int}/interactions/{interactionId:int}", async (
+    int companyId,
+    int interactionId,
+    CustomerInteraction updated,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.CustomerInteractions
+        .FirstOrDefaultAsync(x => x.CustomerInteractionId == interactionId);
+
+    if (item is null) return Results.NotFound();
+
+    item.CustomerId = updated.CustomerId;
+    item.RepairRequestId = updated.RepairRequestId;
+    item.InteractionType = updated.InteractionType;
+    item.Subject = updated.Subject;
+    item.Notes = updated.Notes;
+    item.Priority = updated.Priority;
+    item.Status = updated.Status;
+    item.Resolution = updated.Resolution;
+    item.UpdatedAt = DateTime.UtcNow;
+
+    if (item.Status == InteractionStatus.Closed && item.ClosedAt is null)
+        item.ClosedAt = DateTime.UtcNow;
+
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        item.CustomerInteractionId,
+        item.CustomerId,
+        item.RepairRequestId,
+        item.InteractionType,
+        item.Status,
+        item.Priority,
+        item.Subject,
+        item.Notes,
+        item.Resolution,
+        item.InteractionByUserId,
+        item.InteractionDate,
+        item.UpdatedAt,
+        item.ClosedAt,
+        item.IsActive
+    });
+});
+
+// ARCHIVE (soft delete)
+app.MapDelete("/tenant/{companyId:int}/interactions/{interactionId:int}", async (
+    int companyId,
+    int interactionId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.CustomerInteractions
+        .FirstOrDefaultAsync(x => x.CustomerInteractionId == interactionId);
+
+    if (item is null) return Results.NotFound();
+
+    item.IsActive = false;
+    item.UpdatedAt = DateTime.UtcNow;
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        message = $"Interaction {interactionId} archived.",
+        item.CustomerInteractionId,
+        item.IsActive
+    });
+});
+
+// RESTORE
+app.MapPost("/tenant/{companyId:int}/interactions/{interactionId:int}/restore", async (
+    int companyId,
+    int interactionId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.CustomerInteractions
+        .FirstOrDefaultAsync(x => x.CustomerInteractionId == interactionId);
+
+    if (item is null) return Results.NotFound();
+
+    item.IsActive = true;
+    item.UpdatedAt = DateTime.UtcNow;
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        message = $"Interaction {interactionId} restored.",
+        item.CustomerInteractionId,
+        item.IsActive
+    });
+});
+
+// ═══════════════════════════════════════════════════════════
+// FOLLOW-UPS — Full CRUD
+// Status: 0 = Scheduled | 1 = Completed | 2 = Cancelled
+// Channel: 0 = Call | 1 = Email | 2 = SMS | 3 = Visit
+// ═══════════════════════════════════════════════════════════
+
+// CREATE
+app.MapPost("/tenant/{companyId:int}/follow-ups", async (
+    int companyId,
+    FollowUp followUp,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    followUp.CreatedAt = DateTime.UtcNow;
+    followUp.IsActive = true;
+    followUp.UpdatedAt = null;
+    followUp.CompletedAt = null;
+
+    if (followUp.Status == FollowUpStatus.Completed && followUp.CompletedAt is null)
+        followUp.CompletedAt = DateTime.UtcNow;
+
+    tenantDb.FollowUps.Add(followUp);
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Created(
+        $"/tenant/{companyId}/follow-ups/{followUp.FollowUpId}",
+        new
+        {
+            followUp.FollowUpId,
+            followUp.CustomerId,
+            followUp.RepairRequestId,
+            followUp.Subject,
+            followUp.Notes,
+            followUp.ScheduledAt,
+            followUp.CompletedAt,
+            followUp.Channel,
+            followUp.Status,
+            followUp.AssignedToUserId,
+            followUp.CreatedAt,
+            followUp.UpdatedAt,
+            followUp.IsActive
+        });
+});
+
+// READ ALL — filters: status, includeArchived
+app.MapGet("/tenant/{companyId:int}/follow-ups", async (
+    int companyId,
+    FollowUpStatus? status,
+    bool? includeArchived,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var query = tenantDb.FollowUps.AsNoTracking();
+
+    if (includeArchived != true)
+        query = query.Where(x => x.IsActive);
+
+    if (status.HasValue)
+        query = query.Where(x => x.Status == status.Value);
+
+    var list = await query
+        .OrderBy(x => x.ScheduledAt)
+        .Select(x => new
+        {
+            x.FollowUpId,
+            x.CustomerId,
+            x.RepairRequestId,
+            x.Subject,
+            x.Notes,
+            x.ScheduledAt,
+            x.CompletedAt,
+            x.Channel,
+            x.Status,
+            x.AssignedToUserId,
+            x.CreatedAt,
+            x.UpdatedAt,
+            x.IsActive
+        })
+        .ToListAsync();
+
+    return Results.Ok(list);
+});
+
+// READ ONE
+app.MapGet("/tenant/{companyId:int}/follow-ups/{followUpId:int}", async (
+    int companyId,
+    int followUpId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.FollowUps
+        .AsNoTracking()
+        .FirstOrDefaultAsync(x => x.FollowUpId == followUpId);
+
+    if (item is null) return Results.NotFound();
+
+    return Results.Ok(new
+    {
+        item.FollowUpId,
+        item.CustomerId,
+        item.RepairRequestId,
+        item.Subject,
+        item.Notes,
+        item.ScheduledAt,
+        item.CompletedAt,
+        item.Channel,
+        item.Status,
+        item.AssignedToUserId,
+        item.CreatedAt,
+        item.UpdatedAt,
+        item.IsActive
+    });
+});
+
+// UPDATE
+app.MapPut("/tenant/{companyId:int}/follow-ups/{followUpId:int}", async (
+    int companyId,
+    int followUpId,
+    FollowUp updated,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.FollowUps
+        .FirstOrDefaultAsync(x => x.FollowUpId == followUpId);
+
+    if (item is null) return Results.NotFound();
+
+    item.CustomerId = updated.CustomerId;
+    item.RepairRequestId = updated.RepairRequestId;
+    item.Subject = updated.Subject;
+    item.Notes = updated.Notes;
+    item.ScheduledAt = updated.ScheduledAt;
+    item.Channel = updated.Channel;
+    item.Status = updated.Status;
+    item.AssignedToUserId = updated.AssignedToUserId;
+    item.UpdatedAt = DateTime.UtcNow;
+
+    // Set CompletedAt when marked Completed
+    if (item.Status == FollowUpStatus.Completed && item.CompletedAt is null)
+        item.CompletedAt = DateTime.UtcNow;
+
+    // Clear CompletedAt when un-completed
+    if (item.Status != FollowUpStatus.Completed)
+        item.CompletedAt = null;
+
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        item.FollowUpId,
+        item.CustomerId,
+        item.RepairRequestId,
+        item.Subject,
+        item.Notes,
+        item.ScheduledAt,
+        item.CompletedAt,
+        item.Channel,
+        item.Status,
+        item.AssignedToUserId,
+        item.CreatedAt,
+        item.UpdatedAt,
+        item.IsActive
+    });
+});
+
+// ARCHIVE (soft delete)
+app.MapDelete("/tenant/{companyId:int}/follow-ups/{followUpId:int}", async (
+    int companyId,
+    int followUpId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.FollowUps
+        .FirstOrDefaultAsync(x => x.FollowUpId == followUpId);
+
+    if (item is null) return Results.NotFound();
+
+    item.IsActive = false;
+    item.UpdatedAt = DateTime.UtcNow;
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        message = $"Follow-up {followUpId} archived.",
+        item.FollowUpId,
+        item.IsActive
+    });
+});
+
+// RESTORE
+app.MapPost("/tenant/{companyId:int}/follow-ups/{followUpId:int}/restore", async (
+    int companyId,
+    int followUpId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.FollowUps
+        .FirstOrDefaultAsync(x => x.FollowUpId == followUpId);
+
+    if (item is null) return Results.NotFound();
+
+    item.IsActive = true;
+    item.UpdatedAt = DateTime.UtcNow;
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        message = $"Follow-up {followUpId} restored.",
+        item.FollowUpId,
+        item.IsActive
+    });
+});
+
+// ═══════════════════════════════════════════════════════════
+// REPAIR REQUESTS — Full CRUD with status workflow
+// Status: 0 = Pending | 1 = Approved | 2 = InProgress
+//         3 = Completed | 4 = Rejected | 5 = Reassigned
+// Priority: 0 = Low | 1 = Medium | 2 = High | 3 = Urgent
+// ═══════════════════════════════════════════════════════════
+
+// CREATE
 app.MapPost("/tenant/{companyId:int}/repair-requests", async (
     int companyId,
     RepairRequest repairRequest,
@@ -316,6 +759,9 @@ app.MapPost("/tenant/{companyId:int}/repair-requests", async (
         repairRequest.RequestNumber =
             $"REQ-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6]}";
     }
+
+    repairRequest.RequestDate = DateTime.UtcNow;
+    repairRequest.Status = RepairStatus.Pending;
 
     tenantDb.RepairRequests.Add(repairRequest);
     await tenantDb.SaveChangesAsync();
@@ -334,18 +780,32 @@ app.MapPost("/tenant/{companyId:int}/repair-requests", async (
             repairRequest.Status,
             repairRequest.Priority,
             repairRequest.RequestDate,
-            repairRequest.EstimatedCost
+            repairRequest.CompletionDate,
+            repairRequest.EstimatedCost,
+            repairRequest.ActualCost,
+            repairRequest.PartsCost,
+            repairRequest.LaborCost,
+            repairRequest.TechnicianNotes,
+            repairRequest.AssignedToStaffId,
+            repairRequest.AssignedToManagerId
         });
 });
 
+// READ ALL
 app.MapGet("/tenant/{companyId:int}/repair-requests", async (
     int companyId,
+    RepairStatus? status,
     ITenantDbContextFactory tenantFactory) =>
 {
     await using var tenantDb = await tenantFactory.CreateAsync(companyId);
-    var repairRequests = await tenantDb.RepairRequests
-        .AsNoTracking()
-        .OrderBy(x => x.RepairRequestId)
+
+    var query = tenantDb.RepairRequests.AsNoTracking();
+
+    if (status.HasValue)
+        query = query.Where(x => x.Status == status.Value);
+
+    var list = await query
+        .OrderByDescending(x => x.RequestDate)
         .Select(x => new
         {
             x.RepairRequestId,
@@ -358,10 +818,112 @@ app.MapGet("/tenant/{companyId:int}/repair-requests", async (
             x.Status,
             x.Priority,
             x.RequestDate,
-            x.EstimatedCost
+            x.CompletionDate,
+            x.EstimatedCost,
+            x.ActualCost,
+            x.PartsCost,
+            x.LaborCost,
+            x.TechnicianNotes,
+            x.AssignedToStaffId,
+            x.AssignedToManagerId
         })
         .ToListAsync();
-    return Results.Ok(repairRequests);
+
+    return Results.Ok(list);
+});
+
+// READ ONE
+app.MapGet("/tenant/{companyId:int}/repair-requests/{repairRequestId:int}", async (
+    int companyId,
+    int repairRequestId,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.RepairRequests
+        .AsNoTracking()
+        .FirstOrDefaultAsync(x => x.RepairRequestId == repairRequestId);
+
+    if (item is null) return Results.NotFound();
+
+    return Results.Ok(new
+    {
+        item.RepairRequestId,
+        item.RequestNumber,
+        item.CustomerId,
+        item.DeviceId,
+        item.DeviceModel,
+        item.SerialNumber,
+        item.IssueDescription,
+        item.Status,
+        item.Priority,
+        item.RequestDate,
+        item.CompletionDate,
+        item.EstimatedCost,
+        item.ActualCost,
+        item.PartsCost,
+        item.LaborCost,
+        item.TechnicianNotes,
+        item.AssignedToStaffId,
+        item.AssignedToManagerId
+    });
+});
+
+// UPDATE
+app.MapPut("/tenant/{companyId:int}/repair-requests/{repairRequestId:int}", async (
+    int companyId,
+    int repairRequestId,
+    RepairRequest updated,
+    ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+
+    var item = await tenantDb.RepairRequests
+        .FirstOrDefaultAsync(x => x.RepairRequestId == repairRequestId);
+
+    if (item is null) return Results.NotFound();
+
+    item.CustomerId = updated.CustomerId;
+    item.DeviceId = updated.DeviceId;
+    item.DeviceModel = updated.DeviceModel;
+    item.SerialNumber = updated.SerialNumber;
+    item.IssueDescription = updated.IssueDescription;
+    item.Priority = updated.Priority;
+    item.Status = updated.Status;
+    item.EstimatedCost = updated.EstimatedCost;
+    item.ActualCost = updated.ActualCost;
+    item.PartsCost = updated.PartsCost;
+    item.LaborCost = updated.LaborCost;
+    item.TechnicianNotes = updated.TechnicianNotes;
+    item.AssignedToStaffId = updated.AssignedToStaffId;
+    item.AssignedToManagerId = updated.AssignedToManagerId;
+
+    if (item.Status == RepairStatus.Completed && item.CompletionDate is null)
+        item.CompletionDate = DateTime.UtcNow;
+
+    await tenantDb.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        item.RepairRequestId,
+        item.RequestNumber,
+        item.CustomerId,
+        item.DeviceId,
+        item.DeviceModel,
+        item.SerialNumber,
+        item.IssueDescription,
+        item.Status,
+        item.Priority,
+        item.RequestDate,
+        item.CompletionDate,
+        item.EstimatedCost,
+        item.ActualCost,
+        item.PartsCost,
+        item.LaborCost,
+        item.TechnicianNotes,
+        item.AssignedToStaffId,
+        item.AssignedToManagerId
+    });
 });
 
 // ═══════════════════════════════════════════════════════════
