@@ -55,9 +55,7 @@ namespace CRM.winforms
                 // Staff
                 "customers" => new CustomerControl { Dock = DockStyle.Fill },
                 "follow-ups" => new FollowUpListControl { Dock = DockStyle.Fill },
-                "interactions" => new InteractionListControl(InteractionTypeFilter.Inquiry) { Dock = DockStyle.Fill },
-
-                // Manager / Staff
+                "interactions" => new InteractionListControl { Dock = DockStyle.Fill },
                 "repairs" => new RepairRequestListControl { Dock = DockStyle.Fill },
 
                 // Everything else → placeholder
@@ -72,7 +70,6 @@ namespace CRM.winforms
         {
             return key switch
             {
-                // Common
                 "dashboard" => "Dashboard",
 
                 // Staff

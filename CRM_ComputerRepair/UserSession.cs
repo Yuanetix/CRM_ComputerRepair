@@ -3,11 +3,10 @@
     /// <summary>
     /// Holds the currently logged-in user's info.
     /// For this exam demo, the role is hardcoded to Staff.
-    /// Later this will come from the login/API.
     /// </summary>
     public static class UserSession
     {
-        // Hardcoded for exam demo — matches use case "Staff"
+        // Staff user for the exam demo
         public static string UserId { get; set; } = "staff-001";
         public static string FullName { get; set; } = "Juan Dela Cruz";
         public static string Role { get; set; } = "Staff";

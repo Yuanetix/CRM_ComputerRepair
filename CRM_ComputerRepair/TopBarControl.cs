@@ -1,14 +1,20 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace CRM.winforms
 {
     /// <summary>
-    /// Clean top bar — brand on the left, notifications + user chip on the right.
-    /// No page title (sidebar shows it), no search (context-specific).
+    /// Top bar — page title on the left, notifications and the user chip on the right.
+    ///
+    /// UI notes
+    /// --------
+    /// • The brand moved to the sidebar, so this bar answers the one question it should:
+    ///   "where am I?" Title plus optional context line, left aligned to the content.
+    /// • Bell carries a dot for unread and a count pill past one, so the state is readable
+    ///   without opening it.
+    /// • Same neutrals, radii and type scale as the sidebar and the page content.
     /// </summary>
     [DesignerCategory("Code")]
     public class TopBarControl : Panel
@@ -20,12 +26,15 @@ namespace CRM.winforms
 
         // ═══════════ CONTROLS ═══════════
 
-        private Label lblBrand = null!;
-        private Button btnBell = null!;
-        private UserChip userChip = null!;
-        private Panel pnlDivider = null!;
+        private BellButton _bell = null!;
+        private UserChip _chip = null!;
+        private readonly ToolTip _tips = new ToolTip { InitialDelay = 400, ReshowDelay = 150 };
 
         // ═══════════ PROPERTIES ═══════════
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        [Browsable(false)]
+        public string BrandName { get; set; } = "Fixory";
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         [Browsable(false)]
@@ -35,11 +44,23 @@ namespace CRM.winforms
         [Browsable(false)]
         public string UserRole { get; private set; } = "Administrator";
 
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        [Browsable(false)]
+        public int NotificationCount
+        {
+            get => _bell.Count;
+            set { _bell.Count = value; _bell.Invalidate(); }
+        }
+
+        // ═══════════ CONSTRUCTOR ═══════════
+
         public TopBarControl()
         {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
             DoubleBuffered = true;
-            BackColor = AppTheme.Surface;
-            Height = AppTheme.TopBarHeight;
+            BackColor = UiKit.Surface;
+            Height = UiKit.TopBarHeight;
             Dock = DockStyle.Top;
             Padding = new Padding(0);
 
@@ -51,55 +72,16 @@ namespace CRM.winforms
 
         private void BuildUi()
         {
-            // ── Brand ──
-            lblBrand = new Label
-            {
-                Text = "Fixory",
-                Font = new Font("Segoe UI Semibold", 15F),
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                BackColor = Color.Transparent
-            };
+            _bell = new BellButton { Size = new Size(36, 36) };
+            _bell.Click += (s, e) => BellClicked?.Invoke(this, EventArgs.Empty);
+            _tips.SetToolTip(_bell, "Notifications");
 
-            // ── Bell ──
-            btnBell = new Button
-            {
-                Text = IconFont.Bell,
-                Font = IconFont.Create(12F),
-                ForeColor = AppTheme.TextSecondary,
-                BackColor = AppTheme.Neutral,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(40, 40),
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            btnBell.FlatAppearance.BorderSize = 0;
-            btnBell.FlatAppearance.MouseOverBackColor = AppTheme.Border;
-            btnBell.FlatAppearance.MouseDownBackColor = AppTheme.BorderStrong;
-            btnBell.Click += (s, e) => BellClicked?.Invoke(this, EventArgs.Empty);
-            btnBell.Resize += (s, e) =>
-                UiHelpers.ApplyRoundedRegion(btnBell, 20);
+            _chip = new UserChip { Size = new Size(252, 56) };
+            _chip.Click += (s, e) => ProfileClicked?.Invoke(this, EventArgs.Empty);
+            _tips.SetToolTip(_chip, "Account");
 
-            // ── User chip ──
-            userChip = new UserChip
-            {
-                Size = new Size(220, 48),
-                Cursor = Cursors.Hand
-            };
-            userChip.Click += (s, e) => ProfileClicked?.Invoke(this, EventArgs.Empty);
-
-            // ── Bottom divider ──
-            pnlDivider = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 1,
-                BackColor = AppTheme.Divider
-            };
-
-            Controls.Add(lblBrand);
-            Controls.Add(btnBell);
-            Controls.Add(userChip);
-            Controls.Add(pnlDivider);
+            Controls.Add(_bell);
+            Controls.Add(_chip);
 
             Resize += (s, e) => LayoutUi();
         }
@@ -108,18 +90,28 @@ namespace CRM.winforms
 
         private void LayoutUi()
         {
-            // Brand (left)
-            lblBrand.Location = new Point(28, (Height - lblBrand.Height) / 2);
+            _chip.Location = new Point(Width - _chip.Width - UiKit.S5, (Height - _chip.Height) / 2);
+            _bell.Location = new Point(_chip.Left - _bell.Width - UiKit.S5, (Height - _bell.Height) / 2);
+        }
 
-            // User chip (right-most)
-            userChip.Location = new Point(
-                Width - userChip.Width - 20,
-                (Height - userChip.Height) / 2);
+        // ═══════════ PAINT ═══════════
 
-            // Bell (left of user chip)
-            btnBell.Location = new Point(
-                userChip.Left - btnBell.Width - 12,
-                (Height - btnBell.Height) / 2);
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            UiKit.Quality(g);
+
+            using (var b = new SolidBrush(UiKit.Surface))
+                g.FillRectangle(b, ClientRectangle);
+
+            UiKit.HLine(g, 0, Width, Height - 1, UiKit.Line);
+
+            // Brand wordmark, left aligned with a clear margin from the edge.
+            UiKit.Text(g, BrandName, UiKit.Brand, UiKit.Ink,
+                new Rectangle(UiKit.S6, 0, 200, Height - 1), UiKit.Left);
+
+            // Hairline between the utilities and the user chip.
+            UiKit.VLine(g, _chip.Left - UiKit.S3, 18, Height - 19, UiKit.Line);
         }
 
         // ═══════════ PUBLIC METHODS ═══════════
@@ -128,116 +120,141 @@ namespace CRM.winforms
         {
             UserName = fullName;
             UserRole = role;
-            userChip.Invalidate();
+            _chip.Invalidate();
+            Invalidate();
         }
 
-        // ═══════════ USER CHIP (custom control) ═══════════
+        // ═══════════════════════════════════════════════════════════════
+        //  NESTED CONTROLS
+        // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]
-        private class UserChip : Control
+        private sealed class BellButton : Control
         {
-            private bool _hover;
+            private bool _hover, _down;
 
-            public UserChip()
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public int Count { get; set; }
+
+            public BellButton()
             {
-                DoubleBuffered = true;
-               
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.Surface;
                 Cursor = Cursors.Hand;
+                TabStop = true;
             }
 
-            protected override void OnMouseEnter(EventArgs e)
-            {
-                _hover = true; Invalidate(); base.OnMouseEnter(e);
-            }
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
 
-            protected override void OnMouseLeave(EventArgs e)
+            protected override void OnKeyDown(KeyEventArgs e)
             {
-                _hover = false; Invalidate(); base.OnMouseLeave(e);
+                if (e.KeyCode is Keys.Enter or Keys.Space)
+                    InvokeOnClick(this, EventArgs.Empty);
+                base.OnKeyDown(e);
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                UiKit.Quality(g);
 
-                var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+                using (var b = new SolidBrush(UiKit.Surface))
+                    g.FillRectangle(b, ClientRectangle);
 
-                // Hover background
-                if (_hover)
+                if (_down) UiKit.FillRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Line);
+                else if (_hover) UiKit.FillRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Hover);
+
+                if (Focused)
+                    UiKit.StrokeRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Mix(UiKit.Accent, Color.White, 0.4));
+
+                using (var f = UiKit.GlyphFont(11F))
+                    UiKit.Text(g, IconFont.Bell, f, _hover ? UiKit.Ink : UiKit.InkMuted,
+                        ClientRectangle, UiKit.Center);
+
+                if (Count <= 0) return;
+
+                if (Count == 1)
                 {
-                    using var path = GetRoundedPath(rect, 8);
-                    using var brush = new SolidBrush(AppTheme.Neutral);
-                    g.FillPath(brush, path);
+                    UiKit.Dot(g, Width - 11, 11, 8, UiKit.Danger);
+                    UiKit.Dot(g, Width - 11, 11, 4, UiKit.Danger);
                 }
-
-                var topBar = Parent as TopBarControl;
-                string name = topBar?.UserName ?? "User";
-                string role = topBar?.UserRole ?? "";
-
-                // Avatar
-                var avatar = new Rectangle(8, (Height - 36) / 2, 36, 36);
-                using (var path = GetRoundedPath(avatar, 18))
-                using (var brush = new SolidBrush(AppTheme.Primary))
+                else
                 {
-                    g.FillPath(brush, path);
-                }
+                    string txt = Count > 99 ? "99+" : Count.ToString();
+                    var size = UiKit.Measure(txt, UiKit.Micro);
+                    int w = Math.Max(16, size.Width + 8);
+                    var pill = new Rectangle(Width - w - 1, 1, w, 16);
 
-                // Initials
-                var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                string initials = parts.Length >= 2
-                    ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
-                    : (parts.Length == 1 ? parts[0].Substring(0, 1).ToUpperInvariant() : "?");
-
-                using (var f = new Font("Segoe UI Semibold", 10F))
-                using (var b = new SolidBrush(Color.White))
-                {
-                    var sf = new StringFormat
-                    {
-                        Alignment = StringAlignment.Center,
-                        LineAlignment = StringAlignment.Center
-                    };
-                    g.DrawString(initials, f, b, avatar, sf);
-                }
-
-                // Name
-                using (var nameBrush = new SolidBrush(AppTheme.TextPrimary))
-                    g.DrawString(name, AppTheme.FontSidebar, nameBrush,
-                        new PointF(54, 11));
-
-                // Role
-                using (var roleBrush = new SolidBrush(AppTheme.TextMuted))
-                    g.DrawString(role, AppTheme.FontLabel, roleBrush,
-                        new PointF(54, 29));
-
-                // Chevron down
-                using (var chevFont = IconFont.Create(9F))
-                using (var chevBrush = new SolidBrush(AppTheme.TextMuted))
-                {
-                    var sf = new StringFormat
-                    {
-                        Alignment = StringAlignment.Center,
-                        LineAlignment = StringAlignment.Center
-                    };
-                    g.DrawString(IconFont.ChevronDown, chevFont, chevBrush,
-                        new RectangleF(Width - 24, 0, 20, Height), sf);
+                    UiKit.FillRounded(g, pill, 8, UiKit.Danger);
+                    UiKit.Text(g, txt, UiKit.Micro, Color.White, pill, UiKit.Center);
                 }
             }
+        }
 
-            private static GraphicsPath GetRoundedPath(Rectangle rect, int radius)
+        [DesignerCategory("Code")]
+        private sealed class UserChip : Control
+        {
+            private bool _hover, _down;
+
+            public UserChip()
             {
-                var path = new GraphicsPath();
-                int d = radius * 2;
-                if (d > rect.Width) d = rect.Width;
-                if (d > rect.Height) d = rect.Height;
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.Surface;
+                Cursor = Cursors.Hand;
+                TabStop = true;
+            }
 
-                path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-                path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-                path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-                path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-                path.CloseFigure();
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
 
-                return path;
+            protected override void OnKeyDown(KeyEventArgs e)
+            {
+                if (e.KeyCode is Keys.Enter or Keys.Space)
+                    InvokeOnClick(this, EventArgs.Empty);
+                base.OnKeyDown(e);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var b = new SolidBrush(UiKit.Surface))
+                    g.FillRectangle(b, ClientRectangle);
+
+                if (_down) UiKit.FillRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Line);
+                else if (_hover) UiKit.FillRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Hover);
+
+                if (Focused)
+                    UiKit.StrokeRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Mix(UiKit.Accent, Color.White, 0.4));
+
+                var bar = Parent as TopBarControl;
+                string name = bar?.UserName ?? "User";
+                string role = bar?.UserRole ?? "";
+
+                var avatar = new Rectangle(UiKit.S3, (Height - 36) / 2, 36, 36);
+                UiKit.Initials(g, avatar, name, UiKit.Accent, UiKit.SmallStrong);
+
+                int textX = avatar.Right + UiKit.S4;
+                int textW = Width - textX - UiKit.S5;
+
+                UiKit.Text(g, name, UiKit.BodyStrong, UiKit.Ink,
+                    new Rectangle(textX, Height / 2 - 21, textW, 20), UiKit.Left);
+
+                UiKit.Text(g, role, UiKit.Small, UiKit.InkMuted,
+                    new Rectangle(textX, Height / 2 + 1, textW, 20), UiKit.Left);
+
+                using (var f = UiKit.GlyphFont(8F))
+                    UiKit.Text(g, IconFont.ChevronDown, f, UiKit.InkFaint,
+                        new Rectangle(Width - 28, 0, 24, Height), UiKit.Center);
             }
         }
     }

@@ -2,40 +2,47 @@
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace CRM.winforms
 {
-    /// <summary>
-    /// Modal dialog with a dimmed backdrop showing the parent form behind.
-    /// Captures the parent into a bitmap once, then paints it manually
-    /// in OnPaint — no flicker, no sparkle on first frame.
-    /// </summary>
+   
     [DesignerCategory("Code")]
     public class ModalForm : Form
     {
+        // ═══════════ WIN32 / DWM ═══════════
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(
+            IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        private const int DWMWA_TRANSITIONS_FORCEDISABLED = 3;
+
+        // ═══════════ STATE ═══════════
+
         private int _cardWidth = 520;
         private int _cardHeight = 500;
 
         protected Panel pnlCard = null!;
         protected Label lblTitle = null!;
-        protected Button btnClose = null!;
+        protected ModalCloseButton btnClose = null!;
 
         protected const int ShadowPad = 16;
 
-        protected int ContentTopY => ShadowPad + 72;
-        protected int ContentLeftX => ShadowPad + 32;
+        protected static int ContentTopY => ShadowPad + 72;
+        protected static int ContentLeftX => ShadowPad + 32;
         protected int ContentRightX => pnlCard.Width - ShadowPad - 32;
         protected int ContentWidth => ContentRightX - ContentLeftX;
 
-        // Backdrop dim strength (0 = no dim, 255 = black)
         private const int DimAlpha = 110;
 
-        // Fallback if capture fails
         private static readonly Color FallbackBackdrop = Color.FromArgb(200, 208, 220);
 
-        // Captured backdrop — drawn manually in OnPaint (no flicker)
+        // Backdrop bitmap — drawn directly in OnPaint.
         private Bitmap? _backdrop;
+
+        // ═══════════ CONSTRUCTOR ═══════════
 
         public ModalForm()
         {
@@ -45,12 +52,16 @@ namespace CRM.winforms
             KeyPreview = true;
             DoubleBuffered = true;
 
-            BackColor = FallbackBackdrop;
-            Opacity = 1.0;
+            // Opaque + UserPaint so Windows never paints a default background.
+            SetStyle(ControlStyles.Opaque, true);
+            SetStyle(ControlStyles.UserPaint, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint, true);
+            SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
+            SetStyle(ControlStyles.ResizeRedraw, true);
 
-            SetStyle(ControlStyles.OptimizedDoubleBuffer
-                   | ControlStyles.AllPaintingInWmPaint
-                   | ControlStyles.UserPaint, true);
+            BackColor = FallbackBackdrop;
+
+            // Never set Opacity — it adds WS_EX_LAYERED and reintroduces the sparkle.
 
             KeyDown += (s, e) =>
             {
@@ -62,43 +73,46 @@ namespace CRM.winforms
             };
         }
 
-        // ═══════════ DISABLE FADE-IN (no transition) ═══════════
+        // ═══════════ DISABLE DWM OPEN ANIMATION ═══════════
 
-        protected override CreateParams CreateParams
+        protected override void OnHandleCreated(EventArgs e)
         {
-            get
+            base.OnHandleCreated(e);
+
+            try
             {
-                var cp = base.CreateParams;
-                cp.ExStyle |= 0x02000000;   // WS_EX_COMPOSITED — double buffer + no fade
-                return cp;
+                int disable = 1;
+                DwmSetWindowAttribute(
+                    Handle,
+                    DWMWA_TRANSITIONS_FORCEDISABLED,
+                    ref disable,
+                    sizeof(int));
+            }
+            catch
+            {
+                // DWM not present — OS default animation will apply.
             }
         }
 
-        // ═══════════ MANUAL BACKDROP PAINT (no flicker) ═══════════
+        // ═══════════ NO DEFAULT BACKGROUND PAINT ═══════════
 
         protected override void OnPaintBackground(PaintEventArgs e)
         {
-            // Do nothing — we handle background in OnPaint
-            // This prevents the "sparkle" flash on first frame.
+            // No-op. Prevents one visible frame of solid color before backdrop.
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
 
-            // 1. Paint the captured backdrop (parent form, dimmed)
             if (_backdrop != null)
-            {
                 g.DrawImageUnscaled(_backdrop, 0, 0);
-            }
             else
             {
-                // Fallback: solid dim color
                 using var brush = new SolidBrush(FallbackBackdrop);
                 g.FillRectangle(brush, ClientRectangle);
             }
 
-            // 2. Children (card panel) are painted by the base
             base.OnPaint(e);
         }
 
@@ -115,11 +129,15 @@ namespace CRM.winforms
                     ? screen.Bounds
                     : ownerForm.Bounds;
 
+                // Capture BEFORE the modal handle is created.
+                _backdrop = CaptureParentDimmed(ownerForm);
+
                 Location = cover.Location;
                 Size = cover.Size;
 
-                // Capture BEFORE showing — this is the key fix
-                _backdrop = CaptureParentDimmed(ownerForm);
+                // Force handle creation so OnHandleCreated runs (disabling the
+                // DWM animation) before ShowDialog presents the window.
+                var _ = Handle;
 
                 return ShowDialog(ownerForm);
             }
@@ -137,11 +155,9 @@ namespace CRM.winforms
                 int h = parent.Height;
                 if (w <= 0 || h <= 0) return null;
 
-                // 1. Draw parent into a bitmap
                 var snap = new Bitmap(w, h);
                 parent.DrawToBitmap(snap, new Rectangle(0, 0, w, h));
 
-                // 2. Composite a dark overlay
                 using (var g = Graphics.FromImage(snap))
                 using (var brush = new SolidBrush(Color.FromArgb(DimAlpha, 0, 0, 0)))
                 {
@@ -169,7 +185,6 @@ namespace CRM.winforms
                 BackColor = Color.Transparent
             };
 
-            // Card
             pnlCard = new Panel
             {
                 Size = new Size(_cardWidth, _cardHeight),
@@ -179,7 +194,7 @@ namespace CRM.winforms
             pnlCard.Paint += (s, e) =>
             {
                 var g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
+                UiKit.Quality(g);
 
                 var body = new Rectangle(
                     ShadowPad,
@@ -187,57 +202,36 @@ namespace CRM.winforms
                     pnlCard.Width - ShadowPad * 2,
                     pnlCard.Height - ShadowPad * 2);
 
-                // Soft shadow
-                for (int i = 0; i < 6; i++)
+                for (int i = 0; i < 4; i++)
                 {
-                    int alpha = 14 + i * 4;
+                    int alpha = 10 + i * 5;
                     var shadowRect = new Rectangle(
-                        body.X - i - 1,
-                        body.Y - i + 2,
-                        body.Width + i * 2 + 2,
-                        body.Height + i * 2 + 2);
+                        body.X - 1,
+                        body.Y + 2,
+                        body.Width + 2,
+                        body.Height + 2);
+                    shadowRect.Inflate(i * 2, i * 2);
 
-                    using var path = GetRoundedPath(shadowRect, 10 + i);
+                    using var path = UiKit.Rounded(shadowRect, UiKit.Radius + i);
                     using var brush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0));
                     g.FillPath(brush, path);
                 }
 
-                // Solid white card
-                using (var path = GetRoundedPath(body, 10))
-                using (var brush = new SolidBrush(Color.White))
-                    g.FillPath(brush, path);
-
-                // Hairline
-                using (var path = GetRoundedPath(body, 10))
-                using (var pen = new Pen(Color.FromArgb(228, 231, 236), 1))
-                    g.DrawPath(pen, path);
+                UiKit.FillRounded(g, body, UiKit.Radius, UiKit.Surface);
+                UiKit.StrokeRounded(g, body, UiKit.Radius, UiKit.Line);
+                UiKit.HLine(g, body.X + 1, body.Right - 1, ShadowPad + 60, UiKit.Line);
             };
 
-            // Title
             lblTitle = new Label
             {
-                Text = "🔧  " + title,
-                Font = new Font("Segoe UI Semibold", 13F),
-                ForeColor = AppTheme.TextPrimary,
+                Text = title,
+                Font = UiKit.Title,
+                ForeColor = UiKit.Ink,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
 
-            // Close
-            btnClose = new Button
-            {
-                Text = "✕",
-                Font = new Font("Segoe UI Semibold", 10F),
-                ForeColor = AppTheme.TextMuted,
-                BackColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(32, 32),
-                Cursor = Cursors.Hand,
-                TabStop = false
-            };
-            btnClose.FlatAppearance.BorderSize = 0;
-            btnClose.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            btnClose.FlatAppearance.MouseDownBackColor = AppTheme.Border;
+            btnClose = new ModalCloseButton();
             btnClose.Click += (s, e) =>
             {
                 DialogResult = DialogResult.Cancel;
@@ -256,10 +250,9 @@ namespace CRM.winforms
                     (pnlHost.Width - pnlCard.Width) / 2,
                     (pnlHost.Height - pnlCard.Height) / 2);
 
-                lblTitle.Location = new Point(
-                    ShadowPad + 28,
-                    ShadowPad + 22);
+                lblTitle.Location = new Point(ShadowPad + 28, ShadowPad + 24);
 
+                btnClose.Size = new Size(32, 32);
                 btnClose.Location = new Point(
                     pnlCard.Width - ShadowPad - 32,
                     ShadowPad + 16);
@@ -273,22 +266,7 @@ namespace CRM.winforms
         // ═══════════ HELPERS ═══════════
 
         protected static GraphicsPath GetRoundedPath(Rectangle rect, int radius)
-        {
-            var path = new GraphicsPath();
-            int d = radius * 2;
-            if (d > rect.Width) d = rect.Width;
-            if (d > rect.Height) d = rect.Height;
-
-            path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-            path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-            path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-            path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-            path.CloseFigure();
-
-            return path;
-        }
-
-        // ═══════════ CLEANUP ═══════════
+            => UiKit.Rounded(rect, radius);
 
         protected override void Dispose(bool disposing)
         {
@@ -298,6 +276,58 @@ namespace CRM.winforms
                 _backdrop = null;
             }
             base.Dispose(disposing);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        //  CLOSE BUTTON
+        // ═══════════════════════════════════════════════════════════════
+
+        [DesignerCategory("Code")]
+        protected sealed class ModalCloseButton : Control
+        {
+            private bool _hover, _down;
+
+            public ModalCloseButton()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint
+                       | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint
+                       | ControlStyles.ResizeRedraw
+                       | ControlStyles.SupportsTransparentBackColor, true);
+                BackColor = Color.Transparent;
+                Cursor = Cursors.Hand;
+                TabStop = true;
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+
+            protected override void OnKeyDown(KeyEventArgs e)
+            {
+                if (e.KeyCode is Keys.Enter or Keys.Space)
+                    InvokeOnClick(this, EventArgs.Empty);
+                base.OnKeyDown(e);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                if (_down) UiKit.FillRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Line);
+                else if (_hover) UiKit.FillRounded(g, ClientRectangle, UiKit.RadiusSm, UiKit.Hover);
+
+                if (Focused)
+                    UiKit.StrokeRounded(g, ClientRectangle, UiKit.RadiusSm,
+                        UiKit.Mix(UiKit.Accent, Color.White, 0.4));
+
+                using var f = UiKit.GlyphFont(10F);
+                UiKit.Text(g, "\uE711", f,
+                    _hover ? UiKit.Ink : UiKit.InkFaint,
+                    ClientRectangle, UiKit.Center);
+            }
         }
     }
 }

@@ -7,8 +7,8 @@ using System.Windows.Forms;
 namespace CRM.winforms
 {
     /// <summary>
-    /// Modal dialog for Add / Edit on Inquiry, Complaint, or Feedback.
-    /// Same look and feel as CustomerFormDialog.
+    /// Modal dialog for Add / Edit on an Interaction.
+    /// Type is chosen on the form: Inquiry / Complaint / Feedback.
     /// </summary>
     [DesignerCategory("Code")]
     public class InteractionFormDialog : ModalForm
@@ -16,20 +16,22 @@ namespace CRM.winforms
         // ═══════════ STATE ═══════════
 
         private readonly ApiClient _api = new ApiClient();
-        private readonly InteractionTypeFilter _type;
         private readonly InteractionDto? _editing;
         private readonly bool _isEditMode;
+        private readonly InteractionTypeFilter? _presetType;
 
         // ═══════════ CONTROLS ═══════════
 
         private Label lblSubtitle = null!;
 
+        private Label lblType = null!;
         private Label lblSubject = null!;
         private Label lblNotes = null!;
         private Label lblPriority = null!;
         private Label lblStatus = null!;
         private Label lblResolution = null!;
 
+        private ComboBox cmbType = null!;
         private TextField inpSubject = null!;
         private TextField inpNotes = null!;
         private ComboBox cmbPriority = null!;
@@ -46,29 +48,25 @@ namespace CRM.winforms
 
         // ═══════════ CONSTRUCTOR ═══════════
 
-        public InteractionFormDialog(InteractionTypeFilter type, InteractionDto? existing = null)
+        public InteractionFormDialog(
+            InteractionDto? existing = null,
+            InteractionTypeFilter? presetType = null)
         {
-            _type = type;
             _editing = existing;
             _isEditMode = existing != null;
+            _presetType = presetType;
 
             BuildCard(
-                _isEditMode ? $"Edit {SingularText}" : $"Add {SingularText}",
+                _isEditMode ? "Edit Interaction" : "Add Interaction",
                 width: 560,
-                height: _isEditMode ? 700 : 680);
+                height: _isEditMode ? 760 : 740);
 
             BuildContent();
         }
 
-        // ═══════════ TYPE-AWARE LABELS ═══════════
+        // ═══════════ TYPE LABELS ═══════════
 
-        private string SingularText => _type switch
-        {
-            InteractionTypeFilter.Inquiry => "Inquiry",
-            InteractionTypeFilter.Complaint => "Complaint",
-            InteractionTypeFilter.Feedback => "Feedback",
-            _ => "Interaction"
-        };
+        private static readonly string[] TypeNames = { "Question", "Concern", "Review" };
 
         // ═══════════ CONTENT ═══════════
 
@@ -82,8 +80,8 @@ namespace CRM.winforms
             lblSubtitle = new Label
             {
                 Text = _isEditMode
-                    ? $"Update the {SingularText.ToLower()}'s information below."
-                    : $"Enter the {SingularText.ToLower()}'s information below. Fields marked * are required.",
+                    ? "Update the interaction information below."
+                    : "Enter the interaction information below. Fields marked * are required.",
                 Font = AppTheme.FontSubtitle,
                 ForeColor = AppTheme.TextSecondary,
                 AutoSize = false,
@@ -94,6 +92,12 @@ namespace CRM.winforms
             pnlCard.Controls.Add(lblSubtitle);
 
             y += 32;
+
+            // ── Type * ──
+            lblType = MakeLabel("Type *", x, y);
+            y += 20;
+            cmbType = MakeCombo(x, y, w, TypeNames, 0);
+            y += 38 + 14;
 
             // ── Subject * ──
             lblSubject = MakeLabel("Subject *", x, y);
@@ -168,11 +172,19 @@ namespace CRM.winforms
             // ── Prefill ──
             if (_editing != null)
             {
+                // Type locked in edit mode
+                cmbType.SelectedIndex = Clamp(_editing.InteractionType, 0, 2);
+                cmbType.Enabled = false;
+
                 inpSubject.Text = _editing.Subject ?? "";
                 inpNotes.Text = _editing.Notes ?? "";
                 cmbPriority.SelectedIndex = Clamp(_editing.Priority, 0, 2);
                 cmbStatus.SelectedIndex = Clamp(_editing.Status, 0, 2);
                 inpResolution.Text = _editing.Resolution ?? "";
+            }
+            else if (_presetType.HasValue)
+            {
+                cmbType.SelectedIndex = (int)_presetType.Value;
             }
 
             cmbStatus.SelectedIndexChanged += (s, e) => UpdateResolutionState();
@@ -207,7 +219,7 @@ namespace CRM.winforms
             {
                 var dto = new InteractionDto
                 {
-                    InteractionType = (int)_type,
+                    InteractionType = cmbType.SelectedIndex,
                     Subject = inpSubject.Text.Trim(),
                     Notes = inpNotes.Text.Trim(),
                     Priority = cmbPriority.SelectedIndex,
@@ -247,7 +259,7 @@ namespace CRM.winforms
             if (_editing == null) return;
 
             var confirm = MessageBox.Show(
-                $"Archive this {SingularText.ToLower()}?\n\n" +
+                "Archive this interaction?\n\n" +
                 $"\"{_editing.Subject}\"\n\n" +
                 "Data is preserved and can be restored.",
                 "Confirm Archive",
@@ -279,6 +291,13 @@ namespace CRM.winforms
             ClearErrors();
             bool valid = true;
             Control? firstInvalid = null;
+
+            if (cmbType.SelectedIndex < 0)
+            {
+                MessageBox.Show("Please choose a type.",
+                    "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                valid = false;
+            }
 
             if (string.IsNullOrWhiteSpace(inpSubject.Text))
             {

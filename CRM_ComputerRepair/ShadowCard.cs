@@ -6,17 +6,20 @@ using System.Windows.Forms;
 namespace CRM.winforms
 {
     /// <summary>
-    /// White card with a visible hairline border and a soft shadow.
+    /// Flat white card with a 1px hairline. No shadow, no layered paths —
+    /// matches the SurfaceCard used in every list module now.
     /// </summary>
     [DesignerCategory("Code")]
     public class ShadowCard : Panel
     {
-        private const int ShadowPad = 4;
-
         public ShadowCard()
         {
+            SetStyle(ControlStyles.AllPaintingInWmPaint
+                   | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.UserPaint
+                   | ControlStyles.ResizeRedraw, true);
             DoubleBuffered = true;
-            BackColor = AppTheme.Surface;
+            BackColor = AppTheme.Background;
             Padding = new Padding(AppTheme.CardPadding);
         }
 
@@ -24,35 +27,21 @@ namespace CRM.winforms
         {
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
-            var body = new Rectangle(
-                ShadowPad,
-                ShadowPad,
-                Width - ShadowPad * 2 - 1,
-                Height - ShadowPad * 2 - 1);
+            // Erase to the page background first.
+            using (var bg = new SolidBrush(AppTheme.Background))
+                g.FillRectangle(bg, ClientRectangle);
 
-            // Soft outer shadow
-            for (int i = 0; i < ShadowPad; i++)
-            {
-                var shadowRect = new Rectangle(
-                    body.X - i,
-                    body.Y - i + 2,
-                    body.Width + i * 2,
-                    body.Height + i * 2);
+            // Flat card with a hairline.
+            var body = new Rectangle(0, 0, Width - 1, Height - 1);
 
-                using var path = GetRoundedPath(shadowRect, AppTheme.Radius + i);
-                using var brush = new SolidBrush(Color.FromArgb(12 + i * 4, 15, 23, 42));
-                g.FillPath(brush, path);
-            }
-
-            // White card body
             using (var path = GetRoundedPath(body, AppTheme.Radius))
             using (var brush = new SolidBrush(AppTheme.Surface))
                 g.FillPath(brush, path);
 
-            // Visible border
             using (var path = GetRoundedPath(body, AppTheme.Radius))
-            using (var pen = new Pen(Color.FromArgb(215, 219, 226), 1.2f))
+            using (var pen = new Pen(AppTheme.Border, 1f))
                 g.DrawPath(pen, path);
         }
 
@@ -62,6 +51,7 @@ namespace CRM.winforms
             int d = radius * 2;
             if (d > rect.Width) d = rect.Width;
             if (d > rect.Height) d = rect.Height;
+            if (d <= 0) { path.AddRectangle(rect); return path; }
 
             path.AddArc(rect.X, rect.Y, d, d, 180, 90);
             path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);

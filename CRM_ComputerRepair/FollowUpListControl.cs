@@ -2,12 +2,17 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace CRM.winforms
 {
+    /// <summary>
+    /// Follow-Ups list — matches the Interactions module layout.
+    /// </summary>
     [DesignerCategory("Code")]
     public class FollowUpListControl : UserControl
     {
@@ -15,34 +20,37 @@ namespace CRM.winforms
 
         private readonly ApiClient _api = new ApiClient();
         private List<FollowUpDto> _all = new List<FollowUpDto>();
+        private int? _statusFilter = null;   // null = All, 0 = Scheduled, 1 = Completed, 2 = Cancelled
 
         // ═══════════ CONTROLS ═══════════
 
-        private StatTile tileTotal = null!;
-        private StatTile tileScheduled = null!;
-        private StatTile tileCompleted = null!;
-        private StatTile tileCancelled = null!;
-
         private Label lblTitle = null!;
         private Label lblSubtitle = null!;
-        private Button btnAdd = null!;
-        private Button btnRefresh = null!;
+        private FlatButton btnAdd = null!;
 
-        private ShadowCard cardGrid = null!;
+        private MetricStrip strip = null!;
+
+        private SurfaceCard card = null!;
         private Label lblGridTitle = null!;
-        private IconInput inpSearch = null!;
-        private CheckBox chkShowArchived = null!;
+        private Label lblCount = null!;
+        private SegmentedFilter segments = null!;
+        private SearchBox search = null!;
+
         private DataGridView dgv = null!;
-        private Label lblEmpty = null!;
+        private StateView state = null!;
 
         private const string ColActions = "colActions";
         private ContextMenuStrip _actionsMenu = null!;
         private int _menuRowIndex = -1;
+        private int _hoverRow = -1;
+        private readonly ToolTip _tips = new ToolTip { InitialDelay = 500, ReshowDelay = 200 };
 
         // ═══════════ CONSTRUCTOR ═══════════
 
         public FollowUpListControl()
         {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
             DoubleBuffered = true;
             BackColor = AppTheme.Background;
             AutoScaleMode = AutoScaleMode.Font;
@@ -53,44 +61,467 @@ namespace CRM.winforms
             this.Load += async (s, e) => await ReloadAsync();
         }
 
-        // ═══════════ ACTIONS MENU ═══════════
+        // ═══════════ UI BUILD ═══════════
+
+        private void BuildUi()
+        {
+            // ── Header ──
+            lblTitle = new Label
+            {
+                Text = "Follow-Ups",
+                Font = UiKit.T.Title,
+                ForeColor = UiKit.T.Ink,
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+
+            lblSubtitle = new Label
+            {
+                Text = "Outreach and reminders scheduled for your customers",
+                Font = UiKit.T.Subtitle,
+                ForeColor = UiKit.T.InkMuted,
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+
+            btnAdd = new FlatButton("Add follow-up", "\uE710");
+            btnAdd.Click += (s, e) => OpenAddDialog();
+            _tips.SetToolTip(btnAdd, "Add follow-up  (Ctrl+N)");
+
+            Controls.Add(lblTitle);
+            Controls.Add(lblSubtitle);
+            Controls.Add(btnAdd);
+
+            // ── Metric strip ──
+            strip = new MetricStrip();
+            strip.AddItem("Total", null, AppTheme.Primary);
+            strip.AddItem("Scheduled", 0, AppTheme.Warning);
+            strip.AddItem("Completed", 1, AppTheme.Success);
+            strip.AddItem("Cancelled", 2, AppTheme.TextMuted);
+            strip.SelectionChanged += (s, e) =>
+            {
+                _statusFilter = strip.SelectedStatus;
+                ApplySearch();
+            };
+            Controls.Add(strip);
+
+            // ── Workbench card ──
+            card = new SurfaceCard();
+
+            lblGridTitle = new Label
+            {
+                Text = "All follow-ups",
+                Font = UiKit.T.Section,
+                ForeColor = UiKit.T.Ink,
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+
+            lblCount = new Label
+            {
+                Text = "",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkFaint,
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+
+            segments = new SegmentedFilter(new (string, int?)[]
+            {
+                ("All", null),
+                ("Scheduled", 0),
+                ("Completed", 1),
+                ("Cancelled", 2)
+            });
+            segments.SelectionChanged += (s, e) => SetTypeFilter(segments.Selected);
+
+            search = new SearchBox { PlaceholderText = "Search subject, notes or assigned user" };
+            search.Inner.TextChanged += (s, e) => ApplySearch();
+            _tips.SetToolTip(search, "Search  (Ctrl+F)");
+
+            dgv = new DataGridView();
+            StyleGrid(dgv);
+            dgv.CellPainting += Dgv_CellPainting;
+            dgv.CellClick += Dgv_CellClick;
+            dgv.CellDoubleClick += Dgv_CellDoubleClick;
+            dgv.CellMouseEnter += Dgv_CellMouseEnter;
+            dgv.CellMouseLeave += Dgv_CellMouseLeave;
+            dgv.MouseLeave += (s, e) => { _hoverRow = -1; dgv.Invalidate(); };
+            dgv.KeyDown += Dgv_KeyDown;
+
+            state = new StateView { Visible = false };
+
+            card.Controls.Add(lblGridTitle);
+            card.Controls.Add(lblCount);
+            card.Controls.Add(segments);
+            card.Controls.Add(search);
+            card.Controls.Add(dgv);
+            card.Controls.Add(state);
+
+            Controls.Add(card);
+
+            Resize += (s, e) => LayoutUi();
+        }
+
+        // ═══════════ HAIRLINE UNDER HEADER ═══════════
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            UiKit.Quality(e.Graphics);
+
+            int y = lblSubtitle.Bottom + UiKit.T.S4;
+            using var pen = new Pen(UiKit.T.Line, 1);
+            e.Graphics.DrawLine(pen, 0, y, Width, y);
+        }
+
+        // ═══════════ KEYBOARD ═══════════
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            switch (keyData)
+            {
+                case Keys.Control | Keys.F:
+                    search.Inner.Focus();
+                    search.Inner.SelectAll();
+                    return true;
+
+                case Keys.Control | Keys.N:
+                    OpenAddDialog();
+                    return true;
+
+                case Keys.Escape:
+                    if (search.Inner.Text.Length > 0)
+                    {
+                        search.Inner.Clear();
+                        return true;
+                    }
+                    break;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void Dgv_KeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Apps && e.KeyCode != Keys.Enter) return;
+            if (dgv.CurrentRow == null) return;
+
+            _menuRowIndex = dgv.CurrentRow.Index;
+            var r = dgv.GetRowDisplayRectangle(_menuRowIndex, true);
+            _actionsMenu.Show(dgv, new Point(r.Right - 180, r.Bottom));
+            e.Handled = true;
+        }
+
+        // ═══════════ FILTER ═══════════
+
+        private void SetTypeFilter(int? status)
+        {
+            _statusFilter = status;
+
+            lblGridTitle.Text = status switch
+            {
+                0 => "Scheduled follow-ups",
+                1 => "Completed follow-ups",
+                2 => "Cancelled follow-ups",
+                _ => "All follow-ups"
+            };
+
+            lblSubtitle.Text = status switch
+            {
+                0 => "Outreach still waiting to happen",
+                1 => "Follow-ups already completed",
+                2 => "Follow-ups that were cancelled",
+                _ => "Outreach and reminders scheduled for your customers"
+            };
+
+            btnAdd.Text = "Add follow-up";
+
+            LayoutUi();
+            Invalidate();
+
+            _ = ReloadAsync();
+        }
+
+        // ═══════════ LAYOUT ═══════════
+
+        private void LayoutUi()
+        {
+            if (Width <= 0 || Height <= 0) return;
+
+            lblTitle.Location = new Point(0, 0);
+
+            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
+            lblSubtitle.Location = new Point(1, subtitleY);
+
+            btnAdd.Size = new Size(btnAdd.PreferredWidth, UiKit.T.ButtonHeight);
+            btnAdd.Location = new Point(Width - btnAdd.Width, UiKit.T.S1);
+
+            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
+
+            int stripTop = dividerY + UiKit.T.S5;
+            int stripH = Math.Max(UiKit.T.StripHeight, strip.PreferredContentHeight());
+            strip.Location = new Point(0, stripTop);
+            strip.Size = new Size(Width, stripH);
+
+            int cardTop = stripTop + stripH + UiKit.T.S5;
+            int cardHeight = Math.Max(240, Height - cardTop);
+
+            card.Location = new Point(0, cardTop);
+            card.Size = new Size(Width, cardHeight);
+
+            const int cp = UiKit.T.S5;
+
+            lblGridTitle.Location = new Point(cp, UiKit.T.S5 - 2);
+            lblCount.Location = new Point(lblGridTitle.Right + UiKit.T.S2,
+                                          lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
+
+            int toolbarY = lblGridTitle.Bottom + UiKit.T.S4;
+
+            segments.Size = new Size(segments.PreferredWidth, 34);
+            segments.Location = new Point(cp, toolbarY);
+
+            int searchW = Math.Min(280, Math.Max(180, card.Width - cp * 2 - segments.Width - UiKit.T.S4));
+            search.Size = new Size(searchW, UiKit.T.InputHeight);
+            search.Location = new Point(card.Width - cp - searchW, toolbarY + (34 - UiKit.T.InputHeight) / 2);
+
+            int gridTop = toolbarY + 34 + UiKit.T.S4;
+            int gridW = card.Width - cp * 2;
+            int gridH = card.Height - gridTop - cp;
+
+            if (gridW > 100 && gridH > 60)
+            {
+                dgv.Location = new Point(cp, gridTop);
+                dgv.Size = new Size(gridW, gridH);
+                state.Location = new Point(cp, gridTop);
+                state.Size = new Size(gridW, gridH);
+            }
+        }
+
+        // ═══════════ DATA ═══════════
+
+        public async Task ReloadAsync()
+        {
+            try
+            {
+                _all = await _api.GetFollowUpsAsync(null, includeArchived: false);
+                UpdateStats();
+                ApplySearch();
+            }
+            catch (Exception ex)
+            {
+                _all = new List<FollowUpDto>();
+                UpdateStats();
+                ApplySearch();
+
+                MessageBox.Show(
+                    $"Couldn't load follow-ups.\n\n{ex.Message}",
+                    "Connection problem",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        private void UpdateStats()
+        {
+            strip.SetValue(0, _all.Count);
+            strip.SetValue(1, _all.Count(x => x.Status == 0));
+            strip.SetValue(2, _all.Count(x => x.Status == 1));
+            strip.SetValue(3, _all.Count(x => x.Status == 2));
+        }
+
+        private void ApplySearch()
+        {
+            var term = search.Inner.Text?.Trim() ?? string.Empty;
+
+            IEnumerable<FollowUpDto> q = _all;
+
+            if (_statusFilter.HasValue)
+                q = q.Where(x => x.Status == _statusFilter.Value);
+
+            if (!string.IsNullOrEmpty(term))
+            {
+                q = q.Where(x =>
+                    (x.Subject ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (x.Notes ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (x.AssignedToUserId ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var view = q.ToList();
+
+            dgv.DataSource = null;
+            dgv.DataSource = view;
+            ConfigureColumns();
+            AddActionsColumn();
+
+            lblCount.Text = view.Count == _all.Count
+                ? $"{view.Count} {(view.Count == 1 ? "record" : "records")}"
+                : $"{view.Count} of {_all.Count}";
+
+            if (view.Count > 0)
+            {
+                state.Visible = false;
+                dgv.Visible = true;
+                dgv.ClearSelection();
+            }
+            else
+            {
+                dgv.Visible = false;
+
+                if (!string.IsNullOrEmpty(term))
+                    state.Show("\uE721", "No matches",
+                        $"Nothing matches \u201c{term}\u201d. Try a shorter word, or clear the search with Esc.");
+                else if (_statusFilter.HasValue)
+                    state.Show("\uE71C", "Nothing here yet",
+                        "No follow-ups with this status. Pick Total to see them all.");
+                else
+                    state.Show("\uE8BD", "No follow-ups yet",
+                        $"Use \u201c{btnAdd.Text}\u201d to schedule the first one.");
+            }
+        }
+
+        // ═══════════ GRID STYLE ═══════════
+
+        private static void StyleGrid(DataGridView g)
+        {
+            g.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            g.BackgroundColor = UiKit.T.Surface;
+            g.BorderStyle = BorderStyle.None;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            g.EnableHeadersVisualStyles = false;
+            g.GridColor = UiKit.T.LineSoft;
+
+            g.RowHeadersVisible = false;
+            g.AllowUserToAddRows = false;
+            g.AllowUserToDeleteRows = false;
+            g.AllowUserToResizeRows = false;
+            g.AllowUserToOrderColumns = false;
+            g.ReadOnly = true;
+            g.MultiSelect = false;
+            g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+            g.ScrollBars = ScrollBars.Vertical;
+            g.RowTemplate.Height = UiKit.T.RowHeight;
+            g.ColumnHeadersHeight = UiKit.T.HeaderHeight;
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+
+            g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
+            g.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+
+            g.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Font = UiKit.T.Body;
+            g.DefaultCellStyle.SelectionBackColor = UiKit.Wash(AppTheme.Primary);
+            g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+            g.RowsDefaultCellStyle.BackColor = UiKit.T.Surface;
+        }
+
+        private void ConfigureColumns()
+        {
+            foreach (var hidden in new[]
+            {
+                "FollowUpId", "CustomerId", "RepairRequestId",
+                "Channel", "Status", "CompletedAt", "UpdatedAt",
+                "IsActive", "AssignedToUserId", "ActivityStatus"
+            })
+            {
+                if (dgv.Columns[hidden] != null)
+                    dgv.Columns[hidden].Visible = false;
+            }
+
+            void Setup(string name, string header, int width, int displayIndex, bool fill = false)
+            {
+                var c = dgv.Columns[name];
+                if (c == null) return;
+
+                c.HeaderText = header;
+                c.SortMode = DataGridViewColumnSortMode.Automatic;
+                c.AutoSizeMode = fill
+                    ? DataGridViewAutoSizeColumnMode.Fill
+                    : DataGridViewAutoSizeColumnMode.None;
+                if (!fill) c.Width = width;
+                else c.MinimumWidth = 220;
+                c.DisplayIndex = displayIndex;
+            }
+
+            Setup("ChannelText", "Channel", 110, 0);
+            Setup("Subject", "Subject", 0, 1, fill: true);
+            Setup("StatusText", "Status", 130, 2);
+            Setup("ScheduledAt", "Scheduled", 150, 3);
+            Setup("CompletedAtDisplay", "Completed", 150, 4);
+
+            if (dgv.Columns["ScheduledAt"] != null)
+            {
+                dgv.Columns["ScheduledAt"].DefaultCellStyle.Format = "MMM d  HH:mm";
+                dgv.Columns["ScheduledAt"].DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+                dgv.Columns["ScheduledAt"].DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            }
+
+            if (dgv.Columns["CompletedAtDisplay"] != null)
+            {
+                dgv.Columns["CompletedAtDisplay"].DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+                dgv.Columns["CompletedAtDisplay"].DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            }
+
+            if (dgv.Columns["Subject"] != null)
+            {
+                dgv.Columns["Subject"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
+                dgv.Columns["Subject"].DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S4, 0);
+            }
+        }
+
+        // ═══════════ ACTIONS ═══════════
 
         private void BuildActionsMenu()
         {
             _actionsMenu = new ContextMenuStrip
             {
-                Font = new Font("Segoe UI", 9F),
+                Font = UiKit.T.Body,
                 ShowImageMargin = false,
-                BackColor = Color.White,
-                RenderMode = ToolStripRenderMode.System
+                BackColor = UiKit.T.Surface,
+                ForeColor = UiKit.T.Ink,
+                DropShadowEnabled = true,
+                RenderMode = ToolStripRenderMode.Professional,
+                Renderer = new QuietMenuRenderer()
             };
 
-            _actionsMenu.Items.Add("View");
-            _actionsMenu.Items.Add("Update");
-            _actionsMenu.Items.Add("Mark Completed");
-            _actionsMenu.Items.Add("Mark Cancelled");
+            _actionsMenu.Items.Add("View details");
+            _actionsMenu.Items.Add("Edit");
+            _actionsMenu.Items.Add("Mark completed");
+            _actionsMenu.Items.Add("Mark cancelled");
             _actionsMenu.Items.Add(new ToolStripSeparator());
             _actionsMenu.Items.Add("Archive");
 
+            foreach (ToolStripItem item in _actionsMenu.Items)
+                item.Padding = new Padding(UiKit.T.S2, UiKit.T.S1, UiKit.T.S2, UiKit.T.S1);
+
             _actionsMenu.Items[0].Click += OnMenuView;
             _actionsMenu.Items[1].Click += OnMenuUpdate;
-            _actionsMenu.Items[2].Click += async (s, e) => await OnMenuMarkCompleted();
-            _actionsMenu.Items[3].Click += async (s, e) => await OnMenuMarkCancelled();
+            _actionsMenu.Items[2].Click += async (s, e) => await MarkAsync(1);
+            _actionsMenu.Items[3].Click += async (s, e) => await MarkAsync(2);
             _actionsMenu.Items[5].Click += OnMenuArchive;
 
             _actionsMenu.Opening += (s, e) =>
             {
                 if (_menuRowIndex < 0) return;
-                if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto)
-                    return;
+                if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
 
                 var archiveItem = _actionsMenu.Items[5];
                 archiveItem.Text = dto.IsActive ? "Archive" : "Restore";
+                archiveItem.ForeColor = dto.IsActive ? AppTheme.Danger : UiKit.T.Ink;
 
-                // Disable mark actions when already in that state or archived
                 _actionsMenu.Items[2].Enabled = dto.Status != 1 && dto.IsActive;
                 _actionsMenu.Items[3].Enabled = dto.Status != 2 && dto.IsActive;
             };
+
+            _actionsMenu.Closed += (s, e) => { dgv.Invalidate(); };
         }
 
         private void OnMenuView(object? sender, EventArgs e)
@@ -99,18 +530,15 @@ namespace CRM.winforms
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
 
             MessageBox.Show(
-                $"Follow-Up details\n\n" +
-                $"ID:          {dto.FollowUpId}\n" +
-                $"Subject:     {dto.Subject}\n" +
-                $"Channel:     {dto.ChannelText}\n" +
-                $"Status:      {dto.StatusText}\n" +
-                $"Scheduled:   {dto.ScheduledAt:yyyy-MM-dd HH:mm}\n" +
-                (dto.CompletedAt.HasValue ? $"Completed:   {dto.CompletedAt.Value:yyyy-MM-dd HH:mm}\n" : "") +
-                (dto.UpdatedAt.HasValue ? $"Updated:     {dto.UpdatedAt.Value:yyyy-MM-dd HH:mm}\n" : "") +
-                $"Assigned to: {dto.AssignedToUserId ?? "—"}\n" +
-                $"Active:      {dto.ActivityStatus}\n\n" +
-                $"Notes:\n{dto.Notes}",
-                "View Follow-Up",
+                $"{dto.Subject}\n\n" +
+                $"Channel     {dto.ChannelText}\n" +
+                $"Status      {dto.StatusText}\n" +
+                $"Scheduled   {dto.ScheduledAt:MMM d, yyyy  HH:mm}\n" +
+                (dto.CompletedAt.HasValue ? $"Completed   {dto.CompletedAt.Value:MMM d, yyyy  HH:mm}\n" : "") +
+                $"Assigned    {dto.AssignedToUserId ?? "\u2014"}\n" +
+                $"Record      #{dto.FollowUpId}  ·  {dto.ActivityStatus}\n\n" +
+                $"Notes\n{dto.Notes}",
+                "Follow-up details",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         }
@@ -122,24 +550,11 @@ namespace CRM.winforms
             OpenEditDialog(dto);
         }
 
-        private async Task OnMenuMarkCompleted()
+        private async Task MarkAsync(int newStatus)
         {
             if (_menuRowIndex < 0) return;
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
 
-            await UpdateStatusAsync(dto, 1);
-        }
-
-        private async Task OnMenuMarkCancelled()
-        {
-            if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
-
-            await UpdateStatusAsync(dto, 2);
-        }
-
-        private async Task UpdateStatusAsync(FollowUpDto dto, int newStatus)
-        {
             try
             {
                 dto.Status = newStatus;
@@ -149,8 +564,8 @@ namespace CRM.winforms
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Update failed:\n\n{ex.Message}",
-                    "Error",
+                    $"Couldn't update this follow-up.\n\n{ex.Message}",
+                    "Update failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
@@ -167,340 +582,61 @@ namespace CRM.winforms
                 await RestoreAsync(dto);
         }
 
-        // ═══════════ UI BUILD ═══════════
-
-        private void BuildUi()
-        {
-            lblTitle = new Label
-            {
-                Text = "Follow-Ups",
-                Font = AppTheme.FontTitle,
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                BackColor = Color.Transparent
-            };
-
-            lblSubtitle = new Label
-            {
-                Text = "Outreach and follow-up scheduling for customers",
-                Font = AppTheme.FontSubtitle,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent
-            };
-
-            btnAdd = MakePrimaryButton("+   Add Follow-Up");
-            btnAdd.Click += (s, e) => OpenAddDialog();
-
-            btnRefresh = MakeSecondaryButton("Refresh");
-            btnRefresh.Click += async (s, e) => await ReloadAsync();
-
-            Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
-            Controls.Add(btnAdd);
-            Controls.Add(btnRefresh);
-
-            tileTotal = new StatTile { Icon = "\uE716", Label = "Total" };
-            tileScheduled = new StatTile { Icon = "\uE823", Label = "Scheduled" };
-            tileCompleted = new StatTile { Icon = "\uE73E", Label = "Completed" };
-            tileCancelled = new StatTile { Icon = "\uE711", Label = "Cancelled" };
-
-            tileTotal.SetColors(AppTheme.TilePinkBg, AppTheme.TilePinkFg);
-            tileScheduled.SetColors(AppTheme.TileOrangeBg, AppTheme.TileOrangeFg);
-            tileCompleted.SetColors(AppTheme.TileGreenBg, AppTheme.TileGreenFg);
-            tileCancelled.SetColors(AppTheme.TilePurpleBg, AppTheme.TilePurpleFg);
-
-            Controls.Add(tileTotal);
-            Controls.Add(tileScheduled);
-            Controls.Add(tileCompleted);
-            Controls.Add(tileCancelled);
-
-            cardGrid = new ShadowCard
-            {
-                Padding = new Padding(24, 20, 24, 20)
-            };
-
-            lblGridTitle = new Label
-            {
-                Text = "Follow-Up List",
-                Font = AppTheme.FontSection,
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(24, 18)
-            };
-
-            inpSearch = new IconInput
-            {
-                Icon = "\uE721",
-                PlaceholderText = "Search by subject or notes...",
-                Size = new Size(360, AppTheme.InputHeight)
-            };
-            inpSearch.InnerTextBox.TextChanged += (s, e) => ApplySearch();
-
-            chkShowArchived = new CheckBox
-            {
-                Text = "Show archived",
-                Font = AppTheme.FontBody,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent
-            };
-            chkShowArchived.CheckedChanged += async (s, e) => await ReloadAsync();
-
-            dgv = new DataGridView
-            {
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom
-                       | AnchorStyles.Left | AnchorStyles.Right
-            };
-            UiHelpers.StyleGrid(dgv);
-            dgv.CellFormatting += Dgv_CellFormatting;
-            dgv.CellClick += Dgv_CellClick;
-
-            lblEmpty = new Label
-            {
-                Text = "No follow-ups yet.\nClick \"Add Follow-Up\" to get started.",
-                Font = new Font("Segoe UI", 10F),
-                ForeColor = AppTheme.TextMuted,
-                TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.Transparent,
-                Visible = false
-            };
-
-            cardGrid.Controls.Add(lblGridTitle);
-            cardGrid.Controls.Add(inpSearch);
-            cardGrid.Controls.Add(chkShowArchived);
-            cardGrid.Controls.Add(dgv);
-            cardGrid.Controls.Add(lblEmpty);
-
-            Controls.Add(cardGrid);
-
-            Resize += (s, e) => LayoutUi();
-        }
-
-        // ═══════════ LAYOUT ═══════════
-
-        private void LayoutUi()
-        {
-            if (Width <= 0 || Height <= 0) return;
-
-            int pad = 0;
-
-            int headerY = pad;
-            lblTitle.Location = new Point(pad, headerY);
-
-            int subtitleY = headerY + lblTitle.PreferredHeight + 4;
-            lblSubtitle.Location = new Point(pad + 2, subtitleY);
-
-            int btnY = headerY + 4;
-            btnRefresh.Location = new Point(Width - btnRefresh.Width - pad, btnY);
-            btnAdd.Location = new Point(btnRefresh.Left - btnAdd.Width - 12, btnY);
-
-            int headerBottom = subtitleY + lblSubtitle.PreferredHeight;
-            int contentTop = headerBottom + 24;
-
-            int contentAvail = Height - contentTop - pad;
-
-            int cardsHeight = (int)(contentAvail * 0.35);
-            int tableHeight = contentAvail - cardsHeight;
-
-            if (cardsHeight < 160) cardsHeight = 160;
-            if (tableHeight < 220) tableHeight = 220;
-
-            int tileGap = 16;
-            int tileHeight = cardsHeight - 12;
-
-            int avail = Width - pad * 2;
-            int tileWidth = (avail - tileGap * 3) / 4;
-
-            int tilesTop = contentTop;
-
-            tileTotal.Location = new Point(pad, tilesTop);
-            tileScheduled.Location = new Point(pad + (tileWidth + tileGap), tilesTop);
-            tileCompleted.Location = new Point(pad + (tileWidth + tileGap) * 2, tilesTop);
-            tileCancelled.Location = new Point(pad + (tileWidth + tileGap) * 3, tilesTop);
-
-            tileTotal.Size = new Size(tileWidth, tileHeight);
-            tileScheduled.Size = new Size(tileWidth, tileHeight);
-            tileCompleted.Size = new Size(tileWidth, tileHeight);
-            tileCancelled.Size = new Size(tileWidth, tileHeight);
-
-            int gridCardTop = contentTop + cardsHeight;
-
-            cardGrid.Location = new Point(pad, gridCardTop);
-            cardGrid.Size = new Size(Width - pad * 2, tableHeight);
-
-            int cp = 24;
-
-            inpSearch.Location = new Point(cp, 52);
-            inpSearch.Size = new Size(360, AppTheme.InputHeight);
-            chkShowArchived.Location = new Point(cp + 380, 58);
-
-            int gridTop = 106;
-            int gridW = cardGrid.Width - cp * 2;
-            int gridH = cardGrid.Height - gridTop - cp;
-
-            if (gridW > 100 && gridH > 50)
-            {
-                dgv.Location = new Point(cp, gridTop);
-                dgv.Size = new Size(gridW, gridH);
-                lblEmpty.Location = new Point(cp, gridTop);
-                lblEmpty.Size = new Size(gridW, gridH);
-            }
-        }
-
-        // ═══════════ DATA ═══════════
-
-        public async Task ReloadAsync()
-        {
-            try
-            {
-                _all = await _api.GetFollowUpsAsync(
-                    status: null,
-                    includeArchived: chkShowArchived.Checked);
-
-                UpdateStats();
-                ApplySearch();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"Failed to load follow-ups:\n\n{ex.Message}",
-                    "API Error",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
-        }
-
-        private void UpdateStats()
-        {
-            tileTotal.Number = _all.Count.ToString();
-            tileScheduled.Number = _all.Count(x => x.Status == 0).ToString();
-            tileCompleted.Number = _all.Count(x => x.Status == 1).ToString();
-            tileCancelled.Number = _all.Count(x => x.Status == 2).ToString();
-        }
-
-        private void ApplySearch()
-        {
-            var term = inpSearch.Text?.Trim() ?? string.Empty;
-
-            List<FollowUpDto> view;
-
-            if (string.IsNullOrEmpty(term))
-            {
-                view = _all;
-            }
-            else
-            {
-                view = _all.Where(x =>
-                    (x.Subject ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                    (x.Notes ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                    (x.AssignedToUserId ?? "").Contains(term, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-            }
-
-            dgv.DataSource = null;
-            dgv.DataSource = view;
-            HideInternalColumns();
-            AddActionsColumn();
-
-            bool empty = view.Count == 0;
-            lblEmpty.Visible = empty;
-            dgv.Visible = !empty;
-        }
-
-        private void HideInternalColumns()
-        {
-            foreach (var hidden in new[]
-            {
-                "FollowUpId", "CustomerId", "RepairRequestId",
-                "Channel", "Status",
-                "CompletedAt", "UpdatedAt", "IsActive",
-                "Notes", "AssignedToUserId"
-            })
-            {
-                if (dgv.Columns[hidden] != null)
-                    dgv.Columns[hidden].Visible = false;
-            }
-
-            if (dgv.Columns["Subject"] != null)
-                dgv.Columns["Subject"].HeaderText = "Subject";
-
-            if (dgv.Columns["ChannelText"] != null)
-            {
-                dgv.Columns["ChannelText"].HeaderText = "Channel";
-                dgv.Columns["ChannelText"].Width = 90;
-                dgv.Columns["ChannelText"].AutoSizeMode =
-                    DataGridViewAutoSizeColumnMode.None;
-            }
-
-            if (dgv.Columns["StatusText"] != null)
-            {
-                dgv.Columns["StatusText"].HeaderText = "Status";
-                dgv.Columns["StatusText"].Width = 110;
-                dgv.Columns["StatusText"].AutoSizeMode =
-                    DataGridViewAutoSizeColumnMode.None;
-            }
-
-            if (dgv.Columns["ActivityStatus"] != null)
-            {
-                dgv.Columns["ActivityStatus"].HeaderText = "Record";
-                dgv.Columns["ActivityStatus"].Width = 90;
-                dgv.Columns["ActivityStatus"].AutoSizeMode =
-                    DataGridViewAutoSizeColumnMode.None;
-            }
-
-            if (dgv.Columns["ScheduledAt"] != null)
-                dgv.Columns["ScheduledAt"].HeaderText = "Scheduled";
-
-            if (dgv.Columns["CreatedAt"] != null)
-                dgv.Columns["CreatedAt"].HeaderText = "Created";
-        }
-
-        // ═══════════ ACTIONS COLUMN ═══════════
-
         private void AddActionsColumn()
         {
             if (dgv.Columns[ColActions] != null)
                 dgv.Columns.Remove(ColActions);
 
-            var col = new DataGridViewButtonColumn
+            var col = new DataGridViewTextBoxColumn
             {
                 Name = ColActions,
                 HeaderText = "",
-                Text = "⋮",
-                UseColumnTextForButtonValue = true,
-                FlatStyle = FlatStyle.Flat,
-                Width = 45,
+                Width = 44,
                 AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
-                SortMode = DataGridViewColumnSortMode.NotSortable
+                SortMode = DataGridViewColumnSortMode.NotSortable,
+                Resizable = DataGridViewTriState.False,
+                ReadOnly = true
             };
 
-            col.DefaultCellStyle.Font = new Font("Segoe UI", 14F, FontStyle.Bold);
-            col.DefaultCellStyle.ForeColor = AppTheme.TextSecondary;
-            col.DefaultCellStyle.BackColor = Color.White;
-            col.DefaultCellStyle.SelectionBackColor = AppTheme.PrimarySoft;
-            col.DefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
-            col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-
             dgv.Columns.Add(col);
+            col.DisplayIndex = dgv.Columns.Count - 1;
         }
 
         private void Dgv_CellClick(object? sender, DataGridViewCellEventArgs e)
         {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            if (dgv.Columns[e.ColumnIndex].Name != ColActions) return;
+
+            _menuRowIndex = e.RowIndex;
+
+            var cellRect = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
+            _actionsMenu.Show(dgv, new Point(cellRect.Right - 160, cellRect.Bottom));
+        }
+
+        private void Dgv_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
             if (e.RowIndex < 0) return;
+            if (dgv.Rows[e.RowIndex].DataBoundItem is not FollowUpDto dto) return;
+            OpenEditDialog(dto);
+        }
 
-            var colName = dgv.Columns[e.ColumnIndex].Name;
+        private void Dgv_CellMouseEnter(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) { _hoverRow = -1; return; }
 
-            if (colName == ColActions)
-            {
-                _menuRowIndex = e.RowIndex;
+            _hoverRow = e.RowIndex;
+            dgv.Cursor = e.ColumnIndex >= 0 && dgv.Columns[e.ColumnIndex].Name == ColActions
+                ? Cursors.Hand
+                : Cursors.Default;
+            dgv.InvalidateRow(e.RowIndex);
+        }
 
-                var cellRect = dgv.GetCellDisplayRectangle(
-                    e.ColumnIndex, e.RowIndex, true);
-                var menuPos = new Point(cellRect.Left, cellRect.Bottom);
-                _actionsMenu.Show(dgv, menuPos);
-            }
+        private void Dgv_CellMouseLeave(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+            _hoverRow = -1;
+            dgv.InvalidateRow(e.RowIndex);
         }
 
         // ═══════════ ARCHIVE / RESTORE ═══════════
@@ -508,10 +644,9 @@ namespace CRM.winforms
         private async Task ArchiveAsync(FollowUpDto dto)
         {
             var confirm = MessageBox.Show(
-                "Archive this follow-up?\n\n" +
-                $"\"{dto.Subject}\"\n\n" +
-                "Data is preserved and can be restored.",
-                "Confirm Archive",
+                $"Archive \u201c{dto.Subject}\u201d?\n\n" +
+                "It leaves the list but nothing is deleted — you can restore it later.",
+                "Archive follow-up",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
 
@@ -525,8 +660,8 @@ namespace CRM.winforms
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Archive failed:\n\n{ex.Message}",
-                    "Error",
+                    $"Couldn't archive this follow-up.\n\n{ex.Message}",
+                    "Archive failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
@@ -542,40 +677,112 @@ namespace CRM.winforms
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Restore failed:\n\n{ex.Message}",
-                    "Error",
+                    $"Couldn't restore this follow-up.\n\n{ex.Message}",
+                    "Restore failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
         }
 
-        // ═══════════ CELL FORMATTING ═══════════
+        // ═══════════ CELL PAINTING ═══════════
 
-        private void Dgv_CellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+        private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
-            if (e.RowIndex < 0) return;
+            if (e.Graphics == null) return;
 
-            var colName = dgv.Columns[e.ColumnIndex].Name;
+            var g = e.Graphics;
 
-            if (colName == "StatusText" && e.Value is string status)
+            if (e.RowIndex == -1)
             {
-                (Color fg, Color bg) = status switch
-                {
-                    "Scheduled" => (AppTheme.Warning, AppTheme.WarningSoft),
-                    "Completed" => (AppTheme.Success, AppTheme.SuccessSoft),
-                    "Cancelled" => (AppTheme.Danger, AppTheme.DangerSoft),
-                    _ => (AppTheme.TextSecondary, Color.Transparent)
-                };
-                e.CellStyle.ForeColor = fg;
-                e.CellStyle.Font = new Font(AppTheme.FontBody, FontStyle.Bold);
-                e.CellStyle.SelectionForeColor = fg;
+                e.PaintBackground(e.CellBounds, false);
+                e.PaintContent(e.CellBounds);
+                using var hp = new Pen(UiKit.T.Line, 1);
+                g.DrawLine(hp, e.CellBounds.Left, e.CellBounds.Bottom - 1,
+                               e.CellBounds.Right, e.CellBounds.Bottom - 1);
+                e.Handled = true;
+                return;
             }
 
-            if (colName == "ChannelText" && e.Value is string channel)
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            string col = dgv.Columns[e.ColumnIndex].Name;
+            bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
+            bool hovered = e.RowIndex == _hoverRow;
+
+            Color bg = selected
+                ? e.CellStyle!.SelectionBackColor
+                : hovered ? UiKit.T.RowHover : UiKit.T.Surface;
+
+            bool custom = col is "ChannelText" or "StatusText" || col == ColActions;
+
+            using (var b = new SolidBrush(bg))
+                g.FillRectangle(b, e.CellBounds);
+            using (var p = new Pen(UiKit.T.LineSoft, 1))
+                g.DrawLine(p, e.CellBounds.Left, e.CellBounds.Bottom - 1,
+                              e.CellBounds.Right, e.CellBounds.Bottom - 1);
+
+            if (!custom)
             {
-                e.CellStyle.ForeColor = AppTheme.TextPrimary;
-                e.CellStyle.Font = new Font(AppTheme.FontBody, FontStyle.Regular);
-                e.CellStyle.SelectionForeColor = AppTheme.TextPrimary;
+                e.PaintContent(e.CellBounds);
+                e.Handled = true;
+                return;
+            }
+
+            UiKit.Quality(g);
+            var r = e.CellBounds;
+            string text = e.FormattedValue?.ToString() ?? string.Empty;
+
+            if (col == ColActions)
+            {
+                var color = hovered ? UiKit.T.InkMuted : UiKit.T.InkFaint;
+                UiKit.Text(g, "\u22EF", new Font("Segoe UI", 13F, FontStyle.Bold), color, r,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                e.Handled = true;
+                return;
+            }
+
+            if (col == "ChannelText")
+            {
+                Color accent = text switch
+                {
+                    "Call" => AppTheme.Primary,
+                    "Email" => AppTheme.Success,
+                    "SMS" => AppTheme.Warning,
+                    "Visit" => AppTheme.Danger,
+                    _ => UiKit.T.InkFaint
+                };
+
+                int cx = r.Left + UiKit.T.S3 + 3;
+                UiKit.Dot(g, cx, r.Top + r.Height / 2, 7, accent);
+
+                var textRect = new Rectangle(cx + UiKit.T.S3 - 2, r.Top, r.Width - (cx - r.Left) - UiKit.T.S3, r.Height);
+                UiKit.Text(g, text, UiKit.T.Body, UiKit.T.Ink, textRect,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+                e.Handled = true;
+                return;
+            }
+
+            if (col == "StatusText")
+            {
+                Color accent = text switch
+                {
+                    "Scheduled" => AppTheme.Warning,
+                    "Completed" => AppTheme.Success,
+                    "Cancelled" => AppTheme.Danger,
+                    _ => UiKit.T.InkMuted
+                };
+
+                var size = UiKit.Measure(text, UiKit.T.SmallStrong);
+                int pillW = size.Width + UiKit.T.S4;
+                int pillH = 22;
+                var pill = new Rectangle(r.Left + UiKit.T.S3, r.Top + (r.Height - pillH) / 2, pillW, pillH);
+
+                UiKit.FillRounded(g, pill, UiKit.T.PillRadius, UiKit.Wash(accent));
+                UiKit.Text(g, text, UiKit.T.SmallStrong, accent, pill,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+                e.Handled = true;
             }
         }
 
@@ -585,62 +792,542 @@ namespace CRM.winforms
         {
             using var dlg = new FollowUpFormDialog(null);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-            {
                 _ = ReloadAsync();
-            }
         }
 
         private void OpenEditDialog(FollowUpDto dto)
         {
             using var dlg = new FollowUpFormDialog(dto);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-            {
                 _ = ReloadAsync();
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        //  NESTED UI COMPONENTS (same as Interactions / Customers)
+        // ═══════════════════════════════════════════════════════════════
+
+        [DesignerCategory("Code")]
+        private sealed class SurfaceCard : Panel
+        {
+            public SurfaceCard()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                UiKit.Quality(e.Graphics);
+                using (var b = new SolidBrush(AppTheme.Background))
+                    e.Graphics.FillRectangle(b, ClientRectangle);
+                UiKit.Card(e.Graphics, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
+                base.OnPaint(e);
             }
         }
 
-        // ═══════════ BUTTON FACTORIES ═══════════
-
-        private Button MakePrimaryButton(string text)
+        [DesignerCategory("Code")]
+        private sealed class MetricStrip : Control
         {
-            var btn = new Button
+            private sealed class Item
             {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(190, AppTheme.ButtonHeight),
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            btn.FlatAppearance.BorderSize = 0;
-            btn.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            btn.FlatAppearance.MouseDownBackColor = AppTheme.PrimaryActive;
-            btn.Resize += (s, e) =>
-                UiHelpers.ApplyRoundedRegion(btn, AppTheme.ButtonRadius);
-            return btn;
+                public int? Status;
+                public Color Accent = Color.Black;
+                public Label CapLabel = null!;
+                public Label ValLabel = null!;
+            }
+
+            private const int SegPad = UiKit.T.S5;
+            private const int DotOffset = SegPad + 3;
+            private const int CapOffset = SegPad + UiKit.T.S4 - 2;
+
+            private readonly List<Item> _items = new();
+            private int _hover = -1;
+            private int _selected = 0;
+
+            public event EventHandler? SelectionChanged;
+
+            public int? SelectedStatus =>
+                _selected >= 0 && _selected < _items.Count ? _items[_selected].Status : null;
+
+            public MetricStrip()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+                Resize += (s, e) => LayoutItems();
+            }
+
+            public void AddItem(string caption, int? status, Color accent)
+            {
+                int index = _items.Count;
+
+                var cap = new Label
+                {
+                    Text = caption,
+                    Font = UiKit.T.Small,
+                    ForeColor = UiKit.T.InkMuted,
+                    AutoSize = true,
+                    BackColor = Color.Transparent,
+                    Cursor = Cursors.Hand
+                };
+
+                var val = new Label
+                {
+                    Text = "0",
+                    Font = UiKit.T.Metric,
+                    ForeColor = UiKit.T.Ink,
+                    AutoSize = true,
+                    BackColor = Color.Transparent,
+                    Cursor = Cursors.Hand
+                };
+
+                cap.Click += (s, e) => Select(index);
+                val.Click += (s, e) => Select(index);
+                cap.MouseEnter += (s, e) => { _hover = index; Invalidate(); };
+                val.MouseEnter += (s, e) => { _hover = index; Invalidate(); };
+                cap.MouseLeave += (s, e) => { if (_hover == index) { _hover = -1; Invalidate(); } };
+                val.MouseLeave += (s, e) => { if (_hover == index) { _hover = -1; Invalidate(); } };
+
+                Controls.Add(cap);
+                Controls.Add(val);
+
+                _items.Add(new Item { Status = status, Accent = accent, CapLabel = cap, ValLabel = val });
+                UpdateColors();
+                LayoutItems();
+            }
+
+            public void SetValue(int index, int value)
+            {
+                if (index < 0 || index >= _items.Count) return;
+                _items[index].ValLabel.Text = value.ToString();
+            }
+
+            private void Select(int i)
+            {
+                if (i < 0 || i == _selected) return;
+                _selected = i;
+                UpdateColors();
+                Invalidate();
+                SelectionChanged?.Invoke(this, EventArgs.Empty);
+            }
+
+            private void UpdateColors()
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    bool active = i == _selected;
+                    var it = _items[i];
+                    it.CapLabel.ForeColor = active ? UiKit.T.Ink : UiKit.T.InkMuted;
+                    it.ValLabel.ForeColor = active ? it.Accent : UiKit.T.Ink;
+                }
+            }
+
+            private void LayoutItems()
+            {
+                if (_items.Count == 0 || Width <= 0) return;
+
+                int segW = Width / _items.Count;
+
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var it = _items[i];
+                    int segLeft = i * segW;
+
+                    it.CapLabel.Location = new Point(segLeft + CapOffset, UiKit.T.S4);
+                    it.ValLabel.Location = new Point(segLeft + SegPad, it.CapLabel.Bottom + UiKit.T.S1);
+                }
+            }
+
+            public int PreferredContentHeight()
+            {
+                if (_items.Count == 0) return UiKit.T.StripHeight;
+
+                int capH = _items.Max(x => x.CapLabel.Height);
+                int valH = _items.Max(x => x.ValLabel.Height);
+
+                return UiKit.T.S4 + capH + UiKit.T.S1 + valH + UiKit.T.S3;
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var b = new SolidBrush(AppTheme.Background))
+                    g.FillRectangle(b, ClientRectangle);
+
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
+
+                if (_items.Count == 0) return;
+
+                int segW = Width / _items.Count;
+
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var it = _items[i];
+                    var seg = new Rectangle(i * segW, 0, segW, Height);
+                    bool active = i == _selected;
+                    bool hot = i == _hover;
+
+                    if (hot && !active)
+                    {
+                        var wash = Rectangle.Inflate(seg, -UiKit.T.S2, -UiKit.T.S2);
+                        UiKit.FillRounded(g, wash, 8, UiKit.T.RowHover);
+                    }
+
+                    if (i > 0)
+                    {
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        g.DrawLine(pen, seg.Left, UiKit.T.S5, seg.Left, Height - UiKit.T.S5);
+                    }
+
+                    UiKit.Dot(g, seg.Left + DotOffset, it.CapLabel.Top + it.CapLabel.Height / 2, 7,
+                        active ? it.Accent : UiKit.Mix(it.Accent, Color.White, 0.45));
+
+                    if (active)
+                    {
+                        var bar = new Rectangle(seg.Left + SegPad, Height - 4, 28, 2);
+                        UiKit.FillRounded(g, bar, 1, it.Accent);
+                    }
+                }
+            }
         }
 
-        private Button MakeSecondaryButton(string text)
+        [DesignerCategory("Code")]
+        private sealed class SegmentedFilter : Control
         {
-            var btn = new Button
+            private readonly (string Label, int? Value)[] _items;
+            private readonly int[] _widths;
+            private int _hover = -1;
+            private int _selected = 0;
+
+            public event EventHandler? SelectionChanged;
+            public int? Selected => _items[_selected].Value;
+
+            public SegmentedFilter((string, int?)[] items)
             {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(120, AppTheme.ButtonHeight),
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            btn.FlatAppearance.BorderSize = 1;
-            btn.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            btn.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            btn.Resize += (s, e) =>
-                UiHelpers.ApplyRoundedRegion(btn, AppTheme.ButtonRadius);
-            return btn;
+                _items = items;
+                _widths = new int[items.Length];
+
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.T.Surface;
+                Cursor = Cursors.Hand;
+                Font = UiKit.T.SmallStrong;
+
+                for (int i = 0; i < _items.Length; i++)
+                    _widths[i] = UiKit.Measure(_items[i].Label, UiKit.T.SmallStrong).Width + UiKit.T.S5;
+            }
+
+            public int PreferredWidth => _widths.Sum() + UiKit.T.S1 * 2;
+
+            private int IndexAt(Point p)
+            {
+                int x = UiKit.T.S1;
+                for (int i = 0; i < _items.Length; i++)
+                {
+                    if (p.X >= x && p.X < x + _widths[i]) return i;
+                    x += _widths[i];
+                }
+                return -1;
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                int i = IndexAt(e.Location);
+                if (i != _hover) { _hover = i; Invalidate(); }
+                base.OnMouseMove(e);
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                _hover = -1; Invalidate(); base.OnMouseLeave(e);
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                int i = IndexAt(e.Location);
+                if (i >= 0 && i != _selected)
+                {
+                    _selected = i;
+                    Invalidate();
+                    SelectionChanged?.Invoke(this, EventArgs.Empty);
+                }
+                base.OnMouseClick(e);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var b = new SolidBrush(UiKit.T.Surface))
+                    g.FillRectangle(b, ClientRectangle);
+
+                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 8, UiKit.T.LineSoft);
+
+                int x = UiKit.T.S1;
+                for (int i = 0; i < _items.Length; i++)
+                {
+                    var seg = new Rectangle(x, UiKit.T.S1 - 1, _widths[i], Height - (UiKit.T.S1 - 1) * 2);
+                    bool active = i == _selected;
+
+                    if (active)
+                    {
+                        UiKit.FillRounded(g, seg, 6, UiKit.T.Surface);
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 6);
+                        g.DrawPath(pen, path);
+                    }
+
+                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.InkMuted : UiKit.T.InkFaint);
+                    UiKit.Text(g, _items[i].Label, UiKit.T.SmallStrong, fg, seg,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+                    x += _widths[i];
+                }
+            }
+        }
+
+        [DesignerCategory("Code")]
+        private sealed class SearchBox : Control
+        {
+            public TextBox Inner { get; }
+            private bool _focused;
+            private bool _hoverClear;
+
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public string PlaceholderText
+            {
+                get => Inner.PlaceholderText;
+                set => Inner.PlaceholderText = value;
+            }
+
+            public SearchBox()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.T.Surface;
+
+                Inner = new TextBox
+                {
+                    BorderStyle = BorderStyle.None,
+                    Font = UiKit.T.Body,
+                    ForeColor = UiKit.T.Ink,
+                    BackColor = UiKit.T.Surface
+                };
+                Inner.GotFocus += (s, e) => { _focused = true; Invalidate(); };
+                Inner.LostFocus += (s, e) => { _focused = false; Invalidate(); };
+                Inner.TextChanged += (s, e) => Invalidate();
+
+                Controls.Add(Inner);
+            }
+
+            protected override void OnResize(EventArgs e)
+            {
+                base.OnResize(e);
+                int left = 34;
+                Inner.Location = new Point(left, (Height - Inner.PreferredHeight) / 2);
+                Inner.Width = Width - left - 34;
+            }
+
+            private Rectangle ClearRect => new Rectangle(Width - 28, (Height - 20) / 2, 20, 20);
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                bool hot = Inner.Text.Length > 0 && ClearRect.Contains(e.Location);
+                if (hot != _hoverClear) { _hoverClear = hot; Invalidate(); }
+                Cursor = hot ? Cursors.Hand : Cursors.IBeam;
+                base.OnMouseMove(e);
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                if (Inner.Text.Length > 0 && ClearRect.Contains(e.Location))
+                    Inner.Clear();
+                Inner.Focus();
+                base.OnMouseClick(e);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var b = new SolidBrush(UiKit.T.Surface))
+                    g.FillRectangle(b, ClientRectangle);
+
+                var box = new Rectangle(0, 0, Width, Height);
+                UiKit.FillRounded(g, box, 8, UiKit.T.Surface);
+
+                var border = _focused ? AppTheme.Primary : UiKit.T.Line;
+                using (var path = UiKit.Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 8))
+                using (var pen = new Pen(border, _focused ? 1.4f : 1f))
+                    g.DrawPath(pen, path);
+
+                UiKit.Text(g, "\uE721", UiKit.T.Glyph, _focused ? AppTheme.Primary : UiKit.T.InkFaint,
+                    new Rectangle(10, 0, 20, Height),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                if (Inner.Text.Length > 0)
+                {
+                    UiKit.Text(g, "\uE711", new Font("Segoe MDL2 Assets", 9F),
+                        _hoverClear ? UiKit.T.Ink : UiKit.T.InkFaint, ClearRect,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
+            }
+        }
+
+        [DesignerCategory("Code")]
+        private sealed class FlatButton : Control
+        {
+            private readonly string _glyph;
+            private bool _hover, _down;
+
+            public FlatButton(string text, string glyph)
+            {
+                _glyph = glyph;
+                Text = text;
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+                Cursor = Cursors.Hand;
+                Font = UiKit.T.BodyStrong;
+                TabStop = true;
+            }
+
+            public int PreferredWidth => UiKit.Measure(Text, UiKit.T.BodyStrong).Width + 56;
+
+            protected override void OnTextChanged(EventArgs e)
+            {
+                base.OnTextChanged(e);
+                Width = PreferredWidth;
+                Invalidate();
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+            protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+            protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+            protected override void OnKeyDown(KeyEventArgs e)
+            {
+                if (e.KeyCode is Keys.Enter or Keys.Space)
+                    InvokeOnClick(this, EventArgs.Empty);
+                base.OnKeyDown(e);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var b = new SolidBrush(AppTheme.Background))
+                    g.FillRectangle(b, ClientRectangle);
+
+                Color bg = _down ? AppTheme.PrimaryActive
+                         : _hover ? AppTheme.PrimaryHover
+                         : AppTheme.Primary;
+
+                UiKit.FillRounded(g, ClientRectangle, 8, bg);
+
+                if (Focused)
+                {
+                    var ring = Rectangle.Inflate(ClientRectangle, -3, -3);
+                    using var path = UiKit.Rounded(ring, 6);
+                    using var pen = new Pen(Color.FromArgb(120, Color.White), 1.2f);
+                    g.DrawPath(pen, path);
+                }
+
+                UiKit.Text(g, _glyph, new Font("Segoe MDL2 Assets", 10F), Color.White,
+                    new Rectangle(16, 0, 18, Height),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                UiKit.Text(g, Text, UiKit.T.BodyStrong, Color.White,
+                    new Rectangle(36, 0, Width - 46, Height),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            }
+        }
+
+        [DesignerCategory("Code")]
+        private sealed class StateView : Control
+        {
+            private string _glyph = "";
+            private string _title = "";
+            private string _message = "";
+
+            public StateView()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.T.Surface;
+            }
+
+            public void Show(string glyph, string title, string message)
+            {
+                _glyph = glyph; _title = title; _message = message;
+                Visible = true;
+                BringToFront();
+                Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var b = new SolidBrush(UiKit.T.Surface))
+                    g.FillRectangle(b, ClientRectangle);
+
+                int cy = Height / 2 - 40;
+
+                var circle = new Rectangle(Width / 2 - 26, cy, 52, 52);
+                UiKit.FillRounded(g, circle, 26, UiKit.T.LineSoft);
+                UiKit.Text(g, _glyph, UiKit.T.GlyphLarge, UiKit.T.InkFaint, circle,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+                UiKit.Text(g, _title, UiKit.T.Section, UiKit.T.Ink,
+                    new Rectangle(0, circle.Bottom + UiKit.T.S4, Width, 24),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
+
+                int msgW = Math.Min(420, Width - UiKit.T.S6 * 2);
+                UiKit.Text(g, _message, UiKit.T.Body, UiKit.T.InkMuted,
+                    new Rectangle((Width - msgW) / 2, circle.Bottom + UiKit.T.S4 + 28, msgW, 60),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.WordBreak);
+            }
+        }
+
+        private sealed class QuietMenuRenderer : ToolStripProfessionalRenderer
+        {
+            public QuietMenuRenderer() : base(new Colors()) { RoundedEdges = false; }
+
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                var r = new Rectangle(4, 0, e.Item.Width - 8, e.Item.Height);
+                if (e.Item.Selected)
+                    UiKit.FillRounded(e.Graphics, r, 6, UiKit.T.RowHover);
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                using var pen = new Pen(UiKit.T.LineSoft, 1);
+                int y = e.Item.Height / 2;
+                e.Graphics.DrawLine(pen, 8, y, e.Item.Width - 8, y);
+            }
+
+            private sealed class Colors : ProfessionalColorTable
+            {
+                public override Color ToolStripDropDownBackground => UiKit.T.Surface;
+                public override Color MenuBorder => UiKit.T.Line;
+                public override Color MenuItemBorder => Color.Transparent;
+                public override Color ImageMarginGradientBegin => UiKit.T.Surface;
+                public override Color ImageMarginGradientMiddle => UiKit.T.Surface;
+                public override Color ImageMarginGradientEnd => UiKit.T.Surface;
+            }
         }
     }
 }
