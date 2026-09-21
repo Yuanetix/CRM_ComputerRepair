@@ -1,4 +1,6 @@
-﻿using System;
+﻿using CRM.winforms.Auth;
+using CRM.winforms;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -8,19 +10,19 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace CRM.winforms
+namespace CRM.winforms.Controls
 {
     /// <summary>
-    /// Follow-Ups list — matches the Interactions module layout.
+    /// Repair Requests list — matches the Interactions / Customers / Follow-Ups layout.
     /// </summary>
     [DesignerCategory("Code")]
-    public class FollowUpListControl : UserControl
+    public class RepairRequestListControl : UserControl
     {
         // ═══════════ STATE ═══════════
 
         private readonly ApiClient _api = new ApiClient();
-        private List<FollowUpDto> _all = new List<FollowUpDto>();
-        private int? _statusFilter = null;   // null = All, 0 = Scheduled, 1 = Completed, 2 = Cancelled
+        private List<RepairRequestDto> _all = new List<RepairRequestDto>();
+        private int? _statusFilter = null;   // null = All
 
         // ═══════════ CONTROLS ═══════════
 
@@ -47,7 +49,7 @@ namespace CRM.winforms
 
         // ═══════════ CONSTRUCTOR ═══════════
 
-        public FollowUpListControl()
+        public RepairRequestListControl()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                    | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
@@ -68,7 +70,7 @@ namespace CRM.winforms
             // ── Header ──
             lblTitle = new Label
             {
-                Text = "Follow-Ups",
+                Text = "Repair Requests",
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
@@ -77,16 +79,16 @@ namespace CRM.winforms
 
             lblSubtitle = new Label
             {
-                Text = "Outreach and reminders scheduled for your customers",
+                Text = "Repair jobs in progress across your shop",
                 Font = UiKit.T.Subtitle,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
 
-            btnAdd = new FlatButton("Add follow-up", "\uE710");
+            btnAdd = new FlatButton("New repair request", "\uE710");
             btnAdd.Click += (s, e) => OpenAddDialog();
-            _tips.SetToolTip(btnAdd, "Add follow-up  (Ctrl+N)");
+            _tips.SetToolTip(btnAdd, "New repair request  (Ctrl+N)");
 
             Controls.Add(lblTitle);
             Controls.Add(lblSubtitle);
@@ -95,9 +97,9 @@ namespace CRM.winforms
             // ── Metric strip ──
             strip = new MetricStrip();
             strip.AddItem("Total", null, AppTheme.Primary);
-            strip.AddItem("Scheduled", 0, AppTheme.Warning);
-            strip.AddItem("Completed", 1, AppTheme.Success);
-            strip.AddItem("Cancelled", 2, AppTheme.TextMuted);
+            strip.AddItem("Pending", 0, AppTheme.Warning);
+            strip.AddItem("In progress", 1, AppTheme.Primary);
+            strip.AddItem("Completed", 2, AppTheme.Success);
             strip.SelectionChanged += (s, e) =>
             {
                 _statusFilter = strip.SelectedStatus;
@@ -110,7 +112,7 @@ namespace CRM.winforms
 
             lblGridTitle = new Label
             {
-                Text = "All follow-ups",
+                Text = "All repair requests",
                 Font = UiKit.T.Section,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
@@ -129,13 +131,13 @@ namespace CRM.winforms
             segments = new SegmentedFilter(new (string, int?)[]
             {
                 ("All", null),
-                ("Scheduled", 0),
-                ("Completed", 1),
-                ("Cancelled", 2)
+                ("Pending", 0),
+                ("In progress", 1),
+                ("Completed", 2)
             });
             segments.SelectionChanged += (s, e) => SetTypeFilter(segments.Selected);
 
-            search = new SearchBox { PlaceholderText = "Search subject, notes or assigned user" };
+            search = new SearchBox { PlaceholderText = "Search request #, device, serial, issue" };
             search.Inner.TextChanged += (s, e) => ApplySearch();
             _tips.SetToolTip(search, "Search  (Ctrl+F)");
 
@@ -220,21 +222,19 @@ namespace CRM.winforms
 
             lblGridTitle.Text = status switch
             {
-                0 => "Scheduled follow-ups",
-                1 => "Completed follow-ups",
-                2 => "Cancelled follow-ups",
-                _ => "All follow-ups"
+                0 => "Pending repair requests",
+                1 => "Repairs in progress",
+                2 => "Completed repairs",
+                _ => "All repair requests"
             };
 
             lblSubtitle.Text = status switch
             {
-                0 => "Outreach still waiting to happen",
-                1 => "Follow-ups already completed",
-                2 => "Follow-ups that were cancelled",
-                _ => "Outreach and reminders scheduled for your customers"
+                0 => "Jobs waiting to be started",
+                1 => "Jobs currently on the bench",
+                2 => "Jobs finished and returned",
+                _ => "Repair jobs in progress across your shop"
             };
-
-            btnAdd.Text = "Add follow-up";
 
             LayoutUi();
             Invalidate();
@@ -303,18 +303,18 @@ namespace CRM.winforms
         {
             try
             {
-                _all = await _api.GetFollowUpsAsync(null, includeArchived: false);
+                _all = await _api.GetRepairRequestsAsync();
                 UpdateStats();
                 ApplySearch();
             }
             catch (Exception ex)
             {
-                _all = new List<FollowUpDto>();
+                _all = new List<RepairRequestDto>();
                 UpdateStats();
                 ApplySearch();
 
                 MessageBox.Show(
-                    $"Couldn't load follow-ups.\n\n{ex.Message}",
+                    $"Couldn't load repair requests.\n\n{ex.Message}",
                     "Connection problem",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
@@ -333,7 +333,7 @@ namespace CRM.winforms
         {
             var term = search.Inner.Text?.Trim() ?? string.Empty;
 
-            IEnumerable<FollowUpDto> q = _all;
+            IEnumerable<RepairRequestDto> q = _all;
 
             if (_statusFilter.HasValue)
                 q = q.Where(x => x.Status == _statusFilter.Value);
@@ -341,9 +341,11 @@ namespace CRM.winforms
             if (!string.IsNullOrEmpty(term))
             {
                 q = q.Where(x =>
-                    (x.Subject ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                    (x.Notes ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                    (x.AssignedToUserId ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+                    (x.RequestNumber ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (x.DeviceModel ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (x.SerialNumber ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (x.IssueDescription ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (x.TechnicianNotes ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
             }
 
             var view = q.ToList();
@@ -372,10 +374,10 @@ namespace CRM.winforms
                         $"Nothing matches \u201c{term}\u201d. Try a shorter word, or clear the search with Esc.");
                 else if (_statusFilter.HasValue)
                     state.Show("\uE71C", "Nothing here yet",
-                        "No follow-ups with this status. Pick Total to see them all.");
+                        "No repair requests with this status. Pick Total to see them all.");
                 else
-                    state.Show("\uE8BD", "No follow-ups yet",
-                        $"Use \u201c{btnAdd.Text}\u201d to schedule the first one.");
+                    state.Show("\uE90F", "No repair requests yet",
+                        $"Use \u201c{btnAdd.Text}\u201d to log the first one.");
             }
         }
 
@@ -427,9 +429,10 @@ namespace CRM.winforms
         {
             foreach (var hidden in new[]
             {
-                "FollowUpId", "CustomerId", "RepairRequestId",
-                "Channel", "Status", "CompletedAt", "UpdatedAt",
-                "IsActive", "AssignedToUserId", "ActivityStatus"
+                "RepairRequestId", "CustomerId", "DeviceId",
+                "Status", "Priority",
+                "ActualCost", "PartsCost", "LaborCost",
+                "AssignedToManagerId", "TechnicianNotes"
             })
             {
                 if (dgv.Columns[hidden] != null)
@@ -447,34 +450,29 @@ namespace CRM.winforms
                     ? DataGridViewAutoSizeColumnMode.Fill
                     : DataGridViewAutoSizeColumnMode.None;
                 if (!fill) c.Width = width;
-                else c.MinimumWidth = 220;
+                else c.MinimumWidth = 180;
                 c.DisplayIndex = displayIndex;
             }
 
-            Setup("ChannelText", "Channel", 110, 0);
-            Setup("Subject", "Subject", 0, 1, fill: true);
-            Setup("StatusText", "Status", 130, 2);
-            Setup("ScheduledAt", "Scheduled", 150, 3);
-            Setup("CompletedAtDisplay", "Completed", 150, 4);
+            Setup("PriorityText", "Priority", 110, 0);
+            Setup("RequestNumber", "Request #", 140, 1);
+            Setup("DeviceModel", "Device", 0, 2, fill: true);
+            Setup("SerialNumber", "Serial", 140, 3);
+            Setup("StatusText", "Status", 130, 4);
+            Setup("RequestDate", "Requested", 120, 5);
 
-            if (dgv.Columns["ScheduledAt"] != null)
+            if (dgv.Columns["RequestDate"] != null)
             {
-                dgv.Columns["ScheduledAt"].DefaultCellStyle.Format = "MMM d  HH:mm";
-                dgv.Columns["ScheduledAt"].DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
-                dgv.Columns["ScheduledAt"].DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+                dgv.Columns["RequestDate"].DefaultCellStyle.Format = "MMM d";
+                dgv.Columns["RequestDate"].DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+                dgv.Columns["RequestDate"].DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
             }
 
-            if (dgv.Columns["CompletedAtDisplay"] != null)
-            {
-                dgv.Columns["CompletedAtDisplay"].DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
-                dgv.Columns["CompletedAtDisplay"].DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
-            }
+            if (dgv.Columns["RequestNumber"] != null)
+                dgv.Columns["RequestNumber"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
 
-            if (dgv.Columns["Subject"] != null)
-            {
-                dgv.Columns["Subject"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
-                dgv.Columns["Subject"].DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S4, 0);
-            }
+            if (dgv.Columns["DeviceModel"] != null)
+                dgv.Columns["DeviceModel"].DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S4, 0);
         }
 
         // ═══════════ ACTIONS ═══════════
@@ -494,31 +492,34 @@ namespace CRM.winforms
 
             _actionsMenu.Items.Add("View details");
             _actionsMenu.Items.Add("Edit");
-            _actionsMenu.Items.Add("Mark completed");
-            _actionsMenu.Items.Add("Mark cancelled");
+            _actionsMenu.Items.Add("Approve");
+            _actionsMenu.Items.Add("Start repair");
+            _actionsMenu.Items.Add("Complete");
+            _actionsMenu.Items.Add("Reject");
             _actionsMenu.Items.Add(new ToolStripSeparator());
-            _actionsMenu.Items.Add("Archive");
+            _actionsMenu.Items.Add("Assign to me");
 
             foreach (ToolStripItem item in _actionsMenu.Items)
                 item.Padding = new Padding(UiKit.T.S2, UiKit.T.S1, UiKit.T.S2, UiKit.T.S1);
 
             _actionsMenu.Items[0].Click += OnMenuView;
             _actionsMenu.Items[1].Click += OnMenuUpdate;
-            _actionsMenu.Items[2].Click += async (s, e) => await MarkAsync(1);
-            _actionsMenu.Items[3].Click += async (s, e) => await MarkAsync(2);
-            _actionsMenu.Items[5].Click += OnMenuArchive;
+            _actionsMenu.Items[2].Click += async (s, e) => await QuickStatusAsync(1);
+            _actionsMenu.Items[3].Click += async (s, e) => await QuickStatusAsync(2);
+            _actionsMenu.Items[4].Click += async (s, e) => await QuickStatusAsync(3);
+            _actionsMenu.Items[5].Click += async (s, e) => await QuickStatusAsync(4);
+            _actionsMenu.Items[7].Click += async (s, e) => await AssignToMeAsync();
 
             _actionsMenu.Opening += (s, e) =>
             {
                 if (_menuRowIndex < 0) return;
-                if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
+                if (dgv.Rows[_menuRowIndex].DataBoundItem is not RepairRequestDto dto) return;
 
-                var archiveItem = _actionsMenu.Items[5];
-                archiveItem.Text = dto.IsActive ? "Archive" : "Restore";
-                archiveItem.ForeColor = dto.IsActive ? AppTheme.Danger : UiKit.T.Ink;
-
-                _actionsMenu.Items[2].Enabled = dto.Status != 1 && dto.IsActive;
-                _actionsMenu.Items[3].Enabled = dto.Status != 2 && dto.IsActive;
+                _actionsMenu.Items[2].Enabled = dto.Status == 0;
+                _actionsMenu.Items[3].Enabled = dto.Status == 1;
+                _actionsMenu.Items[4].Enabled = dto.Status == 2;
+                _actionsMenu.Items[5].Enabled = dto.Status == 0 || dto.Status == 1;
+                _actionsMenu.Items[7].Enabled = dto.Status != 3 && dto.Status != 4;
             };
 
             _actionsMenu.Closed += (s, e) => { dgv.Invalidate(); };
@@ -527,18 +528,27 @@ namespace CRM.winforms
         private void OnMenuView(object? sender, EventArgs e)
         {
             if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not RepairRequestDto dto) return;
+
+            var cost = dto.ActualCost.HasValue
+                ? $"Actual cost   \u20B1{dto.ActualCost.Value:N2}"
+                : dto.EstimatedCost.HasValue
+                    ? $"Estimate      \u20B1{dto.EstimatedCost.Value:N2}"
+                    : "Cost          \u2014";
 
             MessageBox.Show(
-                $"{dto.Subject}\n\n" +
-                $"Channel     {dto.ChannelText}\n" +
-                $"Status      {dto.StatusText}\n" +
-                $"Scheduled   {dto.ScheduledAt:MMM d, yyyy  HH:mm}\n" +
-                (dto.CompletedAt.HasValue ? $"Completed   {dto.CompletedAt.Value:MMM d, yyyy  HH:mm}\n" : "") +
-                $"Assigned    {dto.AssignedToUserId ?? "\u2014"}\n" +
-                $"Record      #{dto.FollowUpId}  ·  {dto.ActivityStatus}\n\n" +
-                $"Notes\n{dto.Notes}",
-                "Follow-up details",
+                $"{dto.RequestNumber}\n\n" +
+                $"Device        {dto.DeviceModel}\n" +
+                $"Serial        {dto.SerialNumber}\n" +
+                $"Status        {dto.StatusText}\n" +
+                $"Priority      {dto.PriorityText}\n" +
+                $"Requested     {dto.RequestDate:MMM d, yyyy  HH:mm}\n" +
+                (dto.CompletionDate.HasValue ? $"Completed     {dto.CompletionDate.Value:MMM d, yyyy  HH:mm}\n" : "") +
+                $"Assigned      {dto.AssignedToStaffId ?? "\u2014"}\n" +
+                $"{cost}\n\n" +
+                $"Issue\n{dto.IssueDescription}\n" +
+                (string.IsNullOrWhiteSpace(dto.TechnicianNotes) ? "" : $"\nTechnician notes\n{dto.TechnicianNotes}"),
+                "Repair request details",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         }
@@ -546,40 +556,50 @@ namespace CRM.winforms
         private void OnMenuUpdate(object? sender, EventArgs e)
         {
             if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not RepairRequestDto dto) return;
             OpenEditDialog(dto);
         }
 
-        private async Task MarkAsync(int newStatus)
+        private async Task QuickStatusAsync(int newStatus)
         {
             if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not RepairRequestDto dto) return;
 
             try
             {
                 dto.Status = newStatus;
-                await _api.UpdateFollowUpAsync(dto.FollowUpId, dto);
+                await _api.UpdateRepairRequestAsync(dto.RepairRequestId, dto);
                 await ReloadAsync();
             }
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Couldn't update this follow-up.\n\n{ex.Message}",
+                    $"Couldn't update this repair request.\n\n{ex.Message}",
                     "Update failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
         }
 
-        private async void OnMenuArchive(object? sender, EventArgs e)
+        private async Task AssignToMeAsync()
         {
             if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not RepairRequestDto dto) return;
 
-            if (dto.IsActive)
-                await ArchiveAsync(dto);
-            else
-                await RestoreAsync(dto);
+            try
+            {
+                dto.AssignedToStaffId = UserSession.UserId;
+                await _api.UpdateRepairRequestAsync(dto.RepairRequestId, dto);
+                await ReloadAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Couldn't assign this repair request.\n\n{ex.Message}",
+                    "Assign failed",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
         }
 
         private void AddActionsColumn()
@@ -617,7 +637,7 @@ namespace CRM.winforms
         private void Dgv_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0) return;
-            if (dgv.Rows[e.RowIndex].DataBoundItem is not FollowUpDto dto) return;
+            if (dgv.Rows[e.RowIndex].DataBoundItem is not RepairRequestDto dto) return;
             OpenEditDialog(dto);
         }
 
@@ -637,51 +657,6 @@ namespace CRM.winforms
             if (e.RowIndex < 0) return;
             _hoverRow = -1;
             dgv.InvalidateRow(e.RowIndex);
-        }
-
-        // ═══════════ ARCHIVE / RESTORE ═══════════
-
-        private async Task ArchiveAsync(FollowUpDto dto)
-        {
-            var confirm = MessageBox.Show(
-                $"Archive \u201c{dto.Subject}\u201d?\n\n" +
-                "It leaves the list but nothing is deleted — you can restore it later.",
-                "Archive follow-up",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (confirm != DialogResult.Yes) return;
-
-            try
-            {
-                await _api.ArchiveFollowUpAsync(dto.FollowUpId);
-                await ReloadAsync();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"Couldn't archive this follow-up.\n\n{ex.Message}",
-                    "Archive failed",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
-        }
-
-        private async Task RestoreAsync(FollowUpDto dto)
-        {
-            try
-            {
-                await _api.RestoreFollowUpAsync(dto.FollowUpId);
-                await ReloadAsync();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"Couldn't restore this follow-up.\n\n{ex.Message}",
-                    "Restore failed",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
         }
 
         // ═══════════ CELL PAINTING ═══════════
@@ -713,7 +688,7 @@ namespace CRM.winforms
                 ? e.CellStyle!.SelectionBackColor
                 : hovered ? UiKit.T.RowHover : UiKit.T.Surface;
 
-            bool custom = col is "ChannelText" or "StatusText" || col == ColActions;
+            bool custom = col is "PriorityText" or "StatusText" || col == ColActions;
 
             using (var b = new SolidBrush(bg))
                 g.FillRectangle(b, e.CellBounds);
@@ -741,22 +716,23 @@ namespace CRM.winforms
                 return;
             }
 
-            if (col == "ChannelText")
+            if (col == "PriorityText")
             {
                 Color accent = text switch
                 {
-                    "Call" => AppTheme.Primary,
-                    "Email" => AppTheme.Success,
-                    "SMS" => AppTheme.Warning,
-                    "Visit" => AppTheme.Danger,
-                    _ => UiKit.T.InkFaint
+                    "Urgent" => AppTheme.Danger,
+                    "High" => AppTheme.Danger,
+                    "Medium" => AppTheme.Warning,
+                    "Low" => UiKit.T.InkMuted,
+                    _ => UiKit.T.InkMuted
                 };
 
                 int cx = r.Left + UiKit.T.S3 + 3;
                 UiKit.Dot(g, cx, r.Top + r.Height / 2, 7, accent);
 
                 var textRect = new Rectangle(cx + UiKit.T.S3 - 2, r.Top, r.Width - (cx - r.Left) - UiKit.T.S3, r.Height);
-                UiKit.Text(g, text, UiKit.T.Body, UiKit.T.Ink, textRect,
+                var font = text is "Urgent" or "High" ? UiKit.T.BodyStrong : UiKit.T.Body;
+                UiKit.Text(g, text, font, accent, textRect,
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
                 e.Handled = true;
@@ -767,9 +743,12 @@ namespace CRM.winforms
             {
                 Color accent = text switch
                 {
-                    "Scheduled" => AppTheme.Warning,
+                    "Pending" => AppTheme.Warning,
+                    "Approved" => AppTheme.Primary,
+                    "In Progress" => AppTheme.Primary,
                     "Completed" => AppTheme.Success,
-                    "Cancelled" => AppTheme.Danger,
+                    "Rejected" => AppTheme.Danger,
+                    "Reassigned" => UiKit.T.InkMuted,
                     _ => UiKit.T.InkMuted
                 };
 
@@ -790,20 +769,20 @@ namespace CRM.winforms
 
         private void OpenAddDialog()
         {
-            using var dlg = new FollowUpFormDialog(null);
+            using var dlg = new RepairRequestFormDialog(null);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                 _ = ReloadAsync();
         }
 
-        private void OpenEditDialog(FollowUpDto dto)
+        private void OpenEditDialog(RepairRequestDto dto)
         {
-            using var dlg = new FollowUpFormDialog(dto);
+            using var dlg = new RepairRequestFormDialog(dto);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                 _ = ReloadAsync();
         }
 
         // ═══════════════════════════════════════════════════════════════
-        //  NESTED UI COMPONENTS (same as Interactions / Customers)
+        //  NESTED UI COMPONENTS (same as other modules)
         // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]

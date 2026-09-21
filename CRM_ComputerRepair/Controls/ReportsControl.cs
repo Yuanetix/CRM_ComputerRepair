@@ -1,4 +1,5 @@
-﻿using System;
+﻿using CRM.winforms;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -9,7 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace CRM.winforms
+namespace CRM.winforms.Controls
 {
     /// <summary>
     /// Reports page — filterable tables with CSV export.

@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "CRM_ComputerRepair.api": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:58114;http://localhost:58115"
+    }
+  }
+}

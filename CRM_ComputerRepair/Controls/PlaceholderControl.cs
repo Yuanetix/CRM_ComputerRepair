@@ -1,7 +1,7 @@
 ﻿using System.Drawing;
 using System.Windows.Forms;
 
-namespace CRM.winforms
+namespace CRM.winforms.Controls
 {
     public partial class PlaceholderControl : UserControl
     {

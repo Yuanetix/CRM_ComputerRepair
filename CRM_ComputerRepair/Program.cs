@@ -1,3 +1,5 @@
+using CRM.winforms.Auth;
+
 namespace CRM.winforms
 {
     internal static class Program

@@ -3,7 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
-namespace CRM.winforms
+namespace CRM.winforms.Controls
 {
     /// <summary>
     /// Flat white card with a 1px hairline. No shadow, no layered paths —

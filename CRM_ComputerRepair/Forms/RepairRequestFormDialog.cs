@@ -1,4 +1,7 @@
-﻿using System;
+﻿using CRM.winforms.Auth;
+using CRM.winforms.Forms;
+using CRM.winforms;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Threading.Tasks;
@@ -7,66 +10,63 @@ using System.Windows.Forms;
 namespace CRM.winforms
 {
     /// <summary>
-    /// Modal dialog for Add / Edit on an Interaction.
-    /// Type is chosen on the form: Inquiry / Complaint / Feedback.
+    /// Modal dialog for Add / Edit on a Repair Request.
+    /// Supports status workflow: Pending → Approved → In Progress → Completed.
     /// </summary>
     [DesignerCategory("Code")]
-    public class InteractionFormDialog : ModalForm
+    public class RepairRequestFormDialog : ModalForm
     {
         // ═══════════ STATE ═══════════
 
         private readonly ApiClient _api = new ApiClient();
-        private readonly InteractionDto? _editing;
+        private readonly RepairRequestDto? _editing;
         private readonly bool _isEditMode;
-        private readonly InteractionTypeFilter? _presetType;
 
         // ═══════════ CONTROLS ═══════════
 
         private Label lblSubtitle = null!;
 
-        private Label lblType = null!;
-        private Label lblSubject = null!;
-        private Label lblNotes = null!;
+        private Label lblCustomerId = null!;
+        private Label lblDeviceModel = null!;
+        private Label lblSerialNumber = null!;
+        private Label lblIssue = null!;
         private Label lblPriority = null!;
         private Label lblStatus = null!;
-        private Label lblResolution = null!;
+        private Label lblEstimatedCost = null!;
+        private Label lblActualCost = null!;
+        private Label lblTechnicianNotes = null!;
 
-        private ComboBox cmbType = null!;
-        private TextField inpSubject = null!;
-        private TextField inpNotes = null!;
+        private TextField inpCustomerId = null!;
+        private TextField inpDeviceModel = null!;
+        private TextField inpSerialNumber = null!;
+        private TextField inpIssue = null!;
         private ComboBox cmbPriority = null!;
         private ComboBox cmbStatus = null!;
-        private TextField inpResolution = null!;
+        private TextField inpEstimatedCost = null!;
+        private TextField inpActualCost = null!;
+        private TextField inpTechnicianNotes = null!;
 
-        private Label lblErrorSubject = null!;
-        private Label lblErrorNotes = null!;
-        private Label lblErrorResolution = null!;
+        private Label lblErrorCustomerId = null!;
+        private Label lblErrorDeviceModel = null!;
+        private Label lblErrorIssue = null!;
 
         private Button btnSave = null!;
         private Button btnCancel = null!;
-        private Button btnArchive = null!;
 
         // ═══════════ CONSTRUCTOR ═══════════
 
-        public InteractionFormDialog(
-            InteractionDto? existing = null,
-            InteractionTypeFilter? presetType = null)
+        public RepairRequestFormDialog(RepairRequestDto? existing = null)
         {
             _editing = existing;
             _isEditMode = existing != null;
-            _presetType = presetType;
 
             BuildCard(
-                _isEditMode ? "Edit Interaction" : "Add Interaction",
-                width: 560,
+                _isEditMode ? "Edit Repair Request" : "New Repair Request",
+                width: 620,
                 height: _isEditMode ? 760 : 740);
 
             BuildContent();
         }
-
-        // ═══════════ TYPE LABELS ═══════════
-
-        private static readonly string[] TypeNames = { "Question", "Concern", "Review" };
 
         // ═══════════ CONTENT ═══════════
 
@@ -80,8 +80,8 @@ namespace CRM.winforms
             lblSubtitle = new Label
             {
                 Text = _isEditMode
-                    ? "Update the interaction information below."
-                    : "Enter the interaction information below. Fields marked * are required.",
+                    ? "Update the repair request details below."
+                    : "Enter the repair details below. Fields marked * are required.",
                 Font = AppTheme.FontSubtitle,
                 ForeColor = AppTheme.TextSecondary,
                 AutoSize = false,
@@ -93,49 +93,65 @@ namespace CRM.winforms
 
             y += 32;
 
-            // ── Type * ──
-            lblType = MakeLabel("Type *", x, y);
-            y += 20;
-            cmbType = MakeCombo(x, y, w, TypeNames, 0);
-            y += 38 + 14;
-
-            // ── Subject * ──
-            lblSubject = MakeLabel("Subject *", x, y);
-            y += 20;
-            inpSubject = MakeField(x, y, w, "Short summary");
-            y += 38 + 4;
-            lblErrorSubject = MakeErrorLabel(x, y);
-            y += 20;
-
-            // ── Notes (multiline) * ──
-            lblNotes = MakeLabel("Notes *", x, y);
-            y += 20;
-            inpNotes = MakeField(x, y, w, "Describe the details...", multiline: true);
-            y += 74 + 4;
-            lblErrorNotes = MakeErrorLabel(x, y);
-            y += 20;
-
-            // ── Priority + Status (side by side) ──
+            // ── Customer ID + Device Model ──
             int halfW = (w - 12) / 2;
 
+            lblCustomerId = MakeLabel("Customer ID *", x, y);
+            lblDeviceModel = MakeLabel("Device Model *", x + halfW + 12, y);
+            y += 20;
+
+            inpCustomerId = MakeField(x, y, halfW, "e.g. 1");
+            inpDeviceModel = MakeField(x + halfW + 12, y, halfW, "e.g. Dell Latitude 5420");
+
+            y += 38 + 4;
+
+            lblErrorCustomerId = MakeErrorLabel(x, y);
+            lblErrorDeviceModel = MakeErrorLabel(x + halfW + 12, y);
+
+            y += 20;
+
+            // ── Serial Number ──
+            lblSerialNumber = MakeLabel("Serial Number", x, y);
+            y += 20;
+            inpSerialNumber = MakeField(x, y, w, "e.g. SN-ABC123");
+
+            y += 38 + 14;
+
+            // ── Issue Description * ──
+            lblIssue = MakeLabel("Issue Description *", x, y);
+            y += 20;
+            inpIssue = MakeField(x, y, w, "Describe the problem...", multiline: true);
+            y += 74 + 4;
+            lblErrorIssue = MakeErrorLabel(x, y);
+            y += 20;
+
+            // ── Priority + Status ──
             lblPriority = MakeLabel("Priority", x, y);
             lblStatus = MakeLabel("Status", x + halfW + 12, y);
             y += 20;
 
             cmbPriority = MakeCombo(x, y, halfW,
-                new[] { "Low", "Medium", "High" }, 1);
+                new[] { "Low", "Medium", "High", "Urgent" }, 1);
             cmbStatus = MakeCombo(x + halfW + 12, y, halfW,
-                new[] { "Open", "In Progress", "Closed" }, 0);
+                new[] { "Pending", "Approved", "In Progress", "Completed", "Rejected", "Reassigned" }, 0);
 
             y += 38 + 14;
 
-            // ── Resolution (multiline) ──
-            lblResolution = MakeLabel("Resolution (required when Closed)", x, y);
+            // ── Estimated Cost + Actual Cost ──
+            lblEstimatedCost = MakeLabel("Estimated Cost (₱)", x, y);
+            lblActualCost = MakeLabel("Actual Cost (₱)", x + halfW + 12, y);
             y += 20;
-            inpResolution = MakeField(x, y, w, "How was it resolved?", multiline: true);
-            y += 74 + 4;
-            lblErrorResolution = MakeErrorLabel(x, y);
+
+            inpEstimatedCost = MakeField(x, y, halfW, "0.00");
+            inpActualCost = MakeField(x + halfW + 12, y, halfW, "0.00");
+
+            y += 38 + 14;
+
+            // ── Technician Notes ──
+            lblTechnicianNotes = MakeLabel("Technician Notes", x, y);
             y += 20;
+            inpTechnicianNotes = MakeField(x, y, w, "Notes from the technician...", multiline: true);
+            y += 74 + 20;
 
             // ── Buttons ──
             int btnY = pnlCard.Height - ShadowPad - 60;
@@ -161,53 +177,31 @@ namespace CRM.winforms
             btnSave.Location = new Point(saveX, btnY);
             btnSave.Click += async (s, e) => await SaveAsync();
 
-            if (_isEditMode)
-            {
-                btnArchive = MakeDangerOutlineButton("Archive");
-                btnArchive.Size = new Size(110, 40);
-                btnArchive.Location = new Point(x, btnY);
-                btnArchive.Click += async (s, e) => await ArchiveAsync();
-            }
-
             // ── Prefill ──
             if (_editing != null)
             {
-                // Type locked in edit mode
-                cmbType.SelectedIndex = Clamp(_editing.InteractionType, 0, 2);
-                cmbType.Enabled = false;
-
-                inpSubject.Text = _editing.Subject ?? "";
-                inpNotes.Text = _editing.Notes ?? "";
-                cmbPriority.SelectedIndex = Clamp(_editing.Priority, 0, 2);
-                cmbStatus.SelectedIndex = Clamp(_editing.Status, 0, 2);
-                inpResolution.Text = _editing.Resolution ?? "";
+                inpCustomerId.Text = _editing.CustomerId.ToString();
+                inpDeviceModel.Text = _editing.DeviceModel ?? "";
+                inpSerialNumber.Text = _editing.SerialNumber ?? "";
+                inpIssue.Text = _editing.IssueDescription ?? "";
+                cmbPriority.SelectedIndex = Clamp(_editing.Priority, 0, 3);
+                cmbStatus.SelectedIndex = Clamp(_editing.Status, 0, 5);
+                inpEstimatedCost.Text = _editing.EstimatedCost?.ToString("0.00") ?? "";
+                inpActualCost.Text = _editing.ActualCost?.ToString("0.00") ?? "";
+                inpTechnicianNotes.Text = _editing.TechnicianNotes ?? "";
             }
-            else if (_presetType.HasValue)
+            else
             {
-                cmbType.SelectedIndex = (int)_presetType.Value;
+                inpCustomerId.Text = "1";
+                cmbPriority.SelectedIndex = 1;
+                cmbStatus.SelectedIndex = 0;
             }
 
-            cmbStatus.SelectedIndexChanged += (s, e) => UpdateResolutionState();
-            UpdateResolutionState();
-
-            Shown += (s, e) => inpSubject.Focus();
+            Shown += (s, e) => inpCustomerId.Focus();
         }
 
         private static int Clamp(int value, int min, int max)
             => value < min ? min : (value > max ? max : value);
-
-        private void UpdateResolutionState()
-        {
-            bool isClosed = cmbStatus.SelectedIndex == 2;
-            lblResolution.ForeColor = isClosed ? AppTheme.TextSecondary : AppTheme.TextMuted;
-            inpResolution.InnerTextBox.Enabled = isClosed;
-
-            if (!isClosed)
-            {
-                inpResolution.Text = "";
-                ClearError(inpResolution, lblErrorResolution);
-            }
-        }
 
         // ═══════════ SAVE ═══════════
 
@@ -217,26 +211,31 @@ namespace CRM.winforms
 
             try
             {
-                var dto = new InteractionDto
+                var dto = new RepairRequestDto
                 {
-                    InteractionType = cmbType.SelectedIndex,
-                    Subject = inpSubject.Text.Trim(),
-                    Notes = inpNotes.Text.Trim(),
+                    CustomerId = int.Parse(inpCustomerId.Text.Trim()),
+                    DeviceModel = inpDeviceModel.Text.Trim(),
+                    SerialNumber = inpSerialNumber.Text.Trim(),
+                    IssueDescription = inpIssue.Text.Trim(),
                     Priority = cmbPriority.SelectedIndex,
                     Status = cmbStatus.SelectedIndex,
-                    Resolution = string.IsNullOrWhiteSpace(inpResolution.Text)
+                    EstimatedCost = ParseDecimalOrNull(inpEstimatedCost.Text),
+                    ActualCost = ParseDecimalOrNull(inpActualCost.Text),
+                    TechnicianNotes = string.IsNullOrWhiteSpace(inpTechnicianNotes.Text)
                         ? null
-                        : inpResolution.Text.Trim()
+                        : inpTechnicianNotes.Text.Trim(),
+                    AssignedToStaffId = _editing?.AssignedToStaffId ?? UserSession.UserId
                 };
 
                 if (_isEditMode && _editing != null)
                 {
-                    dto.CustomerInteractionId = _editing.CustomerInteractionId;
-                    await _api.UpdateInteractionAsync(_editing.CustomerInteractionId, dto);
+                    dto.RepairRequestId = _editing.RepairRequestId;
+                    dto.RequestNumber = _editing.RequestNumber;
+                    await _api.UpdateRepairRequestAsync(_editing.RepairRequestId, dto);
                 }
                 else
                 {
-                    await _api.CreateInteractionAsync(dto);
+                    await _api.CreateRepairRequestAsync(dto);
                 }
 
                 DialogResult = DialogResult.OK;
@@ -252,36 +251,11 @@ namespace CRM.winforms
             }
         }
 
-        // ═══════════ ARCHIVE ═══════════
-
-        private async Task ArchiveAsync()
+        private static decimal? ParseDecimalOrNull(string text)
         {
-            if (_editing == null) return;
-
-            var confirm = MessageBox.Show(
-                "Archive this interaction?\n\n" +
-                $"\"{_editing.Subject}\"\n\n" +
-                "Data is preserved and can be restored.",
-                "Confirm Archive",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (confirm != DialogResult.Yes) return;
-
-            try
-            {
-                await _api.ArchiveInteractionAsync(_editing.CustomerInteractionId);
-                DialogResult = DialogResult.OK;
-                Close();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"Archive failed:\n\n{ex.Message}",
-                    "Error",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            if (decimal.TryParse(text.Trim(), out var value)) return value;
+            return null;
         }
 
         // ═══════════ VALIDATION ═══════════
@@ -292,33 +266,25 @@ namespace CRM.winforms
             bool valid = true;
             Control? firstInvalid = null;
 
-            if (cmbType.SelectedIndex < 0)
+            if (string.IsNullOrWhiteSpace(inpCustomerId.Text) ||
+                !int.TryParse(inpCustomerId.Text.Trim(), out _))
             {
-                MessageBox.Show("Please choose a type.",
-                    "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ShowError(inpCustomerId, lblErrorCustomerId, "Valid Customer ID is required.");
+                firstInvalid ??= inpCustomerId;
                 valid = false;
             }
 
-            if (string.IsNullOrWhiteSpace(inpSubject.Text))
+            if (string.IsNullOrWhiteSpace(inpDeviceModel.Text))
             {
-                ShowError(inpSubject, lblErrorSubject, "Subject is required.");
-                firstInvalid ??= inpSubject;
+                ShowError(inpDeviceModel, lblErrorDeviceModel, "Device model is required.");
+                firstInvalid ??= inpDeviceModel;
                 valid = false;
             }
 
-            if (string.IsNullOrWhiteSpace(inpNotes.Text))
+            if (string.IsNullOrWhiteSpace(inpIssue.Text))
             {
-                ShowError(inpNotes, lblErrorNotes, "Notes are required.");
-                firstInvalid ??= inpNotes;
-                valid = false;
-            }
-
-            if (cmbStatus.SelectedIndex == 2 &&
-                string.IsNullOrWhiteSpace(inpResolution.Text))
-            {
-                ShowError(inpResolution, lblErrorResolution,
-                    "Resolution is required when status is Closed.");
-                firstInvalid ??= inpResolution;
+                ShowError(inpIssue, lblErrorIssue, "Issue description is required.");
+                firstInvalid ??= inpIssue;
                 valid = false;
             }
 
@@ -328,9 +294,9 @@ namespace CRM.winforms
 
         private void ClearErrors()
         {
-            ClearError(inpSubject, lblErrorSubject);
-            ClearError(inpNotes, lblErrorNotes);
-            ClearError(inpResolution, lblErrorResolution);
+            ClearError(inpCustomerId, lblErrorCustomerId);
+            ClearError(inpDeviceModel, lblErrorDeviceModel);
+            ClearError(inpIssue, lblErrorIssue);
         }
 
         private static void ShowError(TextField input, Label err, string msg)
@@ -447,26 +413,6 @@ namespace CRM.winforms
             b.FlatAppearance.BorderSize = 1;
             b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
             b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
-
-        private Button MakeDangerOutlineButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.Danger,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.Danger;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.DangerSoft;
             b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
             pnlCard.Controls.Add(b);
             return b;

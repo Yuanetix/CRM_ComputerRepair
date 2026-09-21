@@ -1,11 +1,12 @@
-﻿using System;
+﻿using CRM.winforms;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace CRM.winforms
+namespace CRM.winforms.Auth
 {
     [DesignerCategory("Code")]
     public class LoginForm : Form

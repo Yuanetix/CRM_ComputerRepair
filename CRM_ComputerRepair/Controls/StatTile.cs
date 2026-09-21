@@ -3,7 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
-namespace CRM.winforms
+namespace CRM.winforms.Controls
 {
     /// <summary>
     /// Stat tile — icon chip at top-left, label, then big number below.

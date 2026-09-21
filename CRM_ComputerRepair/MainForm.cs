@@ -1,4 +1,6 @@
-﻿using System;
+﻿using CRM.winforms.Auth;
+using CRM.winforms.Controls;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Windows.Forms;

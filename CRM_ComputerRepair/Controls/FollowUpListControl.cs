@@ -1,4 +1,5 @@
-﻿using System;
+﻿using CRM.winforms;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -8,139 +9,19 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace CRM.winforms
+namespace CRM.winforms.Controls
 {
     /// <summary>
-    /// One module for all customer interactions (Inquiry / Complaint / Feedback).
-    ///
-    /// UI notes
-    /// --------
-    /// • Two surfaces only: the page canvas and one white workbench card. No shadows,
-    ///   no stacked cards competing for attention.
-    /// • The four counters live in a single strip divided by hairlines instead of four
-    ///   separate tiles, and they double as status filters (click "Open" to see only open).
-    /// • Type / priority / status are encoded with one visual device each: a dot, weight,
-    ///   and a soft pill. Repeating the same device three times would flatten the hierarchy.
-    /// • Every state has a screen: loading, empty, and "nothing matched your search".
-    /// • Keyboard: Ctrl+F search, Esc clear, Ctrl+N new, Enter/Apps opens the row menu.
-    ///
-    /// Data, API calls and dialogs are unchanged from the original.
+    /// Follow-Ups list — matches the Interactions module layout.
     /// </summary>
     [DesignerCategory("Code")]
-    public class InteractionListControl : UserControl
+    public class FollowUpListControl : UserControl
     {
-        // ═══════════ DESIGN TOKENS ═══════════
-        // Brand hues come from AppTheme so this module stays in step with the rest of the
-        // app; the neutral scale and type scale are defined here so the layout is exact.
-
-        private static class T
-        {
-            // Neutrals
-            public static readonly Color Surface = Color.White;
-            public static readonly Color Line = Color.FromArgb(0xE6, 0xE8, 0xEC);
-            public static readonly Color LineSoft = Color.FromArgb(0xF1, 0xF3, 0xF6);
-            public static readonly Color Ink = Color.FromArgb(0x1A, 0x1D, 0x23);
-            public static readonly Color InkMuted = Color.FromArgb(0x6B, 0x72, 0x80);
-            public static readonly Color InkFaint = Color.FromArgb(0x9A, 0xA1, 0xAD);
-            public static readonly Color RowHover = Color.FromArgb(0xF8, 0xF9, 0xFB);
-
-            // Spacing — 4pt scale
-            public const int S1 = 4, S2 = 8, S3 = 12, S4 = 16, S5 = 24, S6 = 32;
-
-            // Geometry
-            public const int Radius = 10;
-            public const int PillRadius = 9;
-            public const int StripHeight = 86;
-            public const int InputHeight = 34;
-            public const int ButtonHeight = 36;
-            public const int RowHeight = 46;
-            public const int HeaderHeight = 38;
-
-            // Type — one family, hierarchy carried by size and weight
-            public static readonly Font Title = new Font("Segoe UI Semibold", 16.5F);
-            public static readonly Font Subtitle = new Font("Segoe UI", 9.5F);
-            public static readonly Font Section = new Font("Segoe UI Semibold", 11F);
-            public static readonly Font Body = new Font("Segoe UI", 9.5F);
-            public static readonly Font BodyStrong = new Font("Segoe UI Semibold", 9.5F);
-            public static readonly Font Small = new Font("Segoe UI", 8.75F);
-            public static readonly Font SmallStrong = new Font("Segoe UI Semibold", 8.5F);
-            public static readonly Font Metric = new Font("Segoe UI Light", 25F);
-            public static readonly Font Glyph = new Font("Segoe MDL2 Assets", 11F);
-            public static readonly Font GlyphLarge = new Font("Segoe MDL2 Assets", 22F);
-        }
-
-        // ═══════════ PAINT HELPERS ═══════════
-
-        private static class Draw
-        {
-            public static Color Mix(Color a, Color b, double t) => Color.FromArgb(
-                (int)Math.Round(a.R + (b.R - a.R) * t),
-                (int)Math.Round(a.G + (b.G - a.G) * t),
-                (int)Math.Round(a.B + (b.B - a.B) * t));
-
-            /// <summary>Very light wash of a semantic colour, for pill backgrounds.</summary>
-            public static Color Wash(Color c) => Mix(c, Color.White, 0.88);
-
-            public static GraphicsPath Rounded(Rectangle r, int radius)
-            {
-                var path = new GraphicsPath();
-                int d = radius * 2;
-                if (d > r.Width) d = r.Width;
-                if (d > r.Height) d = r.Height;
-                if (d <= 0) { path.AddRectangle(r); return path; }
-
-                path.AddArc(r.X, r.Y, d, d, 180, 90);
-                path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-                path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-                path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-                path.CloseFigure();
-                return path;
-            }
-
-            public static void FillRounded(Graphics g, Rectangle r, int radius, Color fill)
-            {
-                using var p = Rounded(r, radius);
-                using var b = new SolidBrush(fill);
-                g.FillPath(b, p);
-            }
-
-            public static void Card(Graphics g, Rectangle r, int radius, Color fill, Color border)
-            {
-                r = new Rectangle(r.X, r.Y, r.Width - 1, r.Height - 1);
-                using var p = Rounded(r, radius);
-                using var b = new SolidBrush(fill);
-                using var pen = new Pen(border, 1);
-                g.FillPath(b, p);
-                g.DrawPath(pen, p);
-            }
-
-            public static void Dot(Graphics g, int cx, int cy, int size, Color c)
-            {
-                using var b = new SolidBrush(c);
-                g.FillEllipse(b, cx - size / 2f, cy - size / 2f, size, size);
-            }
-
-            public static void Text(Graphics g, string text, Font font, Color color,
-                                   Rectangle bounds, TextFormatFlags flags)
-                => TextRenderer.DrawText(g, text, font, bounds, color, flags);
-
-            public static Size Measure(string text, Font font)
-                => TextRenderer.MeasureText(text, font);
-
-            public static void Quality(Graphics g)
-            {
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            }
-        }
-
         // ═══════════ STATE ═══════════
 
         private readonly ApiClient _api = new ApiClient();
-        private List<InteractionDto> _all = new List<InteractionDto>();
-        private InteractionTypeFilter? _currentFilter = null;   // null = All
-        private int? _statusFilter = null;                      // null = any status
+        private List<FollowUpDto> _all = new List<FollowUpDto>();
+        private int? _statusFilter = null;   // null = All, 0 = Scheduled, 1 = Completed, 2 = Cancelled
 
         // ═══════════ CONTROLS ═══════════
 
@@ -167,7 +48,7 @@ namespace CRM.winforms
 
         // ═══════════ CONSTRUCTOR ═══════════
 
-        public InteractionListControl()
+        public FollowUpListControl()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                    | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
@@ -188,36 +69,36 @@ namespace CRM.winforms
             // ── Header ──
             lblTitle = new Label
             {
-                Text = "Interactions",
-                Font = T.Title,
-                ForeColor = T.Ink,
+                Text = "Follow-Ups",
+                Font = UiKit.T.Title,
+                ForeColor = UiKit.T.Ink,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
 
             lblSubtitle = new Label
             {
-                Text = "Questions, concerns and reviews from your customers",
-                Font = T.Subtitle,
-                ForeColor = T.InkMuted,
+                Text = "Outreach and reminders scheduled for your customers",
+                Font = UiKit.T.Subtitle,
+                ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
 
-            btnAdd = new FlatButton("Add interaction", "\uE710");
+            btnAdd = new FlatButton("Add follow-up", "\uE710");
             btnAdd.Click += (s, e) => OpenAddDialog();
-            _tips.SetToolTip(btnAdd, "Add interaction  (Ctrl+N)");
+            _tips.SetToolTip(btnAdd, "Add follow-up  (Ctrl+N)");
 
             Controls.Add(lblTitle);
             Controls.Add(lblSubtitle);
             Controls.Add(btnAdd);
 
-            // ── Counter strip (also acts as a status filter) ──
+            // ── Metric strip ──
             strip = new MetricStrip();
             strip.AddItem("Total", null, AppTheme.Primary);
-            strip.AddItem("Open", 0, AppTheme.Warning);
-            strip.AddItem("In progress", 1, AppTheme.Primary);
-            strip.AddItem("Closed", 2, AppTheme.Success);
+            strip.AddItem("Scheduled", 0, AppTheme.Warning);
+            strip.AddItem("Completed", 1, AppTheme.Success);
+            strip.AddItem("Cancelled", 2, AppTheme.TextMuted);
             strip.SelectionChanged += (s, e) =>
             {
                 _statusFilter = strip.SelectedStatus;
@@ -230,9 +111,9 @@ namespace CRM.winforms
 
             lblGridTitle = new Label
             {
-                Text = "All interactions",
-                Font = T.Section,
-                ForeColor = T.Ink,
+                Text = "All follow-ups",
+                Font = UiKit.T.Section,
+                ForeColor = UiKit.T.Ink,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
@@ -240,22 +121,22 @@ namespace CRM.winforms
             lblCount = new Label
             {
                 Text = "",
-                Font = T.Small,
-                ForeColor = T.InkFaint,
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkFaint,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
 
-            segments = new SegmentedFilter(new[]
+            segments = new SegmentedFilter(new (string, int?)[]
             {
-                ("All", (InteractionTypeFilter?)null),
-                ("Questions", InteractionTypeFilter.Inquiry),
-                ("Concerns", InteractionTypeFilter.Complaint),
-                ("Reviews", InteractionTypeFilter.Feedback)
+                ("All", null),
+                ("Scheduled", 0),
+                ("Completed", 1),
+                ("Cancelled", 2)
             });
-            segments.SelectionChanged += (s, e) => SetFilter(segments.Selected);
+            segments.SelectionChanged += (s, e) => SetTypeFilter(segments.Selected);
 
-            search = new SearchBox { PlaceholderText = "Search subject, notes or resolution" };
+            search = new SearchBox { PlaceholderText = "Search subject, notes or assigned user" };
             search.Inner.TextChanged += (s, e) => ApplySearch();
             _tips.SetToolTip(search, "Search  (Ctrl+F)");
 
@@ -283,19 +164,19 @@ namespace CRM.winforms
             Resize += (s, e) => LayoutUi();
         }
 
-        // ═══════════ SHELL PAINT (hairline under the page header) ═══════════
+        // ═══════════ HAIRLINE UNDER HEADER ═══════════
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            Draw.Quality(e.Graphics);
+            UiKit.Quality(e.Graphics);
 
-            int y = lblSubtitle.Bottom + T.S4;
-            using var pen = new Pen(T.Line, 1);
+            int y = lblSubtitle.Bottom + UiKit.T.S4;
+            using var pen = new Pen(UiKit.T.Line, 1);
             e.Graphics.DrawLine(pen, 0, y, Width, y);
         }
 
-        // ═══════════ KEYBOARD (HCI: shortcuts for the three things staff repeat) ═══════════
+        // ═══════════ KEYBOARD ═══════════
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
@@ -334,33 +215,27 @@ namespace CRM.winforms
 
         // ═══════════ FILTER ═══════════
 
-        private void SetFilter(InteractionTypeFilter? filter)
+        private void SetTypeFilter(int? status)
         {
-            _currentFilter = filter;
+            _statusFilter = status;
 
-            lblGridTitle.Text = filter switch
+            lblGridTitle.Text = status switch
             {
-                InteractionTypeFilter.Inquiry => "Client questions",
-                InteractionTypeFilter.Complaint => "Client concerns",
-                InteractionTypeFilter.Feedback => "Client reviews",
-                _ => "All interactions"
+                0 => "Scheduled follow-ups",
+                1 => "Completed follow-ups",
+                2 => "Cancelled follow-ups",
+                _ => "All follow-ups"
             };
 
-            lblSubtitle.Text = filter switch
+            lblSubtitle.Text = status switch
             {
-                InteractionTypeFilter.Inquiry => "Questions about products or repairs",
-                InteractionTypeFilter.Complaint => "Concerns about service or repairs",
-                InteractionTypeFilter.Feedback => "Reviews and satisfaction notes",
-                _ => "Questions, concerns and reviews from your customers"
+                0 => "Outreach still waiting to happen",
+                1 => "Follow-ups already completed",
+                2 => "Follow-ups that were cancelled",
+                _ => "Outreach and reminders scheduled for your customers"
             };
 
-            btnAdd.Text = filter switch
-            {
-                InteractionTypeFilter.Inquiry => "Add question",
-                InteractionTypeFilter.Complaint => "Add concern",
-                InteractionTypeFilter.Feedback => "Add review",
-                _ => "Add interaction"
-            };
+            btnAdd.Text = "Add follow-up";
 
             LayoutUi();
             Invalidate();
@@ -368,53 +243,49 @@ namespace CRM.winforms
             _ = ReloadAsync();
         }
 
-        // ═══════════ LAYOUT (4pt grid, one column, left aligned) ═══════════
+        // ═══════════ LAYOUT ═══════════
 
         private void LayoutUi()
         {
             if (Width <= 0 || Height <= 0) return;
 
-            // ── Header ──
             lblTitle.Location = new Point(0, 0);
 
-            int subtitleY = lblTitle.PreferredHeight + T.S1;
+            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
             lblSubtitle.Location = new Point(1, subtitleY);
 
-            btnAdd.Size = new Size(btnAdd.PreferredWidth, T.ButtonHeight);
-            btnAdd.Location = new Point(Width - btnAdd.Width, T.S1);
+            btnAdd.Size = new Size(btnAdd.PreferredWidth, UiKit.T.ButtonHeight);
+            btnAdd.Location = new Point(Width - btnAdd.Width, UiKit.T.S1);
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + T.S4;
+            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
 
-            // ── Counter strip ──
-            int stripTop = dividerY + T.S5;
-            int stripH = Math.Max(T.StripHeight, strip.PreferredContentHeight());
+            int stripTop = dividerY + UiKit.T.S5;
+            int stripH = Math.Max(UiKit.T.StripHeight, strip.PreferredContentHeight());
             strip.Location = new Point(0, stripTop);
             strip.Size = new Size(Width, stripH);
 
-            // ── Workbench card ──
-            int cardTop = stripTop + stripH + T.S5;
+            int cardTop = stripTop + stripH + UiKit.T.S5;
             int cardHeight = Math.Max(240, Height - cardTop);
 
             card.Location = new Point(0, cardTop);
             card.Size = new Size(Width, cardHeight);
 
-            // ── Inside the card ──
-            const int cp = T.S5;                    // card padding
+            const int cp = UiKit.T.S5;
 
-            lblGridTitle.Location = new Point(cp, T.S5 - 2);
-            lblCount.Location = new Point(lblGridTitle.Right + T.S2,
+            lblGridTitle.Location = new Point(cp, UiKit.T.S5 - 2);
+            lblCount.Location = new Point(lblGridTitle.Right + UiKit.T.S2,
                                           lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
 
-            int toolbarY = lblGridTitle.Bottom + T.S4;
+            int toolbarY = lblGridTitle.Bottom + UiKit.T.S4;
 
             segments.Size = new Size(segments.PreferredWidth, 34);
             segments.Location = new Point(cp, toolbarY);
 
-            int searchW = Math.Min(280, Math.Max(180, card.Width - cp * 2 - segments.Width - T.S4));
-            search.Size = new Size(searchW, T.InputHeight);
-            search.Location = new Point(card.Width - cp - searchW, toolbarY + (34 - T.InputHeight) / 2);
+            int searchW = Math.Min(280, Math.Max(180, card.Width - cp * 2 - segments.Width - UiKit.T.S4));
+            search.Size = new Size(searchW, UiKit.T.InputHeight);
+            search.Location = new Point(card.Width - cp - searchW, toolbarY + (34 - UiKit.T.InputHeight) / 2);
 
-            int gridTop = toolbarY + 34 + T.S4;
+            int gridTop = toolbarY + 34 + UiKit.T.S4;
             int gridW = card.Width - cp * 2;
             int gridH = card.Height - gridTop - cp;
 
@@ -427,27 +298,24 @@ namespace CRM.winforms
             }
         }
 
-        // ═══════════ DATA (unchanged behaviour) ═══════════
+        // ═══════════ DATA ═══════════
 
         public async Task ReloadAsync()
         {
             try
             {
-                _all = await _api.GetInteractionsAsync(
-                    _currentFilter,
-                    includeArchived: false);
-
+                _all = await _api.GetFollowUpsAsync(null, includeArchived: false);
                 UpdateStats();
                 ApplySearch();
             }
             catch (Exception ex)
             {
-                _all = new List<InteractionDto>();
+                _all = new List<FollowUpDto>();
                 UpdateStats();
                 ApplySearch();
 
                 MessageBox.Show(
-                    $"Couldn't load interactions.\n\n{ex.Message}",
+                    $"Couldn't load follow-ups.\n\n{ex.Message}",
                     "Connection problem",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
@@ -466,7 +334,7 @@ namespace CRM.winforms
         {
             var term = search.Inner.Text?.Trim() ?? string.Empty;
 
-            IEnumerable<InteractionDto> q = _all;
+            IEnumerable<FollowUpDto> q = _all;
 
             if (_statusFilter.HasValue)
                 q = q.Where(x => x.Status == _statusFilter.Value);
@@ -476,7 +344,7 @@ namespace CRM.winforms
                 q = q.Where(x =>
                     (x.Subject ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
                     (x.Notes ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                    (x.Resolution ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+                    (x.AssignedToUserId ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
             }
 
             var view = q.ToList();
@@ -502,13 +370,13 @@ namespace CRM.winforms
 
                 if (!string.IsNullOrEmpty(term))
                     state.Show("\uE721", "No matches",
-                               $"Nothing matches \u201c{term}\u201d. Try a shorter word, or clear the search with Esc.");
+                        $"Nothing matches \u201c{term}\u201d. Try a shorter word, or clear the search with Esc.");
                 else if (_statusFilter.HasValue)
                     state.Show("\uE71C", "Nothing here yet",
-                               "No interactions with this status. Pick Total to see them all.");
+                        "No follow-ups with this status. Pick Total to see them all.");
                 else
-                    state.Show("\uE8BD", "No interactions yet",
-                               $"Use \u201c{btnAdd.Text}\u201d to log the first one.");
+                    state.Show("\uE8BD", "No follow-ups yet",
+                        $"Use \u201c{btnAdd.Text}\u201d to schedule the first one.");
             }
         }
 
@@ -517,12 +385,12 @@ namespace CRM.winforms
         private static void StyleGrid(DataGridView g)
         {
             g.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            g.BackgroundColor = T.Surface;
+            g.BackgroundColor = UiKit.T.Surface;
             g.BorderStyle = BorderStyle.None;
             g.CellBorderStyle = DataGridViewCellBorderStyle.None;
             g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
             g.EnableHeadersVisualStyles = false;
-            g.GridColor = T.LineSoft;
+            g.GridColor = UiKit.T.LineSoft;
 
             g.RowHeadersVisible = false;
             g.AllowUserToAddRows = false;
@@ -534,37 +402,35 @@ namespace CRM.winforms
             g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             g.ScrollBars = ScrollBars.Vertical;
-            g.RowTemplate.Height = T.RowHeight;
-            g.ColumnHeadersHeight = T.HeaderHeight;
+            g.RowTemplate.Height = UiKit.T.RowHeight;
+            g.ColumnHeadersHeight = UiKit.T.HeaderHeight;
             g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
 
-            // Headers: sentence case, quiet, no chrome — the rules do the separating.
-            g.ColumnHeadersDefaultCellStyle.BackColor = T.Surface;
-            g.ColumnHeadersDefaultCellStyle.ForeColor = T.InkMuted;
-            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = T.Surface;
-            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = T.InkMuted;
-            g.ColumnHeadersDefaultCellStyle.Font = T.SmallStrong;
-            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(T.S3, 0, T.S3, 0);
+            g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
             g.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
 
-            g.DefaultCellStyle.BackColor = T.Surface;
-            g.DefaultCellStyle.ForeColor = T.Ink;
-            g.DefaultCellStyle.Font = T.Body;
-            g.DefaultCellStyle.SelectionBackColor = Draw.Wash(AppTheme.Primary);
-            g.DefaultCellStyle.SelectionForeColor = T.Ink;
-            g.DefaultCellStyle.Padding = new Padding(T.S3, 0, T.S3, 0);
+            g.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Font = UiKit.T.Body;
+            g.DefaultCellStyle.SelectionBackColor = UiKit.Wash(AppTheme.Primary);
+            g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
             g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
-            g.RowsDefaultCellStyle.BackColor = T.Surface;
+            g.RowsDefaultCellStyle.BackColor = UiKit.T.Surface;
         }
 
         private void ConfigureColumns()
         {
             foreach (var hidden in new[]
             {
-                "CustomerInteractionId", "CustomerId", "RepairRequestId",
-                "InteractionType", "Status", "Priority",
-                "InteractionByUserId", "UpdatedAt", "ClosedAt", "IsActive",
-                "Notes", "Resolution", "ActivityStatus"
+                "FollowUpId", "CustomerId", "RepairRequestId",
+                "Channel", "Status", "CompletedAt", "UpdatedAt",
+                "IsActive", "AssignedToUserId", "ActivityStatus"
             })
             {
                 if (dgv.Columns[hidden] != null)
@@ -586,37 +452,31 @@ namespace CRM.winforms
                 c.DisplayIndex = displayIndex;
             }
 
-            Setup("TypeText", "Type", 130, 0);
+            Setup("ChannelText", "Channel", 110, 0);
             Setup("Subject", "Subject", 0, 1, fill: true);
-            Setup("PriorityText", "Priority", 100, 2);
-            Setup("StatusText", "Status", 130, 3);
-            Setup("InteractionDate", "Created", 110, 4);
+            Setup("StatusText", "Status", 130, 2);
+            Setup("ScheduledAt", "Scheduled", 150, 3);
+            Setup("CompletedAtDisplay", "Completed", 150, 4);
 
-            if (dgv.Columns["InteractionDate"] != null)
+            if (dgv.Columns["ScheduledAt"] != null)
             {
-                dgv.Columns["InteractionDate"].DefaultCellStyle.Format = "MMM d";
-                dgv.Columns["InteractionDate"].DefaultCellStyle.ForeColor = T.InkMuted;
-                dgv.Columns["InteractionDate"].DefaultCellStyle.SelectionForeColor = T.InkMuted;
+                dgv.Columns["ScheduledAt"].DefaultCellStyle.Format = "MMM d  HH:mm";
+                dgv.Columns["ScheduledAt"].DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+                dgv.Columns["ScheduledAt"].DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            }
+
+            if (dgv.Columns["CompletedAtDisplay"] != null)
+            {
+                dgv.Columns["CompletedAtDisplay"].DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+                dgv.Columns["CompletedAtDisplay"].DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
             }
 
             if (dgv.Columns["Subject"] != null)
             {
-                dgv.Columns["Subject"].DefaultCellStyle.Font = T.BodyStrong;
-                dgv.Columns["Subject"].DefaultCellStyle.Padding = new Padding(T.S3, 0, T.S4, 0);
+                dgv.Columns["Subject"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
+                dgv.Columns["Subject"].DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S4, 0);
             }
         }
-
-        // ═══════════ DISPLAY WORDING ═══════════
-        // The data model still calls these Inquiry/Complaint/Feedback; the UI never shows
-        // those words to staff — everywhere a type is displayed, it goes through here first.
-
-        private static string DisplayType(string? raw) => raw switch
-        {
-            "Inquiry" => "Question",
-            "Complaint" => "Concern",
-            "Feedback" => "Review",
-            _ => raw ?? ""
-        };
 
         // ═══════════ ACTIONS ═══════════
 
@@ -624,10 +484,10 @@ namespace CRM.winforms
         {
             _actionsMenu = new ContextMenuStrip
             {
-                Font = T.Body,
+                Font = UiKit.T.Body,
                 ShowImageMargin = false,
-                BackColor = T.Surface,
-                ForeColor = T.Ink,
+                BackColor = UiKit.T.Surface,
+                ForeColor = UiKit.T.Ink,
                 DropShadowEnabled = true,
                 RenderMode = ToolStripRenderMode.Professional,
                 Renderer = new QuietMenuRenderer()
@@ -635,25 +495,31 @@ namespace CRM.winforms
 
             _actionsMenu.Items.Add("View details");
             _actionsMenu.Items.Add("Edit");
+            _actionsMenu.Items.Add("Mark completed");
+            _actionsMenu.Items.Add("Mark cancelled");
             _actionsMenu.Items.Add(new ToolStripSeparator());
             _actionsMenu.Items.Add("Archive");
 
             foreach (ToolStripItem item in _actionsMenu.Items)
-                item.Padding = new Padding(T.S2, T.S1, T.S2, T.S1);
+                item.Padding = new Padding(UiKit.T.S2, UiKit.T.S1, UiKit.T.S2, UiKit.T.S1);
 
             _actionsMenu.Items[0].Click += OnMenuView;
             _actionsMenu.Items[1].Click += OnMenuUpdate;
-            _actionsMenu.Items[3].Click += OnMenuArchive;
+            _actionsMenu.Items[2].Click += async (s, e) => await MarkAsync(1);
+            _actionsMenu.Items[3].Click += async (s, e) => await MarkAsync(2);
+            _actionsMenu.Items[5].Click += OnMenuArchive;
 
             _actionsMenu.Opening += (s, e) =>
             {
                 if (_menuRowIndex < 0) return;
-                if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto)
-                    return;
+                if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
 
-                var archiveItem = _actionsMenu.Items[3];
+                var archiveItem = _actionsMenu.Items[5];
                 archiveItem.Text = dto.IsActive ? "Archive" : "Restore";
-                archiveItem.ForeColor = dto.IsActive ? AppTheme.Danger : T.Ink;
+                archiveItem.ForeColor = dto.IsActive ? AppTheme.Danger : UiKit.T.Ink;
+
+                _actionsMenu.Items[2].Enabled = dto.Status != 1 && dto.IsActive;
+                _actionsMenu.Items[3].Enabled = dto.Status != 2 && dto.IsActive;
             };
 
             _actionsMenu.Closed += (s, e) => { dgv.Invalidate(); };
@@ -662,20 +528,18 @@ namespace CRM.winforms
         private void OnMenuView(object? sender, EventArgs e)
         {
             if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
 
             MessageBox.Show(
                 $"{dto.Subject}\n\n" +
-                $"Type        {DisplayType(dto.TypeText)}\n" +
-                $"Priority    {dto.PriorityText}\n" +
+                $"Channel     {dto.ChannelText}\n" +
                 $"Status      {dto.StatusText}\n" +
-                $"Created     {dto.InteractionDate:MMM d, yyyy  HH:mm}\n" +
-                (dto.UpdatedAt.HasValue ? $"Updated     {dto.UpdatedAt.Value:MMM d, yyyy  HH:mm}\n" : "") +
-                (dto.ClosedAt.HasValue ? $"Closed      {dto.ClosedAt.Value:MMM d, yyyy  HH:mm}\n" : "") +
-                $"Record      #{dto.CustomerInteractionId}  ·  {dto.ActivityStatus}\n\n" +
-                $"Notes\n{dto.Notes}\n" +
-                (string.IsNullOrWhiteSpace(dto.Resolution) ? "" : $"\nResolution\n{dto.Resolution}"),
-                "Interaction details",
+                $"Scheduled   {dto.ScheduledAt:MMM d, yyyy  HH:mm}\n" +
+                (dto.CompletedAt.HasValue ? $"Completed   {dto.CompletedAt.Value:MMM d, yyyy  HH:mm}\n" : "") +
+                $"Assigned    {dto.AssignedToUserId ?? "\u2014"}\n" +
+                $"Record      #{dto.FollowUpId}  ·  {dto.ActivityStatus}\n\n" +
+                $"Notes\n{dto.Notes}",
+                "Follow-up details",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         }
@@ -683,14 +547,35 @@ namespace CRM.winforms
         private void OnMenuUpdate(object? sender, EventArgs e)
         {
             if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
             OpenEditDialog(dto);
+        }
+
+        private async Task MarkAsync(int newStatus)
+        {
+            if (_menuRowIndex < 0) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
+
+            try
+            {
+                dto.Status = newStatus;
+                await _api.UpdateFollowUpAsync(dto.FollowUpId, dto);
+                await ReloadAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Couldn't update this follow-up.\n\n{ex.Message}",
+                    "Update failed",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
         }
 
         private async void OnMenuArchive(object? sender, EventArgs e)
         {
             if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
+            if (dgv.Rows[_menuRowIndex].DataBoundItem is not FollowUpDto dto) return;
 
             if (dto.IsActive)
                 await ArchiveAsync(dto);
@@ -733,7 +618,7 @@ namespace CRM.winforms
         private void Dgv_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0) return;
-            if (dgv.Rows[e.RowIndex].DataBoundItem is not InteractionDto dto) return;
+            if (dgv.Rows[e.RowIndex].DataBoundItem is not FollowUpDto dto) return;
             OpenEditDialog(dto);
         }
 
@@ -757,12 +642,12 @@ namespace CRM.winforms
 
         // ═══════════ ARCHIVE / RESTORE ═══════════
 
-        private async Task ArchiveAsync(InteractionDto dto)
+        private async Task ArchiveAsync(FollowUpDto dto)
         {
             var confirm = MessageBox.Show(
                 $"Archive \u201c{dto.Subject}\u201d?\n\n" +
                 "It leaves the list but nothing is deleted — you can restore it later.",
-                "Archive interaction",
+                "Archive follow-up",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
 
@@ -770,30 +655,30 @@ namespace CRM.winforms
 
             try
             {
-                await _api.ArchiveInteractionAsync(dto.CustomerInteractionId);
+                await _api.ArchiveFollowUpAsync(dto.FollowUpId);
                 await ReloadAsync();
             }
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Couldn't archive this interaction.\n\n{ex.Message}",
+                    $"Couldn't archive this follow-up.\n\n{ex.Message}",
                     "Archive failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
         }
 
-        private async Task RestoreAsync(InteractionDto dto)
+        private async Task RestoreAsync(FollowUpDto dto)
         {
             try
             {
-                await _api.RestoreInteractionAsync(dto.CustomerInteractionId);
+                await _api.RestoreFollowUpAsync(dto.FollowUpId);
                 await ReloadAsync();
             }
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Couldn't restore this interaction.\n\n{ex.Message}",
+                    $"Couldn't restore this follow-up.\n\n{ex.Message}",
                     "Restore failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
@@ -801,7 +686,6 @@ namespace CRM.winforms
         }
 
         // ═══════════ CELL PAINTING ═══════════
-        // Type = coloured dot, priority = weight, status = soft pill. One device each.
 
         private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
@@ -809,12 +693,11 @@ namespace CRM.winforms
 
             var g = e.Graphics;
 
-            // Header: paint the baseline rule ourselves so it runs edge to edge.
             if (e.RowIndex == -1)
             {
                 e.PaintBackground(e.CellBounds, false);
                 e.PaintContent(e.CellBounds);
-                using var hp = new Pen(T.Line, 1);
+                using var hp = new Pen(UiKit.T.Line, 1);
                 g.DrawLine(hp, e.CellBounds.Left, e.CellBounds.Bottom - 1,
                                e.CellBounds.Right, e.CellBounds.Bottom - 1);
                 e.Handled = true;
@@ -829,14 +712,13 @@ namespace CRM.winforms
 
             Color bg = selected
                 ? e.CellStyle!.SelectionBackColor
-                : hovered ? T.RowHover : T.Surface;
+                : hovered ? UiKit.T.RowHover : UiKit.T.Surface;
 
-            bool custom = col is "TypeText" or "StatusText" or "PriorityText" || col == ColActions;
+            bool custom = col is "ChannelText" or "StatusText" || col == ColActions;
 
-            // Row background + hairline for every cell, so hover reads as a whole row.
             using (var b = new SolidBrush(bg))
                 g.FillRectangle(b, e.CellBounds);
-            using (var p = new Pen(T.LineSoft, 1))
+            using (var p = new Pen(UiKit.T.LineSoft, 1))
                 g.DrawLine(p, e.CellBounds.Left, e.CellBounds.Bottom - 1,
                               e.CellBounds.Right, e.CellBounds.Bottom - 1);
 
@@ -847,53 +729,35 @@ namespace CRM.winforms
                 return;
             }
 
-            Draw.Quality(g);
+            UiKit.Quality(g);
             var r = e.CellBounds;
             string text = e.FormattedValue?.ToString() ?? string.Empty;
 
             if (col == ColActions)
             {
-                var color = hovered ? T.InkMuted : T.InkFaint;
-                Draw.Text(g, "\u22EF", new Font("Segoe UI", 13F, FontStyle.Bold), color, r,
+                var color = hovered ? UiKit.T.InkMuted : UiKit.T.InkFaint;
+                UiKit.Text(g, "\u22EF", new Font("Segoe UI", 13F, FontStyle.Bold), color, r,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 e.Handled = true;
                 return;
             }
 
-            if (col == "TypeText")
+            if (col == "ChannelText")
             {
                 Color accent = text switch
                 {
-                    "Inquiry" => AppTheme.Primary,
-                    "Complaint" => AppTheme.Danger,
-                    "Feedback" => AppTheme.Success,
-                    _ => T.InkFaint
+                    "Call" => AppTheme.Primary,
+                    "Email" => AppTheme.Success,
+                    "SMS" => AppTheme.Warning,
+                    "Visit" => AppTheme.Danger,
+                    _ => UiKit.T.InkFaint
                 };
 
-                string label = DisplayType(text);
+                int cx = r.Left + UiKit.T.S3 + 3;
+                UiKit.Dot(g, cx, r.Top + r.Height / 2, 7, accent);
 
-                int cx = r.Left + T.S3 + 3;
-                Draw.Dot(g, cx, r.Top + r.Height / 2, 7, accent);
-
-                var textRect = new Rectangle(cx + T.S3 - 2, r.Top, r.Width - (cx - r.Left) - T.S3, r.Height);
-                Draw.Text(g, label, T.Body, T.Ink, textRect,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-
-                e.Handled = true;
-                return;
-            }
-
-            if (col == "PriorityText")
-            {
-                (Color fg, Font font) = text switch
-                {
-                    "High" => (AppTheme.Danger, T.BodyStrong),
-                    "Medium" => (AppTheme.Warning, T.BodyStrong),
-                    _ => (T.InkMuted, T.Body)
-                };
-
-                var textRect = new Rectangle(r.Left + T.S3, r.Top, r.Width - T.S3 * 2, r.Height);
-                Draw.Text(g, text, font, fg, textRect,
+                var textRect = new Rectangle(cx + UiKit.T.S3 - 2, r.Top, r.Width - (cx - r.Left) - UiKit.T.S3, r.Height);
+                UiKit.Text(g, text, UiKit.T.Body, UiKit.T.Ink, textRect,
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
                 e.Handled = true;
@@ -904,19 +768,19 @@ namespace CRM.winforms
             {
                 Color accent = text switch
                 {
-                    "Open" => AppTheme.Warning,
-                    "In Progress" => AppTheme.Primary,
-                    "Closed" => AppTheme.Success,
-                    _ => T.InkMuted
+                    "Scheduled" => AppTheme.Warning,
+                    "Completed" => AppTheme.Success,
+                    "Cancelled" => AppTheme.Danger,
+                    _ => UiKit.T.InkMuted
                 };
 
-                var size = Draw.Measure(text, T.SmallStrong);
-                int pillW = size.Width + T.S4;
+                var size = UiKit.Measure(text, UiKit.T.SmallStrong);
+                int pillW = size.Width + UiKit.T.S4;
                 int pillH = 22;
-                var pill = new Rectangle(r.Left + T.S3, r.Top + (r.Height - pillH) / 2, pillW, pillH);
+                var pill = new Rectangle(r.Left + UiKit.T.S3, r.Top + (r.Height - pillH) / 2, pillW, pillH);
 
-                Draw.FillRounded(g, pill, T.PillRadius, Draw.Wash(accent));
-                Draw.Text(g, text, T.SmallStrong, accent, pill,
+                UiKit.FillRounded(g, pill, UiKit.T.PillRadius, UiKit.Wash(accent));
+                UiKit.Text(g, text, UiKit.T.SmallStrong, accent, pill,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 
                 e.Handled = true;
@@ -927,23 +791,22 @@ namespace CRM.winforms
 
         private void OpenAddDialog()
         {
-            using var dlg = new InteractionFormDialog(null, _currentFilter);
+            using var dlg = new FollowUpFormDialog(null);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                 _ = ReloadAsync();
         }
 
-        private void OpenEditDialog(InteractionDto dto)
+        private void OpenEditDialog(FollowUpDto dto)
         {
-            using var dlg = new InteractionFormDialog(dto);
+            using var dlg = new FollowUpFormDialog(dto);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                 _ = ReloadAsync();
         }
 
         // ═══════════════════════════════════════════════════════════════
-        //  NESTED UI COMPONENTS
+        //  NESTED UI COMPONENTS (same as Interactions / Customers)
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>Flat white panel with a 1px hairline and rounded corners. No shadow.</summary>
         [DesignerCategory("Code")]
         private sealed class SurfaceCard : Panel
         {
@@ -956,22 +819,14 @@ namespace CRM.winforms
 
             protected override void OnPaint(PaintEventArgs e)
             {
-                Draw.Quality(e.Graphics);
+                UiKit.Quality(e.Graphics);
                 using (var b = new SolidBrush(AppTheme.Background))
                     e.Graphics.FillRectangle(b, ClientRectangle);
-                Draw.Card(e.Graphics, ClientRectangle, T.Radius, T.Surface, T.Line);
+                UiKit.Card(e.Graphics, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
                 base.OnPaint(e);
             }
         }
 
-        /// <summary>
-        /// Four counters in one strip, separated by hairlines. Clicking a counter filters
-        /// the list by that status; the active one keeps a 2px underline so the filter is
-        /// never invisible (visibility of system status).
-        ///
-        /// Caption and value are real Labels, not hand-painted text — framework text
-        /// layout always reserves full ascender/descender space, so nothing gets clipped.
-        /// </summary>
         [DesignerCategory("Code")]
         private sealed class MetricStrip : Control
         {
@@ -983,9 +838,9 @@ namespace CRM.winforms
                 public Label ValLabel = null!;
             }
 
-            private const int SegPad = T.S5;        // left inset of a segment
+            private const int SegPad = UiKit.T.S5;
             private const int DotOffset = SegPad + 3;
-            private const int CapOffset = SegPad + T.S4 - 2;
+            private const int CapOffset = SegPad + UiKit.T.S4 - 2;
 
             private readonly List<Item> _items = new();
             private int _hover = -1;
@@ -1011,8 +866,8 @@ namespace CRM.winforms
                 var cap = new Label
                 {
                     Text = caption,
-                    Font = T.Small,
-                    ForeColor = T.InkMuted,
+                    Font = UiKit.T.Small,
+                    ForeColor = UiKit.T.InkMuted,
                     AutoSize = true,
                     BackColor = Color.Transparent,
                     Cursor = Cursors.Hand
@@ -1021,8 +876,8 @@ namespace CRM.winforms
                 var val = new Label
                 {
                     Text = "0",
-                    Font = T.Metric,
-                    ForeColor = T.Ink,
+                    Font = UiKit.T.Metric,
+                    ForeColor = UiKit.T.Ink,
                     AutoSize = true,
                     BackColor = Color.Transparent,
                     Cursor = Cursors.Hand
@@ -1064,8 +919,8 @@ namespace CRM.winforms
                 {
                     bool active = i == _selected;
                     var it = _items[i];
-                    it.CapLabel.ForeColor = active ? T.Ink : T.InkMuted;
-                    it.ValLabel.ForeColor = active ? it.Accent : T.Ink;
+                    it.CapLabel.ForeColor = active ? UiKit.T.Ink : UiKit.T.InkMuted;
+                    it.ValLabel.ForeColor = active ? it.Accent : UiKit.T.Ink;
                 }
             }
 
@@ -1080,35 +935,30 @@ namespace CRM.winforms
                     var it = _items[i];
                     int segLeft = i * segW;
 
-                    it.CapLabel.Location = new Point(segLeft + CapOffset, T.S4);
-                    it.ValLabel.Location = new Point(segLeft + SegPad, it.CapLabel.Bottom + T.S1);
+                    it.CapLabel.Location = new Point(segLeft + CapOffset, UiKit.T.S4);
+                    it.ValLabel.Location = new Point(segLeft + SegPad, it.CapLabel.Bottom + UiKit.T.S1);
                 }
             }
 
-            /// <summary>
-            /// Height the strip actually needs, measured from the real label sizes rather
-            /// than an assumed constant — safe against font-metric differences across
-            /// machines that could otherwise clip the value text at the bottom.
-            /// </summary>
             public int PreferredContentHeight()
             {
-                if (_items.Count == 0) return T.StripHeight;
+                if (_items.Count == 0) return UiKit.T.StripHeight;
 
                 int capH = _items.Max(x => x.CapLabel.Height);
                 int valH = _items.Max(x => x.ValLabel.Height);
 
-                return T.S4 + capH + T.S1 + valH + T.S3;
+                return UiKit.T.S4 + capH + UiKit.T.S1 + valH + UiKit.T.S3;
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                Draw.Quality(g);
+                UiKit.Quality(g);
 
                 using (var b = new SolidBrush(AppTheme.Background))
                     g.FillRectangle(b, ClientRectangle);
 
-                Draw.Card(g, ClientRectangle, T.Radius, T.Surface, T.Line);
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
 
                 if (_items.Count == 0) return;
 
@@ -1123,64 +973,59 @@ namespace CRM.winforms
 
                     if (hot && !active)
                     {
-                        var wash = Rectangle.Inflate(seg, -T.S2, -T.S2);
-                        Draw.FillRounded(g, wash, 8, T.RowHover);
+                        var wash = Rectangle.Inflate(seg, -UiKit.T.S2, -UiKit.T.S2);
+                        UiKit.FillRounded(g, wash, 8, UiKit.T.RowHover);
                     }
 
-                    // Divider before every segment but the first.
                     if (i > 0)
                     {
-                        using var pen = new Pen(T.Line, 1);
-                        g.DrawLine(pen, seg.Left, T.S5, seg.Left, Height - T.S5);
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        g.DrawLine(pen, seg.Left, UiKit.T.S5, seg.Left, Height - UiKit.T.S5);
                     }
 
-                    Draw.Dot(g, seg.Left + DotOffset, it.CapLabel.Top + it.CapLabel.Height / 2, 7,
-                        active ? it.Accent : Draw.Mix(it.Accent, Color.White, 0.45));
+                    UiKit.Dot(g, seg.Left + DotOffset, it.CapLabel.Top + it.CapLabel.Height / 2, 7,
+                        active ? it.Accent : UiKit.Mix(it.Accent, Color.White, 0.45));
 
                     if (active)
                     {
                         var bar = new Rectangle(seg.Left + SegPad, Height - 4, 28, 2);
-                        Draw.FillRounded(g, bar, 1, it.Accent);
+                        UiKit.FillRounded(g, bar, 1, it.Accent);
                     }
                 }
             }
         }
 
-        /// <summary>
-        /// Segmented control for the type filter: one track, the active segment lifted to
-        /// white. Cheaper on attention than four competing pills.
-        /// </summary>
         [DesignerCategory("Code")]
         private sealed class SegmentedFilter : Control
         {
-            private readonly (string Label, InteractionTypeFilter? Filter)[] _items;
+            private readonly (string Label, int? Value)[] _items;
             private readonly int[] _widths;
             private int _hover = -1;
             private int _selected = 0;
 
             public event EventHandler? SelectionChanged;
-            public InteractionTypeFilter? Selected => _items[_selected].Filter;
+            public int? Selected => _items[_selected].Value;
 
-            public SegmentedFilter((string, InteractionTypeFilter?)[] items)
+            public SegmentedFilter((string, int?)[] items)
             {
                 _items = items;
                 _widths = new int[items.Length];
 
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = T.Surface;
+                BackColor = UiKit.T.Surface;
                 Cursor = Cursors.Hand;
-                Font = T.SmallStrong;
+                Font = UiKit.T.SmallStrong;
 
                 for (int i = 0; i < _items.Length; i++)
-                    _widths[i] = Draw.Measure(_items[i].Label, T.SmallStrong).Width + T.S5;
+                    _widths[i] = UiKit.Measure(_items[i].Label, UiKit.T.SmallStrong).Width + UiKit.T.S5;
             }
 
-            public int PreferredWidth => _widths.Sum() + T.S1 * 2;
+            public int PreferredWidth => _widths.Sum() + UiKit.T.S1 * 2;
 
             private int IndexAt(Point p)
             {
-                int x = T.S1;
+                int x = UiKit.T.S1;
                 for (int i = 0; i < _items.Length; i++)
                 {
                     if (p.X >= x && p.X < x + _widths[i]) return i;
@@ -1216,30 +1061,29 @@ namespace CRM.winforms
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                Draw.Quality(g);
+                UiKit.Quality(g);
 
-                using (var b = new SolidBrush(T.Surface))
+                using (var b = new SolidBrush(UiKit.T.Surface))
                     g.FillRectangle(b, ClientRectangle);
 
-                // Track
-                Draw.FillRounded(g, new Rectangle(0, 0, Width, Height), 8, T.LineSoft);
+                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 8, UiKit.T.LineSoft);
 
-                int x = T.S1;
+                int x = UiKit.T.S1;
                 for (int i = 0; i < _items.Length; i++)
                 {
-                    var seg = new Rectangle(x, T.S1 - 1, _widths[i], Height - (T.S1 - 1) * 2);
+                    var seg = new Rectangle(x, UiKit.T.S1 - 1, _widths[i], Height - (UiKit.T.S1 - 1) * 2);
                     bool active = i == _selected;
 
                     if (active)
                     {
-                        Draw.FillRounded(g, seg, 6, T.Surface);
-                        using var pen = new Pen(T.Line, 1);
-                        using var path = Draw.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 6);
+                        UiKit.FillRounded(g, seg, 6, UiKit.T.Surface);
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 6);
                         g.DrawPath(pen, path);
                     }
 
-                    Color fg = active ? T.Ink : (i == _hover ? T.InkMuted : T.InkFaint);
-                    Draw.Text(g, _items[i].Label, T.SmallStrong, fg, seg,
+                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.InkMuted : UiKit.T.InkFaint);
+                    UiKit.Text(g, _items[i].Label, UiKit.T.SmallStrong, fg, seg,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 
                     x += _widths[i];
@@ -1247,7 +1091,6 @@ namespace CRM.winforms
             }
         }
 
-        /// <summary>Search field with a glyph, focus ring and an inline clear button.</summary>
         [DesignerCategory("Code")]
         private sealed class SearchBox : Control
         {
@@ -1267,14 +1110,14 @@ namespace CRM.winforms
             {
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = T.Surface;
+                BackColor = UiKit.T.Surface;
 
                 Inner = new TextBox
                 {
                     BorderStyle = BorderStyle.None,
-                    Font = T.Body,
-                    ForeColor = T.Ink,
-                    BackColor = T.Surface
+                    Font = UiKit.T.Body,
+                    ForeColor = UiKit.T.Ink,
+                    BackColor = UiKit.T.Surface
                 };
                 Inner.GotFocus += (s, e) => { _focused = true; Invalidate(); };
                 Inner.LostFocus += (s, e) => { _focused = false; Invalidate(); };
@@ -1312,33 +1155,32 @@ namespace CRM.winforms
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                Draw.Quality(g);
+                UiKit.Quality(g);
 
-                using (var b = new SolidBrush(T.Surface))
+                using (var b = new SolidBrush(UiKit.T.Surface))
                     g.FillRectangle(b, ClientRectangle);
 
                 var box = new Rectangle(0, 0, Width, Height);
-                Draw.FillRounded(g, box, 8, T.Surface);
+                UiKit.FillRounded(g, box, 8, UiKit.T.Surface);
 
-                var border = _focused ? AppTheme.Primary : T.Line;
-                using (var path = Draw.Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 8))
+                var border = _focused ? AppTheme.Primary : UiKit.T.Line;
+                using (var path = UiKit.Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 8))
                 using (var pen = new Pen(border, _focused ? 1.4f : 1f))
                     g.DrawPath(pen, path);
 
-                Draw.Text(g, "\uE721", T.Glyph, _focused ? AppTheme.Primary : T.InkFaint,
+                UiKit.Text(g, "\uE721", UiKit.T.Glyph, _focused ? AppTheme.Primary : UiKit.T.InkFaint,
                     new Rectangle(10, 0, 20, Height),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
                 if (Inner.Text.Length > 0)
                 {
-                    Draw.Text(g, "\uE711", new Font("Segoe MDL2 Assets", 9F),
-                        _hoverClear ? T.Ink : T.InkFaint, ClearRect,
+                    UiKit.Text(g, "\uE711", new Font("Segoe MDL2 Assets", 9F),
+                        _hoverClear ? UiKit.T.Ink : UiKit.T.InkFaint, ClearRect,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 }
             }
         }
 
-        /// <summary>Primary action button — flat, rounded, with a leading glyph.</summary>
         [DesignerCategory("Code")]
         private sealed class FlatButton : Control
         {
@@ -1353,11 +1195,11 @@ namespace CRM.winforms
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
                 BackColor = AppTheme.Background;
                 Cursor = Cursors.Hand;
-                Font = T.BodyStrong;
+                Font = UiKit.T.BodyStrong;
                 TabStop = true;
             }
 
-            public int PreferredWidth => Draw.Measure(Text, T.BodyStrong).Width + 56;
+            public int PreferredWidth => UiKit.Measure(Text, UiKit.T.BodyStrong).Width + 56;
 
             protected override void OnTextChanged(EventArgs e)
             {
@@ -1383,7 +1225,7 @@ namespace CRM.winforms
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                Draw.Quality(g);
+                UiKit.Quality(g);
 
                 using (var b = new SolidBrush(AppTheme.Background))
                     g.FillRectangle(b, ClientRectangle);
@@ -1392,27 +1234,26 @@ namespace CRM.winforms
                          : _hover ? AppTheme.PrimaryHover
                          : AppTheme.Primary;
 
-                Draw.FillRounded(g, ClientRectangle, 8, bg);
+                UiKit.FillRounded(g, ClientRectangle, 8, bg);
 
                 if (Focused)
                 {
                     var ring = Rectangle.Inflate(ClientRectangle, -3, -3);
-                    using var path = Draw.Rounded(ring, 6);
+                    using var path = UiKit.Rounded(ring, 6);
                     using var pen = new Pen(Color.FromArgb(120, Color.White), 1.2f);
                     g.DrawPath(pen, path);
                 }
 
-                Draw.Text(g, _glyph, new Font("Segoe MDL2 Assets", 10F), Color.White,
+                UiKit.Text(g, _glyph, new Font("Segoe MDL2 Assets", 10F), Color.White,
                     new Rectangle(16, 0, 18, Height),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
-                Draw.Text(g, Text, T.BodyStrong, Color.White,
+                UiKit.Text(g, Text, UiKit.T.BodyStrong, Color.White,
                     new Rectangle(36, 0, Width - 46, Height),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
             }
         }
 
-        /// <summary>Loading / empty / no-results screen. Every empty screen says what to do next.</summary>
         [DesignerCategory("Code")]
         private sealed class StateView : Control
         {
@@ -1424,7 +1265,7 @@ namespace CRM.winforms
             {
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = T.Surface;
+                BackColor = UiKit.T.Surface;
             }
 
             public void Show(string glyph, string title, string message)
@@ -1438,30 +1279,29 @@ namespace CRM.winforms
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                Draw.Quality(g);
+                UiKit.Quality(g);
 
-                using (var b = new SolidBrush(T.Surface))
+                using (var b = new SolidBrush(UiKit.T.Surface))
                     g.FillRectangle(b, ClientRectangle);
 
                 int cy = Height / 2 - 40;
 
                 var circle = new Rectangle(Width / 2 - 26, cy, 52, 52);
-                Draw.FillRounded(g, circle, 26, T.LineSoft);
-                Draw.Text(g, _glyph, T.GlyphLarge, T.InkFaint, circle,
+                UiKit.FillRounded(g, circle, 26, UiKit.T.LineSoft);
+                UiKit.Text(g, _glyph, UiKit.T.GlyphLarge, UiKit.T.InkFaint, circle,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 
-                Draw.Text(g, _title, T.Section, T.Ink,
-                    new Rectangle(0, circle.Bottom + T.S4, Width, 24),
+                UiKit.Text(g, _title, UiKit.T.Section, UiKit.T.Ink,
+                    new Rectangle(0, circle.Bottom + UiKit.T.S4, Width, 24),
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
 
-                int msgW = Math.Min(420, Width - T.S6 * 2);
-                Draw.Text(g, _message, T.Body, T.InkMuted,
-                    new Rectangle((Width - msgW) / 2, circle.Bottom + T.S4 + 28, msgW, 60),
+                int msgW = Math.Min(420, Width - UiKit.T.S6 * 2);
+                UiKit.Text(g, _message, UiKit.T.Body, UiKit.T.InkMuted,
+                    new Rectangle((Width - msgW) / 2, circle.Bottom + UiKit.T.S4 + 28, msgW, 60),
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.WordBreak);
             }
         }
 
-        /// <summary>Menu renderer without the grey gutter and blue system highlight.</summary>
         private sealed class QuietMenuRenderer : ToolStripProfessionalRenderer
         {
             public QuietMenuRenderer() : base(new Colors()) { RoundedEdges = false; }
@@ -1470,24 +1310,24 @@ namespace CRM.winforms
             {
                 var r = new Rectangle(4, 0, e.Item.Width - 8, e.Item.Height);
                 if (e.Item.Selected)
-                    Draw.FillRounded(e.Graphics, r, 6, T.RowHover);
+                    UiKit.FillRounded(e.Graphics, r, 6, UiKit.T.RowHover);
             }
 
             protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
             {
-                using var pen = new Pen(T.LineSoft, 1);
+                using var pen = new Pen(UiKit.T.LineSoft, 1);
                 int y = e.Item.Height / 2;
                 e.Graphics.DrawLine(pen, 8, y, e.Item.Width - 8, y);
             }
 
             private sealed class Colors : ProfessionalColorTable
             {
-                public override Color ToolStripDropDownBackground => T.Surface;
-                public override Color MenuBorder => T.Line;
+                public override Color ToolStripDropDownBackground => UiKit.T.Surface;
+                public override Color MenuBorder => UiKit.T.Line;
                 public override Color MenuItemBorder => Color.Transparent;
-                public override Color ImageMarginGradientBegin => T.Surface;
-                public override Color ImageMarginGradientMiddle => T.Surface;
-                public override Color ImageMarginGradientEnd => T.Surface;
+                public override Color ImageMarginGradientBegin => UiKit.T.Surface;
+                public override Color ImageMarginGradientMiddle => UiKit.T.Surface;
+                public override Color ImageMarginGradientEnd => UiKit.T.Surface;
             }
         }
     }

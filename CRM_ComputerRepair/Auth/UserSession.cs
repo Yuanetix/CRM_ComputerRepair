@@ -1,4 +1,4 @@
-﻿namespace CRM.winforms
+﻿namespace CRM.winforms.Auth
 {
     /// <summary>
     /// Holds the currently logged-in user's info.

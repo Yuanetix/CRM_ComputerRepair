@@ -1,4 +1,6 @@
-﻿using System;
+﻿using CRM.winforms.Forms;
+using CRM.winforms;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Threading.Tasks;
@@ -7,37 +9,36 @@ using System.Windows.Forms;
 namespace CRM.winforms
 {
     /// <summary>
-    /// Modal dialog for Add / Edit on a Follow-Up.
+    /// Modal dialog for Add / Edit customer with clean spacing.
     /// </summary>
     [DesignerCategory("Code")]
-    public class FollowUpFormDialog : ModalForm
+    public class CustomerFormDialog : ModalForm
     {
         // ═══════════ STATE ═══════════
 
         private readonly ApiClient _api = new ApiClient();
-        private readonly FollowUpDto? _editing;
+        private readonly int? _editingCustomerId;
         private readonly bool _isEditMode;
 
         // ═══════════ CONTROLS ═══════════
 
         private Label lblSubtitle = null!;
 
-        private Label lblSubject = null!;
-        private Label lblNotes = null!;
-        private Label lblScheduledAt = null!;
-        private Label lblChannel = null!;
-        private Label lblStatus = null!;
-        private Label lblAssignedTo = null!;
+        private Label lblFirstName = null!;
+        private Label lblLastName = null!;
+        private Label lblEmail = null!;
+        private Label lblPhone = null!;
+        private Label lblAddress = null!;
 
-        private TextField inpSubject = null!;
-        private TextField inpNotes = null!;
-        private DateTimePicker dtpScheduledAt = null!;
-        private ComboBox cmbChannel = null!;
-        private ComboBox cmbStatus = null!;
-        private TextField inpAssignedTo = null!;
+        private TextField inpFirstName = null!;
+        private TextField inpLastName = null!;
+        private TextField inpEmail = null!;
+        private TextField inpPhone = null!;
+        private TextField inpAddress = null!;
 
-        private Label lblErrorSubject = null!;
-        private Label lblErrorNotes = null!;
+        private Label lblErrorFirstName = null!;
+        private Label lblErrorLastName = null!;
+        private Label lblErrorEmail = null!;
 
         private Button btnSave = null!;
         private Button btnCancel = null!;
@@ -45,22 +46,22 @@ namespace CRM.winforms
 
         // ═══════════ CONSTRUCTOR ═══════════
 
-        public FollowUpFormDialog(FollowUpDto? existing = null)
+        public CustomerFormDialog(int? customerId, CustomerDto? existing = null)
         {
-            _editing = existing;
-            _isEditMode = existing != null;
+            _editingCustomerId = customerId;
+            _isEditMode = customerId.HasValue;
 
             BuildCard(
-                _isEditMode ? "Edit Follow-Up" : "Add Follow-Up",
+                _isEditMode ? "Edit Customer" : "Add Customer",
                 width: 560,
-                height: _isEditMode ? 700 : 680);
+                height: _isEditMode ? 620 : 600);
 
-            BuildContent();
+            BuildContent(existing);
         }
 
         // ═══════════ CONTENT ═══════════
 
-        private void BuildContent()
+        private void BuildContent(CustomerDto? existing)
         {
             int x = ContentLeftX;
             int w = ContentWidth;
@@ -70,8 +71,8 @@ namespace CRM.winforms
             lblSubtitle = new Label
             {
                 Text = _isEditMode
-                    ? "Update the follow-up information below."
-                    : "Enter the follow-up information below. Fields marked * are required.",
+                    ? "Update the customer's information below."
+                    : "Enter the customer's information below. Fields marked * are required.",
                 Font = AppTheme.FontSubtitle,
                 ForeColor = AppTheme.TextSecondary,
                 AutoSize = false,
@@ -83,55 +84,41 @@ namespace CRM.winforms
 
             y += 32;
 
-            // ── Subject * ──
-            lblSubject = MakeLabel("Subject *", x, y);
+            // ── First Name * ──
+            lblFirstName = MakeLabel("First name *", x, y);
             y += 20;
-            inpSubject = MakeField(x, y, w, "Short summary");
+            inpFirstName = MakeField(x, y, w, "Enter first name");
             y += 38 + 4;
-            lblErrorSubject = MakeErrorLabel(x, y);
+            lblErrorFirstName = MakeErrorLabel(x, y);
             y += 20;
 
-            // ── Notes (multiline) * ──
-            lblNotes = MakeLabel("Notes *", x, y);
+            // ── Last Name * ──
+            lblLastName = MakeLabel("Last name *", x, y);
             y += 20;
-            inpNotes = MakeField(x, y, w, "Describe what needs to be followed up...", multiline: true);
-            y += 74 + 4;
-            lblErrorNotes = MakeErrorLabel(x, y);
-            y += 20;
-
-            // ── Scheduled At + Channel (side by side) ──
-            int halfW = (w - 12) / 2;
-
-            lblScheduledAt = MakeLabel("Scheduled for *", x, y);
-            lblChannel = MakeLabel("Channel", x + halfW + 12, y);
+            inpLastName = MakeField(x, y, w, "Enter last name");
+            y += 38 + 4;
+            lblErrorLastName = MakeErrorLabel(x, y);
             y += 20;
 
-            dtpScheduledAt = new DateTimePicker
-            {
-                Font = new Font("Segoe UI", 9.5F),
-                Format = DateTimePickerFormat.Custom,
-                CustomFormat = "yyyy-MM-dd HH:mm",
-                ShowUpDown = true,
-                Location = new Point(x, y),
-                Size = new Size(halfW, 30)
-            };
-            pnlCard.Controls.Add(dtpScheduledAt);
+            // ── Email ──
+            lblEmail = MakeLabel("Email", x, y);
+            y += 20;
+            inpEmail = MakeField(x, y, w, "name@example.com");
+            y += 38 + 4;
+            lblErrorEmail = MakeErrorLabel(x, y);
+            y += 20;
 
-            cmbChannel = MakeCombo(x + halfW + 12, y, halfW,
-                new[] { "Call", "Email", "SMS", "Visit" }, 0);
-
+            // ── Phone ──
+            lblPhone = MakeLabel("Phone", x, y);
+            y += 20;
+            inpPhone = MakeField(x, y, w, "0917 123 4567");
             y += 38 + 14;
 
-            // ── Status + Assigned To (side by side) ──
-            lblStatus = MakeLabel("Status", x, y);
-            lblAssignedTo = MakeLabel("Assigned to", x + halfW + 12, y);
+            // ── Address (multiline) ──
+            lblAddress = MakeLabel("Address", x, y);
             y += 20;
-
-            cmbStatus = MakeCombo(x, y, halfW,
-                new[] { "Scheduled", "Completed", "Cancelled" }, 0);
-            inpAssignedTo = MakeField(x + halfW + 12, y, halfW, "staff-001");
-
-            y += 38 + 20;
+            inpAddress = MakeField(x, y, w, "Street, City, Province", multiline: true);
+            y += 74 + 20;
 
             // ── Buttons ──
             int btnY = pnlCard.Height - ShadowPad - 60;
@@ -157,6 +144,7 @@ namespace CRM.winforms
             btnSave.Location = new Point(saveX, btnY);
             btnSave.Click += async (s, e) => await SaveAsync();
 
+            // Archive (edit mode) — bottom-left
             if (_isEditMode)
             {
                 btnArchive = MakeDangerOutlineButton("Archive");
@@ -166,26 +154,17 @@ namespace CRM.winforms
             }
 
             // ── Prefill ──
-            if (_editing != null)
+            if (existing != null)
             {
-                inpSubject.Text = _editing.Subject ?? "";
-                inpNotes.Text = _editing.Notes ?? "";
-                dtpScheduledAt.Value = _editing.ScheduledAt;
-                cmbChannel.SelectedIndex = Clamp(_editing.Channel, 0, 3);
-                cmbStatus.SelectedIndex = Clamp(_editing.Status, 0, 2);
-                inpAssignedTo.Text = _editing.AssignedToUserId ?? "";
-            }
-            else
-            {
-                dtpScheduledAt.Value = DateTime.Now.AddDays(1);
-                inpAssignedTo.Text = "staff-001";
+                inpFirstName.Text = existing.FirstName ?? "";
+                inpLastName.Text = existing.LastName ?? "";
+                inpEmail.Text = existing.Email ?? "";
+                inpPhone.Text = existing.Phone ?? "";
+                inpAddress.Text = existing.Address ?? "";
             }
 
-            Shown += (s, e) => inpSubject.Focus();
+            Shown += (s, e) => inpFirstName.Focus();
         }
-
-        private static int Clamp(int value, int min, int max)
-            => value < min ? min : (value > max ? max : value);
 
         // ═══════════ SAVE ═══════════
 
@@ -195,26 +174,23 @@ namespace CRM.winforms
 
             try
             {
-                var dto = new FollowUpDto
+                var dto = new CustomerDto
                 {
-                    Subject = inpSubject.Text.Trim(),
-                    Notes = inpNotes.Text.Trim(),
-                    ScheduledAt = dtpScheduledAt.Value,
-                    Channel = cmbChannel.SelectedIndex,
-                    Status = cmbStatus.SelectedIndex,
-                    AssignedToUserId = string.IsNullOrWhiteSpace(inpAssignedTo.Text)
-                        ? null
-                        : inpAssignedTo.Text.Trim()
+                    FirstName = inpFirstName.Text.Trim(),
+                    LastName = inpLastName.Text.Trim(),
+                    Email = inpEmail.Text.Trim(),
+                    Phone = inpPhone.Text.Trim(),
+                    Address = inpAddress.Text.Trim()
                 };
 
-                if (_isEditMode && _editing != null)
+                if (_isEditMode && _editingCustomerId.HasValue)
                 {
-                    dto.FollowUpId = _editing.FollowUpId;
-                    await _api.UpdateFollowUpAsync(_editing.FollowUpId, dto);
+                    dto.CustomerId = _editingCustomerId.Value;
+                    await _api.UpdateCustomerAsync(_editingCustomerId.Value, dto);
                 }
                 else
                 {
-                    await _api.CreateFollowUpAsync(dto);
+                    await _api.CreateCustomerAsync(dto);
                 }
 
                 DialogResult = DialogResult.OK;
@@ -234,12 +210,10 @@ namespace CRM.winforms
 
         private async Task ArchiveAsync()
         {
-            if (_editing == null) return;
+            if (!_editingCustomerId.HasValue) return;
 
             var confirm = MessageBox.Show(
-                "Archive this follow-up?\n\n" +
-                $"\"{_editing.Subject}\"\n\n" +
-                "Data is preserved and can be restored.",
+                "Archive this customer?\n\nData is preserved and can be restored.",
                 "Confirm Archive",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
@@ -248,7 +222,7 @@ namespace CRM.winforms
 
             try
             {
-                await _api.ArchiveFollowUpAsync(_editing.FollowUpId);
+                await _api.ArchiveCustomerAsync(_editingCustomerId.Value);
                 DialogResult = DialogResult.OK;
                 Close();
             }
@@ -268,19 +242,27 @@ namespace CRM.winforms
         {
             ClearErrors();
             bool valid = true;
-            Control? firstInvalid = null;
+            TextField? firstInvalid = null;
 
-            if (string.IsNullOrWhiteSpace(inpSubject.Text))
+            if (string.IsNullOrWhiteSpace(inpFirstName.Text))
             {
-                ShowError(inpSubject, lblErrorSubject, "Subject is required.");
-                firstInvalid ??= inpSubject;
+                ShowError(inpFirstName, lblErrorFirstName, "First name is required.");
+                firstInvalid ??= inpFirstName;
                 valid = false;
             }
 
-            if (string.IsNullOrWhiteSpace(inpNotes.Text))
+            if (string.IsNullOrWhiteSpace(inpLastName.Text))
             {
-                ShowError(inpNotes, lblErrorNotes, "Notes are required.");
-                firstInvalid ??= inpNotes;
+                ShowError(inpLastName, lblErrorLastName, "Last name is required.");
+                firstInvalid ??= inpLastName;
+                valid = false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(inpEmail.Text) &&
+                !inpEmail.Text.Contains('@'))
+            {
+                ShowError(inpEmail, lblErrorEmail, "Email must contain '@'.");
+                firstInvalid ??= inpEmail;
                 valid = false;
             }
 
@@ -290,8 +272,9 @@ namespace CRM.winforms
 
         private void ClearErrors()
         {
-            ClearError(inpSubject, lblErrorSubject);
-            ClearError(inpNotes, lblErrorNotes);
+            ClearError(inpFirstName, lblErrorFirstName);
+            ClearError(inpLastName, lblErrorLastName);
+            ClearError(inpEmail, lblErrorEmail);
         }
 
         private static void ShowError(TextField input, Label err, string msg)
@@ -337,25 +320,6 @@ namespace CRM.winforms
             if (multiline) tf.Multiline = true;
             pnlCard.Controls.Add(tf);
             return tf;
-        }
-
-        private ComboBox MakeCombo(int x, int y, int width, string[] items, int selectedIndex)
-        {
-            var cmb = new ComboBox
-            {
-                Font = new Font("Segoe UI", 9.5F),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(x, y),
-                Size = new Size(width, 30),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat
-            };
-            cmb.Items.AddRange(items);
-            if (selectedIndex >= 0 && selectedIndex < items.Length)
-                cmb.SelectedIndex = selectedIndex;
-            pnlCard.Controls.Add(cmb);
-            return cmb;
         }
 
         private Label MakeErrorLabel(int x, int y)

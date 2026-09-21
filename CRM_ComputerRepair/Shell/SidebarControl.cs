@@ -1,4 +1,5 @@
-﻿using System;
+﻿using CRM.winforms.Auth;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
