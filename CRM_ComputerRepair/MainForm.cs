@@ -28,11 +28,16 @@ namespace CRM.winforms
 
         private void MainForm_Load(object? sender, EventArgs e)
         {
+            // Populate topbar and sidebar from the logged-in session
             topBar.SetUser(UserSession.FullName, UserSession.Role);
 
             sidebar.UserName = UserSession.FullName;
             sidebar.UserRole = UserSession.Role;
 
+            // Set window title to reflect the signed-in user
+            this.Text = $"Fixory — CRM for Computer Repair  ·  {UserSession.FullName} ({UserSession.Role})";
+
+            // Land on dashboard
             NavigateTo("dashboard");
         }
 
@@ -50,17 +55,35 @@ namespace CRM.winforms
 
             pnlContent.Controls.Clear();
 
-            UserControl page = key switch
-            {
-                // Staff
-                "customers" => new CustomerControl { Dock = DockStyle.Fill },
-                "follow-ups" => new FollowUpListControl { Dock = DockStyle.Fill },
-                "interactions" => new InteractionListControl { Dock = DockStyle.Fill },
-                "repairs" => new RepairRequestListControl { Dock = DockStyle.Fill },
+            UserControl page;
 
-                // Everything else → placeholder
-                _ => new PlaceholderControl(GetPageTitle(key)) { Dock = DockStyle.Fill }
-            };
+            if (key == "dashboard")
+            {
+                var dashboard = new DashboardControl { Dock = DockStyle.Fill };
+
+                // ── KPI tile click → jump to the relevant page ──
+                dashboard.ActionRequested += (s, targetKey) =>
+                {
+                    if (!string.IsNullOrEmpty(targetKey))
+                        NavigateTo(targetKey);
+                };
+
+                page = dashboard;
+            }
+            else if (key == "reports")
+                page = new ReportsControl { Dock = DockStyle.Fill };
+            else if (key == "retention")
+                page = new RetentionControl { Dock = DockStyle.Fill };
+            else if (key == "customers")
+                page = new CustomerControl { Dock = DockStyle.Fill };
+            else if (key == "follow-ups")
+                page = new FollowUpListControl { Dock = DockStyle.Fill };
+            else if (key == "interactions")
+                page = new InteractionListControl { Dock = DockStyle.Fill };
+            else if (key == "repairs")
+                page = new RepairRequestListControl { Dock = DockStyle.Fill };
+            else
+                page = new PlaceholderControl(GetPageTitle(key)) { Dock = DockStyle.Fill };
 
             pnlContent.Controls.Add(page);
             SetStatus($"{GetPageTitle(key)} loaded.");
@@ -70,7 +93,12 @@ namespace CRM.winforms
         {
             return key switch
             {
+                // Common
                 "dashboard" => "Dashboard",
+
+                // BI
+                "reports" => "Reports",
+                "retention" => "Retention",
 
                 // Staff
                 "customers" => "Customers",
@@ -83,7 +111,6 @@ namespace CRM.winforms
                 "staff-activity" => "Staff Activity",
 
                 // Admin / Manager / Super Admin
-                "reports" => "Reports",
                 "loyalty" => "Loyalty Programs",
                 "terms" => "Terms & Conditions",
 
@@ -109,13 +136,32 @@ namespace CRM.winforms
         private void ConfirmLogout()
         {
             var result = MessageBox.Show(
-                "Log out of Fixory?",
+                $"Log out of Fixory?\n\n" +
+                $"Signed in as: {UserSession.FullName} ({UserSession.Role})",
                 "Confirm Logout",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
 
-            if (result == DialogResult.Yes)
-                Application.Exit();
+            if (result != DialogResult.Yes) return;
+
+            // Clear session and return to login
+            UserSession.Clear();
+
+            // Hide this window, show login again
+            this.Hide();
+
+            using (var login = new LoginForm())
+            {
+                if (login.ShowDialog() == DialogResult.OK && UserSession.IsAuthenticated)
+                {
+                    // Build a fresh MainForm so the sidebar rebuilds for the new role
+                    var next = new MainForm();
+                    next.Show();
+                }
+            }
+
+            // Close the original instance regardless
+            this.Close();
         }
 
         // ═══════════ PROFILE MENU ═══════════
@@ -237,7 +283,12 @@ namespace CRM.winforms
                 case "profile":
                     SetStatus("Profile viewed.");
                     MessageBox.Show(
-                        $"Signed in as:\n\n{UserSession.FullName}\n{UserSession.Role}",
+                        $"Signed in as:\n\n" +
+                        $"{UserSession.FullName}\n" +
+                        $"Username: {UserSession.Username}\n" +
+                        $"Role:     {UserSession.Role}\n" +
+                        $"Email:    {UserSession.Email}\n" +
+                        $"Company:  {UserSession.CompanyId}",
                         "Profile",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);

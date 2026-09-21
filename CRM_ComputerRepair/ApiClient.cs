@@ -9,10 +9,7 @@ namespace CRM.winforms
 {
     public class ApiClient
     {
-        // ⚠️ CHANGE PORT if your API runs on a different one
         private const string BaseUrl = "https://localhost:7042";
-
-        // Hardcoded tenant for the exam demo (Company 1)
         private const int CompanyId = 1;
 
         private readonly HttpClient _http;
@@ -35,6 +32,36 @@ namespace CRM.winforms
             {
                 PropertyNameCaseInsensitive = true
             };
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // AUTH
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<LoginResponseDto?> LoginAsync(string username, string password)
+        {
+            var body = new { username, password };
+            var content = ToJsonContent(body);
+
+            var response = await _http.PostAsync("/auth/login", content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorJson = await response.Content.ReadAsStringAsync();
+                string message = "Invalid username or password.";
+                try
+                {
+                    using var doc = JsonDocument.Parse(errorJson);
+                    if (doc.RootElement.TryGetProperty("error", out var errProp))
+                        message = errProp.GetString() ?? message;
+                }
+                catch { /* keep fallback message */ }
+
+                throw new Exception(message);
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<LoginResponseDto>(json, _jsonOptions);
         }
 
         // ═══════════════════════════════════════════════════════
@@ -102,24 +129,17 @@ namespace CRM.winforms
         }
 
         // ═══════════════════════════════════════════════════════
-        // INTERACTIONS — Inquiry / Complaint / Feedback
+        // INTERACTIONS
         // ═══════════════════════════════════════════════════════
 
         public async Task<List<InteractionDto>> GetInteractionsAsync(
-            InteractionTypeFilter? type = null,
-            bool includeArchived = false)
+            InteractionTypeFilter? type = null, bool includeArchived = false)
         {
             var url = $"/tenant/{CompanyId}/interactions";
             var qs = new List<string>();
-
-            if (type.HasValue)
-                qs.Add($"type={(int)type.Value}");
-
-            if (includeArchived)
-                qs.Add("includeArchived=true");
-
-            if (qs.Count > 0)
-                url += "?" + string.Join("&", qs);
+            if (type.HasValue) qs.Add($"type={(int)type.Value}");
+            if (includeArchived) qs.Add("includeArchived=true");
+            if (qs.Count > 0) url += "?" + string.Join("&", qs);
 
             var response = await _http.GetAsync(url);
             await EnsureSuccess(response);
@@ -134,7 +154,6 @@ namespace CRM.winforms
             var response = await _http.GetAsync(
                 $"/tenant/{CompanyId}/interactions/{interactionId}");
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<InteractionDto>(json, _jsonOptions);
         }
@@ -145,7 +164,6 @@ namespace CRM.winforms
             var response = await _http.PostAsync(
                 $"/tenant/{CompanyId}/interactions", content);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<InteractionDto>(json, _jsonOptions);
         }
@@ -157,7 +175,6 @@ namespace CRM.winforms
             var response = await _http.PutAsync(
                 $"/tenant/{CompanyId}/interactions/{interactionId}", content);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<InteractionDto>(json, _jsonOptions);
         }
@@ -181,24 +198,16 @@ namespace CRM.winforms
         // ═══════════════════════════════════════════════════════
 
         public async Task<List<FollowUpDto>> GetFollowUpsAsync(
-            FollowUpStatusFilter? status = null,
-            bool includeArchived = false)
+            FollowUpStatusFilter? status = null, bool includeArchived = false)
         {
             var url = $"/tenant/{CompanyId}/follow-ups";
             var qs = new List<string>();
-
-            if (status.HasValue)
-                qs.Add($"status={(int)status.Value}");
-
-            if (includeArchived)
-                qs.Add("includeArchived=true");
-
-            if (qs.Count > 0)
-                url += "?" + string.Join("&", qs);
+            if (status.HasValue) qs.Add($"status={(int)status.Value}");
+            if (includeArchived) qs.Add("includeArchived=true");
+            if (qs.Count > 0) url += "?" + string.Join("&", qs);
 
             var response = await _http.GetAsync(url);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<List<FollowUpDto>>(json, _jsonOptions);
             return result ?? new List<FollowUpDto>();
@@ -209,7 +218,6 @@ namespace CRM.winforms
             var response = await _http.GetAsync(
                 $"/tenant/{CompanyId}/follow-ups/{followUpId}");
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<FollowUpDto>(json, _jsonOptions);
         }
@@ -220,7 +228,6 @@ namespace CRM.winforms
             var response = await _http.PostAsync(
                 $"/tenant/{CompanyId}/follow-ups", content);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<FollowUpDto>(json, _jsonOptions);
         }
@@ -232,7 +239,6 @@ namespace CRM.winforms
             var response = await _http.PutAsync(
                 $"/tenant/{CompanyId}/follow-ups/{followUpId}", content);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<FollowUpDto>(json, _jsonOptions);
         }
@@ -259,12 +265,10 @@ namespace CRM.winforms
             RepairStatusFilter? status = null)
         {
             var url = $"/tenant/{CompanyId}/repair-requests";
-            if (status.HasValue)
-                url += $"?status={(int)status.Value}";
+            if (status.HasValue) url += $"?status={(int)status.Value}";
 
             var response = await _http.GetAsync(url);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<List<RepairRequestDto>>(json, _jsonOptions);
             return result ?? new List<RepairRequestDto>();
@@ -275,7 +279,6 @@ namespace CRM.winforms
             var response = await _http.GetAsync(
                 $"/tenant/{CompanyId}/repair-requests/{repairRequestId}");
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
         }
@@ -286,7 +289,6 @@ namespace CRM.winforms
             var response = await _http.PostAsync(
                 $"/tenant/{CompanyId}/repair-requests", content);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
         }
@@ -298,9 +300,50 @@ namespace CRM.winforms
             var response = await _http.PutAsync(
                 $"/tenant/{CompanyId}/repair-requests/{repairRequestId}", content);
             await EnsureSuccess(response);
-
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ANALYTICS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<DashboardDto?> GetDashboardAsync()
+        {
+            var response = await _http.GetAsync(
+                $"/tenant/{CompanyId}/analytics/dashboard");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<DashboardDto>(json, _jsonOptions);
+        }
+
+        public async Task<List<RetentionCandidateDto>> GetRetentionCandidatesAsync()
+        {
+            var response = await _http.GetAsync(
+                $"/tenant/{CompanyId}/analytics/retention-candidates");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<RetentionCandidateDto>>(json, _jsonOptions);
+            return result ?? new List<RetentionCandidateDto>();
+        }
+
+        public async Task<bool> LogRetentionContactAsync(
+            int customerId, string subject, string notes, int? followUpInDays = null)
+        {
+            var body = new
+            {
+                subject,
+                notes,
+                performedByUserId = UserSession.UserId,
+                scheduleFollowUpInDays = followUpInDays
+            };
+
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/retention/{customerId}/contact", content);
+
+            await EnsureSuccess(response);
+            return true;
         }
 
         // ═══════════════════════════════════════════════════════
@@ -316,22 +359,30 @@ namespace CRM.winforms
         private static async Task EnsureSuccess(HttpResponseMessage response)
         {
             if (response.IsSuccessStatusCode) return;
-
             var error = await response.Content.ReadAsStringAsync();
-            throw new Exception(
-                $"API error {(int)response.StatusCode}: {error}");
+            throw new Exception($"API error {(int)response.StatusCode}: {error}");
         }
     }
 
     // ═══════════════════════════════════════════════════════════
-    // DTO: Customer
+    // DTOs
     // ═══════════════════════════════════════════════════════════
+
+    public class LoginResponseDto
+    {
+        public string UserId { get; set; } = "";
+        public string Username { get; set; } = "";
+        public string FullName { get; set; } = "";
+        public string Role { get; set; } = "";
+        public string Email { get; set; } = "";
+        public int CompanyId { get; set; }
+    }
 
     public class CustomerDto
     {
         public int CustomerId { get; set; }
-        public string FirstName { get; set; } = string.Empty;
-        public string LastName { get; set; } = string.Empty;
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
         public string? Email { get; set; }
         public string? Phone { get; set; }
         public string? Address { get; set; }
@@ -341,170 +392,77 @@ namespace CRM.winforms
 
         public string FullName => $"{FirstName} {LastName}".Trim();
         public string Status => IsActive ? "Active" : "Archived";
+        public string NameDisplay => FullName;
+        public string StatusDisplay => Status;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // ENUMS — filter helpers (must match domain enums)
-    // ═══════════════════════════════════════════════════════════
-
-    public enum InteractionTypeFilter
-    {
-        Inquiry = 0,
-        Complaint = 1,
-        Feedback = 2
-    }
-
-    public enum FollowUpStatusFilter
-    {
-        Scheduled = 0,
-        Completed = 1,
-        Cancelled = 2
-    }
-
-    public enum RepairStatusFilter
-    {
-        Pending = 0,
-        Approved = 1,
-        InProgress = 2,
-        Completed = 3,
-        Rejected = 4,
-        Reassigned = 5
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // DTO: Interaction (Inquiry / Complaint / Feedback)
-    // ═══════════════════════════════════════════════════════════
+    public enum InteractionTypeFilter { Inquiry = 0, Complaint = 1, Feedback = 2 }
+    public enum FollowUpStatusFilter { Scheduled = 0, Completed = 1, Cancelled = 2 }
+    public enum RepairStatusFilter { Pending = 0, Approved = 1, InProgress = 2, Completed = 3, Rejected = 4, Reassigned = 5 }
 
     public class InteractionDto
     {
         public int CustomerInteractionId { get; set; }
         public int? CustomerId { get; set; }
         public int? RepairRequestId { get; set; }
-
-        // 0 = Inquiry | 1 = Complaint | 2 = Feedback
         public int InteractionType { get; set; }
-
-        // 0 = Open | 1 = InProgress | 2 = Closed
         public int Status { get; set; }
-
-        // 0 = Low | 1 = Medium | 2 = High
         public int Priority { get; set; }
-
-        public string Subject { get; set; } = string.Empty;
-        public string Notes { get; set; } = string.Empty;
+        public string Subject { get; set; } = "";
+        public string Notes { get; set; } = "";
         public string? Resolution { get; set; }
         public string? InteractionByUserId { get; set; }
-
         public DateTime InteractionDate { get; set; }
         public DateTime? UpdatedAt { get; set; }
         public DateTime? ClosedAt { get; set; }
         public bool IsActive { get; set; }
 
-        public string TypeText => InteractionType switch
-        {
-            0 => "Inquiry",
-            1 => "Complaint",
-            2 => "Feedback",
-            _ => "—"
-        };
-
-        public string StatusText => Status switch
-        {
-            0 => "Open",
-            1 => "In Progress",
-            2 => "Closed",
-            _ => "—"
-        };
-
-        public string PriorityText => Priority switch
-        {
-            0 => "Low",
-            1 => "Medium",
-            2 => "High",
-            _ => "—"
-        };
-
+        public string TypeText => InteractionType switch { 0 => "Inquiry", 1 => "Complaint", 2 => "Feedback", _ => "—" };
+        public string StatusText => Status switch { 0 => "Open", 1 => "In Progress", 2 => "Closed", _ => "—" };
+        public string PriorityText => Priority switch { 0 => "Low", 1 => "Medium", 2 => "High", _ => "—" };
         public string ActivityStatus => IsActive ? "Active" : "Archived";
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // DTO: FollowUp
-    // ═══════════════════════════════════════════════════════════
 
     public class FollowUpDto
     {
         public int FollowUpId { get; set; }
         public int? CustomerId { get; set; }
         public int? RepairRequestId { get; set; }
-
-        public string Subject { get; set; } = string.Empty;
-        public string Notes { get; set; } = string.Empty;
-
+        public string Subject { get; set; } = "";
+        public string Notes { get; set; } = "";
         public DateTime ScheduledAt { get; set; }
         public DateTime? CompletedAt { get; set; }
-
-        // 0 = Call | 1 = Email | 2 = SMS | 3 = Visit
         public int Channel { get; set; }
-
-        // 0 = Scheduled | 1 = Completed | 2 = Cancelled
         public int Status { get; set; }
-
         public string? AssignedToUserId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
         public bool IsActive { get; set; }
 
-        public string ChannelText => Channel switch
-        {
-            0 => "Call",
-            1 => "Email",
-            2 => "SMS",
-            3 => "Visit",
-            _ => "—"
-        };
-
-        public string StatusText => Status switch
-        {
-            0 => "Scheduled",
-            1 => "Completed",
-            2 => "Cancelled",
-            _ => "—"
-        };
-
+        public string ChannelText => Channel switch { 0 => "Call", 1 => "Email", 2 => "SMS", 3 => "Visit", _ => "—" };
+        public string StatusText => Status switch { 0 => "Scheduled", 1 => "Completed", 2 => "Cancelled", _ => "—" };
         public string ActivityStatus => IsActive ? "Active" : "Archived";
+        public string CompletedAtDisplay => CompletedAt.HasValue
+            ? CompletedAt.Value.ToString("MMM d  HH:mm") : "—";
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // DTO: RepairRequest
-    // ═══════════════════════════════════════════════════════════
 
     public class RepairRequestDto
     {
         public int RepairRequestId { get; set; }
-        public string RequestNumber { get; set; } = string.Empty;
-
+        public string RequestNumber { get; set; } = "";
         public int CustomerId { get; set; }
         public int? DeviceId { get; set; }
-
-        public string DeviceModel { get; set; } = string.Empty;
-        public string SerialNumber { get; set; } = string.Empty;
-        public string IssueDescription { get; set; } = string.Empty;
-
-        // 0 = Pending | 1 = Approved | 2 = InProgress
-        // 3 = Completed | 4 = Rejected | 5 = Reassigned
+        public string DeviceModel { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+        public string IssueDescription { get; set; } = "";
         public int Status { get; set; }
-
-        // 0 = Low | 1 = Medium | 2 = High | 3 = Urgent
         public int Priority { get; set; }
-
         public DateTime RequestDate { get; set; }
         public DateTime? CompletionDate { get; set; }
-
         public decimal? EstimatedCost { get; set; }
         public decimal? ActualCost { get; set; }
         public decimal? PartsCost { get; set; }
         public decimal? LaborCost { get; set; }
-
         public string? TechnicianNotes { get; set; }
         public string? AssignedToStaffId { get; set; }
         public string? AssignedToManagerId { get; set; }
@@ -519,7 +477,6 @@ namespace CRM.winforms
             5 => "Reassigned",
             _ => "—"
         };
-
         public string PriorityText => Priority switch
         {
             0 => "Low",
@@ -528,5 +485,69 @@ namespace CRM.winforms
             3 => "Urgent",
             _ => "—"
         };
+    }
+
+    public class DashboardDto
+    {
+        public int TotalCustomers { get; set; }
+        public int ActiveCustomers { get; set; }
+        public int NewThisMonth { get; set; }
+        public double RetentionRate { get; set; }
+        public int ChurnRisk { get; set; }
+        public int OpenInteractions { get; set; }
+        public int RepairsCompletedThisMonth { get; set; }
+        public double AverageTurnaroundDays { get; set; }
+        public double RepeatCustomerRate { get; set; }
+        public InteractionsByTypeDto InteractionsByType { get; set; } = new();
+        public RepairsByStatusDto RepairsByStatus { get; set; } = new();
+        public List<TimeSeriesPointDto> CustomersOverTime { get; set; } = new();
+        public List<RetentionTrendPointDto> RetentionTrend { get; set; } = new();
+    }
+
+    public class InteractionsByTypeDto
+    {
+        public int Inquiry { get; set; }
+        public int Complaint { get; set; }
+        public int Feedback { get; set; }
+    }
+
+    public class RepairsByStatusDto
+    {
+        public int Pending { get; set; }
+        public int Approved { get; set; }
+        public int InProgress { get; set; }
+        public int Completed { get; set; }
+        public int Rejected { get; set; }
+        public int Reassigned { get; set; }
+    }
+
+    public class TimeSeriesPointDto
+    {
+        public string Month { get; set; } = "";
+        public string Label { get; set; } = "";
+        public int Count { get; set; }
+    }
+
+    public class RetentionTrendPointDto
+    {
+        public string Month { get; set; } = "";
+        public string Label { get; set; } = "";
+        public int Active { get; set; }
+    }
+
+    public class RetentionCandidateDto
+    {
+        public int CustomerId { get; set; }
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public int? LoyaltyPoints { get; set; }
+        public DateTime CreatedAt { get; set; }
+
+        public string FullName => $"{FirstName} {LastName}".Trim();
+        public string DisplayName => FullName;
+        public int InactiveDays => (int)(DateTime.UtcNow - CreatedAt).TotalDays;
+        public string LastContactDisplay => CreatedAt.ToString("MMM d, yyyy");
     }
 }

@@ -2,15 +2,27 @@ namespace CRM.winforms
 {
     internal static class Program
     {
-        /// <summary>
-        ///  The main entry point for the application.
-        /// </summary>
         [STAThread]
         static void Main()
         {
             ApplicationConfiguration.Initialize();
 
-            // Launch the main shell with sidebar
+            // 1. Show login
+            using (var login = new LoginForm())
+            {
+                if (login.ShowDialog() != DialogResult.OK)
+                {
+                    // User closed the login form without signing in
+                    return;
+                }
+            }
+
+            // 2. Only if authenticated, open the main shell
+            if (!UserSession.IsAuthenticated)
+            {
+                return;
+            }
+
             Application.Run(new MainForm());
         }
     }
