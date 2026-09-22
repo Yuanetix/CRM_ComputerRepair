@@ -1,4 +1,5 @@
 ﻿using CRM_ComputerRepair.api.Dtos;
+using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -11,9 +12,15 @@ namespace CRM_ComputerRepair.api.Controllers;
 public class RepairRequestsController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
+    private readonly IAuditWriter _audit;
 
-    public RepairRequestsController(ITenantDbContextFactory factory) => _factory = factory;
+    public RepairRequestsController(ITenantDbContextFactory factory, IAuditWriter audit)
+    {
+        _factory = factory;
+        _audit = audit;
+    }
 
+    // ─── GET ALL ───
     [HttpGet]
     public async Task<IActionResult> GetAll(
         int companyId, [FromQuery] RepairStatus? status)
@@ -28,6 +35,7 @@ public class RepairRequestsController : ControllerBase
         return Ok(list);
     }
 
+    // ─── GET ONE ───
     [HttpGet("{repairRequestId:int}")]
     public async Task<IActionResult> GetById(int companyId, int repairRequestId)
     {
@@ -37,6 +45,7 @@ public class RepairRequestsController : ControllerBase
         return item is null ? NotFound() : Ok(item);
     }
 
+    // ─── CREATE ───
     [HttpPost]
     public async Task<IActionResult> Create(
         int companyId, [FromBody] CreateRepairRequestRequest request)
@@ -62,10 +71,16 @@ public class RepairRequestsController : ControllerBase
         db.RepairRequests.Add(rr);
         await db.SaveChangesAsync();
 
+        await _audit.WriteAsync(
+            UserSessionHelper.GetUserId(HttpContext),
+            "Create", "RepairRequest",
+            rr.RepairRequestId.ToString(), rr.RequestNumber);
+
         return CreatedAtAction(nameof(GetById),
             new { companyId, repairRequestId = rr.RepairRequestId }, rr);
     }
 
+    // ─── UPDATE ───
     [HttpPut("{repairRequestId:int}")]
     public async Task<IActionResult> Update(
         int companyId, int repairRequestId,
@@ -108,12 +123,25 @@ public class RepairRequestsController : ControllerBase
                 RepairRequestId = item.RepairRequestId,
                 OldStatus = oldStatus,
                 NewStatus = item.Status,
-                ChangedByUserId = changedByUserId,
+                ChangedByUserId = changedByUserId ?? UserSessionHelper.GetUserId(HttpContext),
                 ChangedAt = DateTime.UtcNow
             });
         }
 
         await db.SaveChangesAsync();
+
+        // ─── Audit row ───
+        var actor = changedByUserId ?? UserSessionHelper.GetUserId(HttpContext);
+        var details = oldStatus != item.Status
+            ? $"{item.RequestNumber}: {oldStatus} → {item.Status}"
+            : $"{item.RequestNumber}: updated";
+
+        await _audit.WriteAsync(
+            actor,
+            "Update", "RepairRequest",
+            item.RepairRequestId.ToString(),
+            details);
+
         return Ok(item);
     }
 }

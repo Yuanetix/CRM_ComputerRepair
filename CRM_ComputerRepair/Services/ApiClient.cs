@@ -29,6 +29,10 @@ namespace CRM.winforms
                 BaseAddress = new Uri(BaseUrl)
             };
 
+            // Forward the acting user to the API so audit rows are attributed.
+            if (!string.IsNullOrWhiteSpace(UserSession.Username))
+                _http.DefaultRequestHeaders.Add("X-User-Id", UserSession.Username);
+
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -56,7 +60,7 @@ namespace CRM.winforms
                     if (doc.RootElement.TryGetProperty("error", out var errProp))
                         message = errProp.GetString() ?? message;
                 }
-                catch { /* keep fallback message */ }
+                catch { }
 
                 throw new Exception(message);
             }
@@ -306,6 +310,318 @@ namespace CRM.winforms
         }
 
         // ═══════════════════════════════════════════════════════
+        // CUSTOMER HISTORY
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<CustomerHistoryDto?> GetCustomerHistoryAsync(int customerId)
+        {
+            var response = await _http.GetAsync(
+                $"/tenant/{CompanyId}/customer-history/{customerId}");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<CustomerHistoryDto>(json, _jsonOptions);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // STAFF ACTIVITY
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<StaffActivityDto>> GetStaffActivityAsync(
+            string? staffId = null, int take = 200)
+        {
+            var url = $"/tenant/{CompanyId}/staff-activity?take={take}";
+            if (!string.IsNullOrWhiteSpace(staffId))
+                url += $"&staffId={Uri.EscapeDataString(staffId)}";
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<StaffActivityDto>>(json, _jsonOptions);
+            return result ?? new List<StaffActivityDto>();
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // LOYALTY PROGRAMS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<LoyaltyProgramDto>> GetLoyaltyProgramsAsync(bool activeOnly = false)
+        {
+            var url = "/loyalty-programs";
+            if (activeOnly) url += "?activeOnly=true";
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<LoyaltyProgramDto>>(json, _jsonOptions);
+            return result ?? new List<LoyaltyProgramDto>();
+        }
+
+        public async Task<LoyaltyProgramDto?> CreateLoyaltyProgramAsync(LoyaltyProgramDto dto)
+        {
+            var body = new
+            {
+                programName = dto.ProgramName,
+                description = dto.Description,
+                pointsPerPeso = dto.PointsPerPeso,
+                discountPercentage = dto.DiscountPercentage,
+                minimumSpend = dto.MinimumSpend,
+                startDate = dto.StartDate,
+                endDate = dto.EndDate
+            };
+
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync("/loyalty-programs", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<LoyaltyProgramDto>(json, _jsonOptions);
+        }
+
+        public async Task<LoyaltyProgramDto?> UpdateLoyaltyProgramAsync(int id, LoyaltyProgramDto dto)
+        {
+            var body = new
+            {
+                programName = dto.ProgramName,
+                description = dto.Description,
+                pointsPerPeso = dto.PointsPerPeso,
+                discountPercentage = dto.DiscountPercentage,
+                minimumSpend = dto.MinimumSpend,
+                startDate = dto.StartDate,
+                endDate = dto.EndDate,
+                isActive = dto.IsActive
+            };
+
+            var content = ToJsonContent(body);
+            var response = await _http.PutAsync($"/loyalty-programs/{id}", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<LoyaltyProgramDto>(json, _jsonOptions);
+        }
+
+        public async Task ArchiveLoyaltyProgramAsync(int id)
+        {
+            var response = await _http.DeleteAsync($"/loyalty-programs/{id}");
+            await EnsureSuccess(response);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // SUBSCRIPTIONS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<SubscriptionDto>> GetSubscriptionsAsync(bool activeOnly = false)
+        {
+            var url = "/subscriptions";
+            if (activeOnly) url += "?activeOnly=true";
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<SubscriptionDto>>(json, _jsonOptions);
+            return result ?? new List<SubscriptionDto>();
+        }
+
+        public async Task<SubscriptionDto?> CreateSubscriptionAsync(SubscriptionDto dto)
+        {
+            var body = new
+            {
+                subscriptionName = dto.SubscriptionName,
+                pricePerMonth = dto.PricePerMonth,
+                maxUsers = dto.MaxUsers,
+                maxDevices = dto.MaxDevices,
+                startDate = dto.StartDate,
+                endDate = dto.EndDate,
+                billingCycle = dto.BillingCycle
+            };
+
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync("/subscriptions", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<SubscriptionDto>(json, _jsonOptions);
+        }
+
+        public async Task<SubscriptionDto?> UpdateSubscriptionAsync(int id, SubscriptionDto dto)
+        {
+            var body = new
+            {
+                subscriptionName = dto.SubscriptionName,
+                pricePerMonth = dto.PricePerMonth,
+                maxUsers = dto.MaxUsers,
+                maxDevices = dto.MaxDevices,
+                startDate = dto.StartDate,
+                endDate = dto.EndDate,
+                isActive = dto.IsActive,
+                billingCycle = dto.BillingCycle
+            };
+
+            var content = ToJsonContent(body);
+            var response = await _http.PutAsync($"/subscriptions/{id}", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<SubscriptionDto>(json, _jsonOptions);
+        }
+
+        public async Task ArchiveSubscriptionAsync(int id)
+        {
+            var response = await _http.DeleteAsync($"/subscriptions/{id}");
+            await EnsureSuccess(response);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // TERMS & CONDITIONS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<TermsDto>> GetTermsAsync()
+        {
+            var response = await _http.GetAsync("/terms");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<TermsDto>>(json, _jsonOptions);
+            return result ?? new List<TermsDto>();
+        }
+
+        public async Task<TermsDto?> GetActiveTermsAsync()
+        {
+            var response = await _http.GetAsync("/terms/active");
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<TermsDto>(json, _jsonOptions);
+        }
+
+        public async Task<TermsDto?> CreateTermsAsync(TermsDto dto)
+        {
+            var body = new
+            {
+                title = dto.Title,
+                content = dto.Content,
+                createdByUserId = UserSession.UserId
+            };
+
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync("/terms", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<TermsDto>(json, _jsonOptions);
+        }
+
+        public async Task<TermsDto?> UpdateTermsAsync(int id, TermsDto dto)
+        {
+            var body = new
+            {
+                title = dto.Title,
+                content = dto.Content,
+                isActive = dto.IsActive
+            };
+
+            var content = ToJsonContent(body);
+            var response = await _http.PutAsync($"/terms/{id}", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<TermsDto>(json, _jsonOptions);
+        }
+
+        public async Task ActivateTermsAsync(int id)
+        {
+            var response = await _http.PostAsync($"/terms/{id}/activate", null);
+            await EnsureSuccess(response);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // USERS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<UserSummaryDto>> GetUsersAsync(bool activeOnly = false)
+        {
+            var url = "/users";
+            if (activeOnly) url += "?activeOnly=true";
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<UserSummaryDto>>(json, _jsonOptions);
+            return result ?? new List<UserSummaryDto>();
+        }
+
+        public async Task<UserSummaryDto?> CreateUserAsync(
+            string username, string email, string password,
+            string firstName, string lastName, string role)
+        {
+            var body = new { userName = username, email, password, firstName, lastName, role };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync("/users", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<UserSummaryDto>(json, _jsonOptions);
+        }
+
+        public async Task<UserSummaryDto?> UpdateUserAsync(
+            string id, string firstName, string lastName,
+            string? email, string? userName, bool isActive, string? role)
+        {
+            var body = new
+            {
+                firstName,
+                lastName,
+                email,
+                userName,
+                isActive,
+                role
+            };
+            var content = ToJsonContent(body);
+            var response = await _http.PutAsync($"/users/{id}", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<UserSummaryDto>(json, _jsonOptions);
+        }
+
+        public async Task DeactivateUserAsync(string id)
+        {
+            var response = await _http.DeleteAsync($"/users/{id}");
+            await EnsureSuccess(response);
+        }
+
+        public async Task RestoreUserAsync(string id)
+        {
+            var response = await _http.PostAsync($"/users/{id}/restore", null);
+            await EnsureSuccess(response);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ADMIN ACCOUNTS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<UserSummaryDto>> GetAdminAccountsAsync()
+        {
+            var response = await _http.GetAsync("/admin-accounts");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<UserSummaryDto>>(json, _jsonOptions);
+            return result ?? new List<UserSummaryDto>();
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // AUDIT
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<AuditLogDto>> GetAuditLogAsync(
+            string? userId = null, string? entity = null, int take = 200)
+        {
+            var qs = new List<string> { $"take={take}" };
+            if (!string.IsNullOrWhiteSpace(userId))
+                qs.Add($"userId={Uri.EscapeDataString(userId)}");
+            if (!string.IsNullOrWhiteSpace(entity))
+                qs.Add($"entity={Uri.EscapeDataString(entity)}");
+
+            var url = "/audit?" + string.Join("&", qs);
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<AuditLogDto>>(json, _jsonOptions);
+            return result ?? new List<AuditLogDto>();
+        }
+
+        // ═══════════════════════════════════════════════════════
         // ANALYTICS
         // ═══════════════════════════════════════════════════════
 
@@ -550,5 +866,242 @@ namespace CRM.winforms
         public string DisplayName => FullName;
         public int InactiveDays => (int)(DateTime.UtcNow - CreatedAt).TotalDays;
         public string LastContactDisplay => CreatedAt.ToString("MMM d, yyyy");
+    }
+
+    public class CustomerHistoryDto
+    {
+        public int CustomerId { get; set; }
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public string? Address { get; set; }
+        public int? LoyaltyPoints { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public List<CustomerHistoryRepairDto> Repairs { get; set; } = new();
+        public List<CustomerHistoryInteractionDto> Interactions { get; set; } = new();
+        public List<CustomerHistoryFollowUpDto> FollowUps { get; set; } = new();
+
+        public string FullName => $"{FirstName} {LastName}".Trim();
+    }
+
+    public class CustomerHistoryRepairDto
+    {
+        public int RepairRequestId { get; set; }
+        public string RequestNumber { get; set; } = "";
+        public string DeviceModel { get; set; } = "";
+        public string IssueDescription { get; set; } = "";
+        public int Status { get; set; }
+        public int Priority { get; set; }
+        public DateTime RequestDate { get; set; }
+        public DateTime? CompletionDate { get; set; }
+        public decimal? ActualCost { get; set; }
+
+        public string StatusText => Status switch
+        {
+            0 => "Pending",
+            1 => "Approved",
+            2 => "In Progress",
+            3 => "Completed",
+            4 => "Rejected",
+            5 => "Reassigned",
+            _ => "—"
+        };
+        public string PriorityText => Priority switch
+        {
+            0 => "Low",
+            1 => "Medium",
+            2 => "High",
+            3 => "Urgent",
+            _ => "—"
+        };
+        public string CostDisplay => ActualCost.HasValue
+            ? $"₱{ActualCost.Value:N2}" : "—";
+    }
+
+    public class CustomerHistoryInteractionDto
+    {
+        public int CustomerInteractionId { get; set; }
+        public int InteractionType { get; set; }
+        public int Status { get; set; }
+        public int Priority { get; set; }
+        public string Subject { get; set; } = "";
+        public string Notes { get; set; } = "";
+        public string? Resolution { get; set; }
+        public DateTime InteractionDate { get; set; }
+        public DateTime? ClosedAt { get; set; }
+
+        public string TypeText => InteractionType switch
+        {
+            0 => "Inquiry",
+            1 => "Complaint",
+            2 => "Feedback",
+            _ => "—"
+        };
+        public string StatusText => Status switch
+        {
+            0 => "Open",
+            1 => "In Progress",
+            2 => "Closed",
+            _ => "—"
+        };
+    }
+
+    public class CustomerHistoryFollowUpDto
+    {
+        public int FollowUpId { get; set; }
+        public string Subject { get; set; } = "";
+        public string Notes { get; set; } = "";
+        public int Channel { get; set; }
+        public int Status { get; set; }
+        public DateTime ScheduledAt { get; set; }
+        public DateTime? CompletedAt { get; set; }
+
+        public string ChannelText => Channel switch
+        {
+            0 => "Call",
+            1 => "Email",
+            2 => "SMS",
+            3 => "Visit",
+            _ => "—"
+        };
+        public string StatusText => Status switch
+        {
+            0 => "Scheduled",
+            1 => "Completed",
+            2 => "Cancelled",
+            _ => "—"
+        };
+    }
+
+    public class StaffActivityDto
+    {
+        public int RepairStatusHistoryId { get; set; }
+        public int RepairRequestId { get; set; }
+        public string RequestNumber { get; set; } = "";
+        public string DeviceModel { get; set; } = "";
+        public int OldStatus { get; set; }
+        public int NewStatus { get; set; }
+        public string? ChangedByUserId { get; set; }
+        public string? Notes { get; set; }
+        public DateTime ChangedAt { get; set; }
+
+        public string OldStatusText => OldStatus switch
+        {
+            0 => "Pending",
+            1 => "Approved",
+            2 => "In Progress",
+            3 => "Completed",
+            4 => "Rejected",
+            5 => "Reassigned",
+            _ => "—"
+        };
+        public string NewStatusText => NewStatus switch
+        {
+            0 => "Pending",
+            1 => "Approved",
+            2 => "In Progress",
+            3 => "Completed",
+            4 => "Rejected",
+            5 => "Reassigned",
+            _ => "—"
+        };
+        public string ChangeDisplay => $"{OldStatusText} → {NewStatusText}";
+        public string StaffDisplay => string.IsNullOrWhiteSpace(ChangedByUserId)
+            ? "(system)" : ChangedByUserId;
+        public string WhenDisplay => ChangedAt.ToString("MMM d, yyyy HH:mm");
+    }
+
+    public class LoyaltyProgramDto
+    {
+        public int LoyaltyProgramId { get; set; }
+        public int? CompanyId { get; set; }
+        public string ProgramName { get; set; } = "";
+        public string Description { get; set; } = "";
+        public int PointsPerPeso { get; set; }
+        public decimal DiscountPercentage { get; set; }
+        public decimal MinimumSpend { get; set; }
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+
+        public string StatusText => IsActive ? "Active" : "Archived";
+        public string PointsDisplay => $"{PointsPerPeso} pt / ₱1";
+        public string DiscountDisplay => $"{DiscountPercentage:0.#}%";
+        public string MinSpendDisplay => $"₱{MinimumSpend:N2}";
+        public string StartDateDisplay => StartDate.ToString("MMM d, yyyy");
+        public string EndDateDisplay => EndDate.ToString("MMM d, yyyy");
+    }
+
+    public class SubscriptionDto
+    {
+        public int SubscriptionId { get; set; }
+        public int? CompanyId { get; set; }
+        public string SubscriptionName { get; set; } = "";
+        public decimal PricePerMonth { get; set; }
+        public int MaxUsers { get; set; }
+        public int MaxDevices { get; set; }
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+        public bool IsActive { get; set; }
+        public string? BillingCycle { get; set; }
+
+        public string StatusText => IsActive ? "Active" : "Archived";
+        public string PriceDisplay => $"₱{PricePerMonth:N2}";
+        public string StartDateDisplay => StartDate.ToString("MMM d, yyyy");
+        public string EndDateDisplay => EndDate.ToString("MMM d, yyyy");
+    }
+
+    public class TermsDto
+    {
+        public int TermsId { get; set; }
+        public string Title { get; set; } = "";
+        public string Content { get; set; } = "";
+        public DateTime Version { get; set; }
+        public bool IsActive { get; set; }
+        public string? CreatedByUserId { get; set; }
+        public DateTime CreatedAt { get; set; }
+
+        public string StatusText => IsActive ? "Active" : "Archived";
+        public string VersionDisplay => Version.ToString("MMM d, yyyy HH:mm");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // USER / AUDIT DTOs
+    // ═══════════════════════════════════════════════════════════
+
+    public class UserSummaryDto
+    {
+        public string Id { get; set; } = "";
+        public string? UserName { get; set; }
+        public string? Email { get; set; }
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
+        public List<string> Roles { get; set; } = new();
+
+        public string FullName => $"{FirstName} {LastName}".Trim();
+        public string RoleDisplay => Roles.Count > 0 ? string.Join(", ", Roles) : "—";
+        public string StatusText => IsActive ? "Active" : "Inactive";
+    }
+
+    public class AuditLogDto
+    {
+        public int AuditLogId { get; set; }
+        public string? UserId { get; set; }
+        public string Action { get; set; } = "";
+        public string Entity { get; set; } = "";
+        public string? EntityId { get; set; }
+        public string? Details { get; set; }
+        public DateTime Timestamp { get; set; }
+
+        public string UserDisplay => string.IsNullOrWhiteSpace(UserId) ? "(system)" : UserId;
+        public string WhenDisplay => Timestamp.ToString("MMM d, yyyy HH:mm:ss");
+        public string EntityDisplay => string.IsNullOrWhiteSpace(EntityId)
+            ? Entity : $"{Entity} #{EntityId}";
     }
 }

@@ -1,6 +1,9 @@
 using CRM_ComputerRepair.api.Middleware;
+using CRM_ComputerRepair.api.Services;
+using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Data;
 using CRM_ComputerRepair.infrastructure.Services;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,9 +12,30 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<MasterCrmDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("MasterCrm")));
 
+// ─── Data protection (required by Identity token providers) ───
+builder.Services.AddDataProtection();
+
+// ─── Identity ───
+builder.Services
+    .AddIdentityCore<User>(options =>
+    {
+        options.Password.RequireDigit = false;
+        options.Password.RequireLowercase = false;
+        options.Password.RequireUppercase = false;
+        options.Password.RequireNonAlphanumeric = false;
+        options.Password.RequiredLength = 6;
+        options.User.RequireUniqueEmail = true;
+    })
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<MasterCrmDbContext>()
+    .AddDefaultTokenProviders();
+
 // ─── Tenant services ───
 builder.Services.AddScoped<ITenantDatabaseResolver, TenantDatabaseResolver>();
 builder.Services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
+
+// ─── Audit ───
+builder.Services.AddScoped<IAuditWriter, AuditWriter>();
 
 // ─── Controllers ───
 builder.Services.AddControllers()

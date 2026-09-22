@@ -30,16 +30,13 @@ namespace CRM.winforms
 
         private void MainForm_Load(object? sender, EventArgs e)
         {
-            // Populate topbar and sidebar from the logged-in session
             topBar.SetUser(UserSession.FullName, UserSession.Role);
 
             sidebar.UserName = UserSession.FullName;
             sidebar.UserRole = UserSession.Role;
 
-            // Set window title to reflect the signed-in user
             this.Text = $"Fixory — CRM for Computer Repair  ·  {UserSession.FullName} ({UserSession.Role})";
 
-            // Land on dashboard
             NavigateTo("dashboard");
         }
 
@@ -84,6 +81,22 @@ namespace CRM.winforms
                 page = new InteractionListControl { Dock = DockStyle.Fill };
             else if (key == "repairs")
                 page = new RepairRequestListControl { Dock = DockStyle.Fill };
+            else if (key == "customer-history")
+                page = new CustomerHistoryControl { Dock = DockStyle.Fill };
+            else if (key == "staff-activity")
+                page = new StaffActivityControl { Dock = DockStyle.Fill };
+            else if (key == "loyalty")
+                page = new LoyaltyControl { Dock = DockStyle.Fill };
+            else if (key == "subscriptions")
+                page = new SubscriptionsControl { Dock = DockStyle.Fill };
+            else if (key == "terms")
+                page = new TermsControl { Dock = DockStyle.Fill };
+            else if (key == "user-accounts")
+                page = new UserAccountsControl { Dock = DockStyle.Fill };
+            else if (key == "admin-accounts")
+                page = new AdminAccountsControl { Dock = DockStyle.Fill };
+            else if (key == "system-monitor")
+                page = new SystemMonitorControl { Dock = DockStyle.Fill };
             else
                 page = new PlaceholderControl(GetPageTitle(key)) { Dock = DockStyle.Fill };
 
@@ -114,6 +127,7 @@ namespace CRM.winforms
 
                 // Admin / Manager / Super Admin
                 "loyalty" => "Loyalty Programs",
+                "subscriptions" => "Subscriptions",
                 "terms" => "Terms & Conditions",
 
                 // Admin / Super Admin
@@ -121,7 +135,6 @@ namespace CRM.winforms
 
                 // Super Admin only
                 "admin-accounts" => "Admin Accounts",
-                "subscriptions" => "Subscriptions",
                 "system-monitor" => "System Monitor",
 
                 _ => "Fixory"
@@ -146,23 +159,18 @@ namespace CRM.winforms
 
             if (result != DialogResult.Yes) return;
 
-            // Clear session and return to login
             UserSession.Clear();
-
-            // Hide this window, show login again
             this.Hide();
 
             using (var login = new LoginForm())
             {
                 if (login.ShowDialog() == DialogResult.OK && UserSession.IsAuthenticated)
                 {
-                    // Build a fresh MainForm so the sidebar rebuilds for the new role
                     var next = new MainForm();
                     next.Show();
                 }
             }
 
-            // Close the original instance regardless
             this.Close();
         }
 

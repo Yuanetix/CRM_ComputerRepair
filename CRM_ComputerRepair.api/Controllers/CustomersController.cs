@@ -1,4 +1,5 @@
 ﻿using CRM_ComputerRepair.api.Dtos;
+using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -11,9 +12,15 @@ namespace CRM_ComputerRepair.api.Controllers;
 public class CustomersController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
+    private readonly IAuditWriter _audit;
 
-    public CustomersController(ITenantDbContextFactory factory) => _factory = factory;
+    public CustomersController(ITenantDbContextFactory factory, IAuditWriter audit)
+    {
+        _factory = factory;
+        _audit = audit;
+    }
 
+    // ─── GET ALL ───
     [HttpGet]
     public async Task<IActionResult> GetAll(
         int companyId, [FromQuery] bool? includeArchived)
@@ -28,6 +35,7 @@ public class CustomersController : ControllerBase
         return Ok(list);
     }
 
+    // ─── GET ONE ───
     [HttpGet("{customerId:int}")]
     public async Task<IActionResult> GetById(int companyId, int customerId)
     {
@@ -39,6 +47,7 @@ public class CustomersController : ControllerBase
         return customer is null ? NotFound() : Ok(customer);
     }
 
+    // ─── CREATE ───
     [HttpPost]
     public async Task<IActionResult> Create(
         int companyId, [FromBody] CreateCustomerRequest request)
@@ -62,10 +71,17 @@ public class CustomersController : ControllerBase
         db.Customers.Add(customer);
         await db.SaveChangesAsync();
 
+        await _audit.WriteAsync(
+            UserSessionHelper.GetUserId(HttpContext),
+            "Create", "Customer",
+            customer.CustomerId.ToString(),
+            $"{customer.FirstName} {customer.LastName}");
+
         return CreatedAtAction(nameof(GetById),
             new { companyId, customerId = customer.CustomerId }, customer);
     }
 
+    // ─── UPDATE ───
     [HttpPut("{customerId:int}")]
     public async Task<IActionResult> Update(
         int companyId, int customerId, [FromBody] UpdateCustomerRequest request)
@@ -86,9 +102,17 @@ public class CustomersController : ControllerBase
         customer.Address = request.Address?.Trim() ?? "";
 
         await db.SaveChangesAsync();
+
+        await _audit.WriteAsync(
+            UserSessionHelper.GetUserId(HttpContext),
+            "Update", "Customer",
+            customerId.ToString(),
+            $"{customer.FirstName} {customer.LastName}");
+
         return Ok(customer);
     }
 
+    // ─── ARCHIVE (soft delete) ───
     [HttpDelete("{customerId:int}")]
     public async Task<IActionResult> Archive(int companyId, int customerId)
     {
@@ -102,6 +126,12 @@ public class CustomersController : ControllerBase
         customer.IsActive = false;
         await db.SaveChangesAsync();
 
+        await _audit.WriteAsync(
+            UserSessionHelper.GetUserId(HttpContext),
+            "Archive", "Customer",
+            customerId.ToString(),
+            $"{customer.FirstName} {customer.LastName}");
+
         return Ok(new
         {
             message = $"Customer {customerId} archived.",
@@ -110,6 +140,7 @@ public class CustomersController : ControllerBase
         });
     }
 
+    // ─── RESTORE ───
     [HttpPost("{customerId:int}/restore")]
     public async Task<IActionResult> Restore(int companyId, int customerId)
     {
@@ -122,6 +153,12 @@ public class CustomersController : ControllerBase
 
         customer.IsActive = true;
         await db.SaveChangesAsync();
+
+        await _audit.WriteAsync(
+            UserSessionHelper.GetUserId(HttpContext),
+            "Restore", "Customer",
+            customerId.ToString(),
+            $"{customer.FirstName} {customer.LastName}");
 
         return Ok(new
         {
