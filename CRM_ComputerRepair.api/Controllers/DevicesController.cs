@@ -1,4 +1,5 @@
-﻿using CRM_ComputerRepair.domain.Entities;
+using Microsoft.AspNetCore.Authorization;
+using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +8,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("devices")]
+[Authorize(Roles = "Admin,Super Admin")]
 public class DevicesController : ControllerBase
 {
     private readonly MasterCrmDbContext _db;

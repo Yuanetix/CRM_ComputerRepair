@@ -18,8 +18,11 @@ namespace CRM.winforms
         private readonly ApiClient _api = new ApiClient();
         private readonly int _customerId;
         private readonly string _customerName;
+        private readonly string? _category;
+        private readonly string? _basis;
 
         private Label lblSubtitle = null!;
+        private Label lblBasis = null!;
         private Label lblSubject = null!;
         private Label lblNotes = null!;
         private Label lblFollowUp = null!;
@@ -34,12 +37,15 @@ namespace CRM.winforms
         private Button btnSave = null!;
         private Button btnCancel = null!;
 
-        public RetentionContactDialog(int customerId, string customerName)
+        public RetentionContactDialog(int customerId, string customerName,
+            string? category = null, string? basis = null)
         {
             _customerId = customerId;
             _customerName = customerName;
+            _category = category;
+            _basis = basis;
 
-            BuildCard("Log Retention Outreach", width: 560, height: 520);
+            BuildCard("Log Retention Outreach", width: 560, height: 560);
             BuildContent();
 
             Shown += (s, e) => inpSubject.Focus();
@@ -63,12 +69,33 @@ namespace CRM.winforms
             };
             pnlCard.Controls.Add(lblSubtitle);
 
-            y += 32;
+            y += 26;
+
+            // ── Basis banner (why this customer was identified) ──
+            if (!string.IsNullOrWhiteSpace(_basis))
+            {
+                lblBasis = new Label
+                {
+                    Text = $"Basis: {_basis}",
+                    Font = new Font("Segoe UI", 8.5F),
+                    ForeColor = AppTheme.TextSecondary,
+                    BackColor = AppTheme.Neutral,
+                    AutoSize = false,
+                    Location = new Point(x, y),
+                    Size = new Size(w, 44),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Padding = new Padding(8, 0, 8, 0)
+                };
+                pnlCard.Controls.Add(lblBasis);
+                y += 52;
+            }
 
             // ── Subject * ──
             lblSubject = MakeLabel("Subject *", x, y);
             y += 20;
-            inpSubject = MakeField(x, y, w, "e.g. Win-back call");
+            inpSubject = MakeField(x, y, w,
+                string.IsNullOrWhiteSpace(_category) ? "e.g. Win-back call" : $"{_category}: ",
+                prefill: _category is null ? null : $"{_category} outreach");
             y += 38 + 4;
             lblErrorSubject = MakeErrorLabel(x, y);
             y += 20;
@@ -138,7 +165,9 @@ namespace CRM.winforms
                     _customerId,
                     inpSubject.Text.Trim(),
                     inpNotes.Text.Trim(),
-                    followUpDays);
+                    followUpDays,
+                    category: _category,
+                    basis: _basis);
 
                 DialogResult = DialogResult.OK;
                 Close();
@@ -213,11 +242,12 @@ namespace CRM.winforms
         }
 
         private TextField MakeField(int x, int y, int width, string placeholder,
-                                    bool multiline = false)
+                                    bool multiline = false, string? prefill = null)
         {
             var tf = new TextField
             {
                 PlaceholderText = placeholder,
+                Text = prefill ?? "",
                 Location = new Point(x, y),
                 Size = new Size(width, multiline ? 68 : 38)
             };

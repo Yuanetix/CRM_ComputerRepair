@@ -1,4 +1,6 @@
-﻿using CRM_ComputerRepair.api.Dtos;
+using Microsoft.AspNetCore.Authorization;
+using CRM_ComputerRepair.api.Dtos;
+using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -8,11 +10,47 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("tenant/{companyId:int}/retention")]
+[Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
 public class RetentionController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
+    private readonly RetentionEngine _engine;
 
-    public RetentionController(ITenantDbContextFactory factory) => _factory = factory;
+    public RetentionController(ITenantDbContextFactory factory, RetentionEngine engine)
+    {
+        _factory = factory;
+        _engine = engine;
+    }
+
+    /// <summary>Per-customer retention metrics computed from the tenant database.</summary>
+    [HttpGet("metrics")]
+    public async Task<IActionResult> GetMetrics(int companyId)
+    {
+        var metrics = await _engine.ComputeMetricsAsync(companyId);
+        return Ok(metrics);
+    }
+
+    /// <summary>
+    /// Retention recommendations with human-readable basis. Every recommendation
+    /// states why (e.g. "8 completed transactions", "₱4,500 total spending").
+    /// </summary>
+    [HttpGet("recommendations")]
+    public async Task<IActionResult> GetRecommendations(
+        int companyId,
+        [FromQuery] string? category,
+        [FromQuery] string? search,
+        [FromQuery] decimal? minSpend)
+    {
+        var result = await _engine.BuildRecommendationsAsync(companyId,
+            new RevenueFilter
+            {
+                Category = category,
+                Search = search,
+                MinSpent = minSpend ?? 0
+            });
+
+        return Ok(result);
+    }
 
     [HttpPost("{customerId:int}/contact")]
     public async Task<IActionResult> LogContact(

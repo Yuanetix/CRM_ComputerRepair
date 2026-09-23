@@ -33,6 +33,12 @@ namespace CRM.winforms
             if (!string.IsNullOrWhiteSpace(UserSession.Username))
                 _http.DefaultRequestHeaders.Add("X-User-Id", UserSession.Username);
 
+            // Authenticate with the signed JWT issued at login (server-side RBAC).
+            if (!string.IsNullOrWhiteSpace(UserSession.Token))
+                _http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue(
+                        "Bearer", UserSession.Token);
+
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -366,7 +372,17 @@ namespace CRM.winforms
                 discountPercentage = dto.DiscountPercentage,
                 minimumSpend = dto.MinimumSpend,
                 startDate = dto.StartDate,
-                endDate = dto.EndDate
+                endDate = dto.EndDate,
+                pointsValidityDays = dto.PointsValidityDays,
+                redeemPointsRequired = dto.RedeemPointsRequired,
+                minTransactions = dto.MinTransactions,
+                minTotalSpent = dto.MinTotalSpent,
+                maxInactiveDays = dto.MaxInactiveDays,
+                minVisitsPerPeriod = dto.MinVisitsPerPeriod,
+                visitPeriodDays = dto.VisitPeriodDays,
+                rewardType = dto.RewardType,
+                rewardValue = dto.RewardValue,
+                maxRedemptionsPerCustomer = dto.MaxRedemptionsPerCustomer
             };
 
             var content = ToJsonContent(body);
@@ -387,6 +403,16 @@ namespace CRM.winforms
                 minimumSpend = dto.MinimumSpend,
                 startDate = dto.StartDate,
                 endDate = dto.EndDate,
+                pointsValidityDays = dto.PointsValidityDays,
+                redeemPointsRequired = dto.RedeemPointsRequired,
+                minTransactions = dto.MinTransactions,
+                minTotalSpent = dto.MinTotalSpent,
+                maxInactiveDays = dto.MaxInactiveDays,
+                minVisitsPerPeriod = dto.MinVisitsPerPeriod,
+                visitPeriodDays = dto.VisitPeriodDays,
+                rewardType = dto.RewardType,
+                rewardValue = dto.RewardValue,
+                maxRedemptionsPerCustomer = dto.MaxRedemptionsPerCustomer,
                 isActive = dto.IsActive
             };
 
@@ -634,6 +660,84 @@ namespace CRM.winforms
             return JsonSerializer.Deserialize<DashboardDto>(json, _jsonOptions);
         }
 
+        /// <summary>Generic drill-down: customers, transactions, sales, services, interactions, loyalty.</summary>
+        public async Task<AnalyticsDetailsDto?> GetAnalyticsDetailsAsync(
+            string metric, DateTime? from = null, DateTime? to = null,
+            int? customerId = null, string? service = null, string? status = null)
+        {
+            var qs = new List<string>();
+            const string iso = "o";
+            if (from.HasValue) qs.Add($"from={Uri.EscapeDataString(from.Value.ToString(iso))}");
+            if (to.HasValue) qs.Add($"to={Uri.EscapeDataString(to.Value.ToString(iso))}");
+            if (customerId.HasValue) qs.Add($"customerId={customerId.Value}");
+            if (!string.IsNullOrWhiteSpace(service)) qs.Add($"service={Uri.EscapeDataString(service)}");
+            if (!string.IsNullOrWhiteSpace(status)) qs.Add($"status={Uri.EscapeDataString(status)}");
+
+            var url = $"/tenant/{CompanyId}/analytics/details?metric={Uri.EscapeDataString(metric)}";
+            if (qs.Count > 0) url += "&" + string.Join("&", qs);
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<AnalyticsDetailsDto>(json, _jsonOptions);
+        }
+
+        /// <summary>Active customers with no completed transaction in the last 90 days.</summary>
+        public async Task<AnalyticsDetailsDto?> GetInactiveCustomersAsync()
+        {
+            var response = await _http.GetAsync(
+                $"/tenant/{CompanyId}/analytics/inactive-customers");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<AnalyticsDetailsDto>(json, _jsonOptions);
+        }
+
+        /// <summary>Per-customer visit frequency from completed transactions.</summary>
+        public async Task<List<CustomerVisitDto>> GetCustomerVisitsAsync()
+        {
+            var response = await _http.GetAsync(
+                $"/tenant/{CompanyId}/analytics/visits");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<CustomerVisitDto>>(json, _jsonOptions);
+            return result ?? new List<CustomerVisitDto>();
+        }
+
+        /// <summary>Loyalty members joined with customer names and real spend.</summary>
+        public async Task<List<LoyaltyMemberDetailDto>> GetLoyaltyMembersAsync(int? programId = null)
+        {
+            var url = $"/tenant/{CompanyId}/analytics/loyalty-members";
+            if (programId.HasValue) url += $"?programId={programId.Value}";
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<LoyaltyMemberDetailDto>>(json, _jsonOptions);
+            return result ?? new List<LoyaltyMemberDetailDto>();
+        }
+
+        /// <summary>
+        /// Retention recommendations with a visible, human-readable basis
+        /// (transaction count, last visit, spending, visit frequency, inactivity).
+        /// </summary>
+        public async Task<List<RetentionRecommendationDto>> GetRetentionRecommendationsAsync(
+            string? category = null, string? search = null, decimal? minSpend = null)
+        {
+            var qs = new List<string>();
+            if (!string.IsNullOrWhiteSpace(category)) qs.Add($"category={Uri.EscapeDataString(category)}");
+            if (!string.IsNullOrWhiteSpace(search)) qs.Add($"search={Uri.EscapeDataString(search)}");
+            if (minSpend.HasValue && minSpend.Value > 0) qs.Add($"minSpend={minSpend.Value}");
+
+            var url = $"/tenant/{CompanyId}/retention/recommendations";
+            if (qs.Count > 0) url += "?" + string.Join("&", qs);
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<RetentionRecommendationDto>>(json, _jsonOptions);
+            return result ?? new List<RetentionRecommendationDto>();
+        }
+
         public async Task<List<RetentionCandidateDto>> GetRetentionCandidatesAsync()
         {
             var response = await _http.GetAsync(
@@ -645,14 +749,17 @@ namespace CRM.winforms
         }
 
         public async Task<bool> LogRetentionContactAsync(
-            int customerId, string subject, string notes, int? followUpInDays = null)
+            int customerId, string subject, string notes,
+            int? followUpInDays = null, string? category = null, string? basis = null)
         {
             var body = new
             {
                 subject,
                 notes,
                 performedByUserId = UserSession.UserId,
-                scheduleFollowUpInDays = followUpInDays
+                scheduleFollowUpInDays = followUpInDays,
+                category,
+                basis
             };
 
             var content = ToJsonContent(body);
@@ -693,6 +800,7 @@ namespace CRM.winforms
         public string Role { get; set; } = "";
         public string Email { get; set; } = "";
         public int CompanyId { get; set; }
+        public string Token { get; set; } = "";
     }
 
     public class CustomerDto
@@ -808,17 +916,142 @@ namespace CRM.winforms
     {
         public int TotalCustomers { get; set; }
         public int ActiveCustomers { get; set; }
+        public int InactiveCustomers { get; set; }
+        public int ReturningCustomers { get; set; }
         public int NewThisMonth { get; set; }
+        public int TotalTransactions { get; set; }
+        public decimal TotalSales { get; set; }
+        public decimal AverageTransactionValue { get; set; }
+        public int TransactionsThisMonth { get; set; }
+        public int LoyaltyMembers { get; set; }
+        public double LoyaltyParticipationRate { get; set; }
+        public double AverageVisitsPerCustomer { get; set; }
+        public int Inactive90Days { get; set; }
         public double RetentionRate { get; set; }
         public int ChurnRisk { get; set; }
         public int OpenInteractions { get; set; }
         public int RepairsCompletedThisMonth { get; set; }
         public double AverageTurnaroundDays { get; set; }
         public double RepeatCustomerRate { get; set; }
+        public TopServiceDto TopService { get; set; } = new();
         public InteractionsByTypeDto InteractionsByType { get; set; } = new();
         public RepairsByStatusDto RepairsByStatus { get; set; } = new();
         public List<TimeSeriesPointDto> CustomersOverTime { get; set; } = new();
+        public List<TimeSeriesPointDto> TransactionsOverTime { get; set; } = new();
+        public List<SalesPointDto> SalesOverTime { get; set; } = new();
+        public List<PopularServiceDto> PopularServices { get; set; } = new();
+        public List<ActivityPointDto> CustomerActivityTrend { get; set; } = new();
         public List<RetentionTrendPointDto> RetentionTrend { get; set; } = new();
+        public List<LoyaltyPerformanceDto> LoyaltyPerformance { get; set; } = new();
+    }
+
+    public class TopServiceDto
+    {
+        public string Name { get; set; } = "\u2014";
+        public int Count { get; set; }
+        public decimal Revenue { get; set; }
+    }
+
+    public class SalesPointDto
+    {
+        public string Month { get; set; } = "";
+        public string Label { get; set; } = "";
+        public decimal Sales { get; set; }
+    }
+
+    public class PopularServiceDto
+    {
+        public string Service { get; set; } = "";
+        public int Count { get; set; }
+        public decimal Revenue { get; set; }
+    }
+
+    public class ActivityPointDto
+    {
+        public string Month { get; set; } = "";
+        public string Label { get; set; } = "";
+        public int Interactions { get; set; }
+        public int Repairs { get; set; }
+    }
+
+    public class LoyaltyPerformanceDto
+    {
+        public int LoyaltyProgramId { get; set; }
+        public string ProgramName { get; set; } = "";
+        public int Members { get; set; }
+        public int TotalPoints { get; set; }
+        public decimal TotalSpent { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    /// <summary>Generic drill-down response: {metric, title, columns, rows}.</summary>
+    public class AnalyticsDetailsDto
+    {
+        public string Metric { get; set; } = "";
+        public string? Title { get; set; }
+        public List<DetailColumnDto> Columns { get; set; } = new();
+        public List<Dictionary<string, object?>> Rows { get; set; } = new();
+    }
+
+    public class DetailColumnDto
+    {
+        public string Key { get; set; } = "";
+        public string Label { get; set; } = "";
+        public string Type { get; set; } = "text"; // text | number | currency | date
+    }
+
+    public class CustomerVisitDto
+    {
+        public int CustomerId { get; set; }
+        public string CustomerName { get; set; } = "";
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public int VisitCount { get; set; }
+        public DateTime? FirstVisit { get; set; }
+        public DateTime? LastVisit { get; set; }
+        public double VisitsPerMonth { get; set; }
+        public decimal TotalSpent { get; set; }
+    }
+
+    public class LoyaltyMemberDetailDto
+    {
+        public int CustomerId { get; set; }
+        public string CustomerName { get; set; } = "";
+        public string ProgramName { get; set; } = "";
+        public int Points { get; set; }
+        public DateTime JoinedDate { get; set; }
+        public decimal TotalSpent { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    /// <summary>Retention recommendation with the measurable basis behind it.</summary>
+    public class RetentionRecommendationDto
+    {
+        public int CustomerId { get; set; }
+        public string CustomerName { get; set; } = "";
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public string Category { get; set; } = "";
+        public string Action { get; set; } = "";
+        public string Basis { get; set; } = "";
+        public int? LoyaltyProgramId { get; set; }
+        public string? ProgramName { get; set; }
+        public string? Reward { get; set; }
+        public int TransactionCount { get; set; }
+        public decimal TotalSpent { get; set; }
+        public int DaysSinceLastTransaction { get; set; }
+        public int Points { get; set; }
+
+        public string CategoryDisplay => Category switch
+        {
+            "Discount" => "Discount",
+            "Reward" => "Loyalty reward",
+            "Follow-up" => "Follow-up",
+            "Re-engagement" => "Re-engagement",
+            _ => Category
+        };
+        public string LastVisitDisplay => $"{DaysSinceLastTransaction} days ago";
+        public string SpentDisplay => $"\u20b1{TotalSpent:N2}";
     }
 
     public class InteractionsByTypeDto
@@ -1027,12 +1260,57 @@ namespace CRM.winforms
         public bool IsActive { get; set; }
         public DateTime CreatedAt { get; set; }
 
+        public int? PointsValidityDays { get; set; }
+        public int? RedeemPointsRequired { get; set; }
+
+        // Eligibility criteria — evaluated against real customer history
+        public int? MinTransactions { get; set; }
+        public decimal? MinTotalSpent { get; set; }
+        public int? MaxInactiveDays { get; set; }
+        public int? MinVisitsPerPeriod { get; set; }
+        public int? VisitPeriodDays { get; set; }
+
+        // Reward definition: 0 DiscountPercent, 1 FreeService, 2 PointsMultiplier, 3 Voucher
+        public int RewardType { get; set; }
+        public decimal RewardValue { get; set; }
+        public int? MaxRedemptionsPerCustomer { get; set; }
+
         public string StatusText => IsActive ? "Active" : "Archived";
         public string PointsDisplay => $"{PointsPerPeso} pt / ₱1";
         public string DiscountDisplay => $"{DiscountPercentage:0.#}%";
         public string MinSpendDisplay => $"₱{MinimumSpend:N2}";
         public string StartDateDisplay => StartDate.ToString("MMM d, yyyy");
         public string EndDateDisplay => EndDate.ToString("MMM d, yyyy");
+        public string RewardTypeText => RewardType switch
+        {
+            0 => "Discount %",
+            1 => "Free service",
+            2 => "Points multiplier",
+            3 => "Voucher",
+            _ => "—"
+        };
+        public string RewardDisplay => RewardType switch
+        {
+            0 => $"{RewardValue:0.#}% off",
+            1 => $"Free svc ≤₱{RewardValue:N0}",
+            2 => $"{RewardValue:0.#}× pts",
+            3 => $"₱{RewardValue:N0} voucher",
+            _ => "—"
+        };
+        public string EligibilityText
+        {
+            get
+            {
+                var parts = new List<string>();
+                if (MinTransactions.HasValue) parts.Add($"{MinTransactions}+ tx");
+                if (MinTotalSpent.HasValue) parts.Add($"₱{MinTotalSpent:N0}+ spent");
+                if (MaxInactiveDays.HasValue) parts.Add($"≤{MaxInactiveDays}d idle");
+                if (MinVisitsPerPeriod.HasValue && VisitPeriodDays.HasValue)
+                    parts.Add($"{MinVisitsPerPeriod}+ visits/{VisitPeriodDays}d");
+                if (MinimumSpend > 0) parts.Add($"min spend ₱{MinimumSpend:N0}");
+                return parts.Count > 0 ? string.Join(" · ", parts) : "All customers";
+            }
+        }
     }
 
     public class SubscriptionDto

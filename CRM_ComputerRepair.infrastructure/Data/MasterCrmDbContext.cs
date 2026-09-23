@@ -182,6 +182,8 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.Description).HasMaxLength(1000);
             entity.Property(x => x.DiscountPercentage).HasPrecision(5, 2);
             entity.Property(x => x.MinimumSpend).HasPrecision(18, 2);
+            entity.Property(x => x.MinTotalSpent).HasPrecision(18, 2);
+            entity.Property(x => x.RewardValue).HasPrecision(18, 2);
 
             entity.HasOne(x => x.Company)
                 .WithMany(c => c.LoyaltyPrograms)

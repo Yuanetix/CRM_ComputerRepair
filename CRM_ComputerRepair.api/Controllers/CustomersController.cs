@@ -1,4 +1,5 @@
-﻿using CRM_ComputerRepair.api.Dtos;
+using Microsoft.AspNetCore.Authorization;
+using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
@@ -9,6 +10,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("tenant/{companyId:int}/customers")]
+[Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
 public class CustomersController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
@@ -20,7 +22,7 @@ public class CustomersController : ControllerBase
         _audit = audit;
     }
 
-    // ─── GET ALL ───
+    // --- GET ALL ---
     [HttpGet]
     public async Task<IActionResult> GetAll(
         int companyId, [FromQuery] bool? includeArchived)
@@ -35,7 +37,7 @@ public class CustomersController : ControllerBase
         return Ok(list);
     }
 
-    // ─── GET ONE ───
+    // --- GET ONE ---
     [HttpGet("{customerId:int}")]
     public async Task<IActionResult> GetById(int companyId, int customerId)
     {
@@ -47,7 +49,7 @@ public class CustomersController : ControllerBase
         return customer is null ? NotFound() : Ok(customer);
     }
 
-    // ─── CREATE ───
+    // --- CREATE ---
     [HttpPost]
     public async Task<IActionResult> Create(
         int companyId, [FromBody] CreateCustomerRequest request)
@@ -81,7 +83,7 @@ public class CustomersController : ControllerBase
             new { companyId, customerId = customer.CustomerId }, customer);
     }
 
-    // ─── UPDATE ───
+    // --- UPDATE ---
     [HttpPut("{customerId:int}")]
     public async Task<IActionResult> Update(
         int companyId, int customerId, [FromBody] UpdateCustomerRequest request)
@@ -112,7 +114,7 @@ public class CustomersController : ControllerBase
         return Ok(customer);
     }
 
-    // ─── ARCHIVE (soft delete) ───
+    // --- ARCHIVE (soft delete) ---
     [HttpDelete("{customerId:int}")]
     public async Task<IActionResult> Archive(int companyId, int customerId)
     {
@@ -140,7 +142,7 @@ public class CustomersController : ControllerBase
         });
     }
 
-    // ─── RESTORE ───
+    // --- RESTORE ---
     [HttpPost("{customerId:int}/restore")]
     public async Task<IActionResult> Restore(int companyId, int customerId)
     {

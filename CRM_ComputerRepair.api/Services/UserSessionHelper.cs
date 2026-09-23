@@ -17,4 +17,11 @@ public static class UserSessionHelper
 
         return "system";
     }
+
+    /// <summary>Company id from the JWT claim (seeded demo users are all CompanyId = 1).</summary>
+    public static int GetCompanyId(HttpContext context)
+    {
+        var claim = context.User.FindFirst("CompanyId")?.Value;
+        return int.TryParse(claim, out var id) ? id : 1;
+    }
 }

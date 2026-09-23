@@ -1,14 +1,19 @@
-﻿using CRM.winforms.Controls;
+using CRM.winforms.Controls;
 using CRM.winforms.Forms;
 using System;
 using System.ComponentModel;
 using System.Drawing;
-using System.Net.Mime;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace CRM.winforms
 {
+    /// <summary>
+    /// Create / edit a loyalty program — including the eligibility criteria the
+    /// retention engine evaluates against real customer history (min transactions,
+    /// min spending, max inactivity, visit frequency), the reward definition and
+    /// the validity period.
+    /// </summary>
     [DesignerCategory("Code")]
     public class LoyaltyFormDialog : ModalForm
     {
@@ -21,18 +26,32 @@ namespace CRM.winforms
         private Label lblProgramName = null!;
         private Label lblDescription = null!;
         private Label lblPoints = null!;
-        private Label lblDiscount = null!;
-        private Label lblMinSpend = null!;
+        private Label lblRewardType = null!;
+        private Label lblRewardValue = null!;
         private Label lblStart = null!;
         private Label lblEnd = null!;
+
+        // Eligibility criteria
+        private Label lblCriteria = null!;
+        private Label lblMinTx = null!;
+        private Label lblMinSpent = null!;
+        private Label lblMaxIdle = null!;
+        private Label lblVisits = null!;
+        private Label lblVisitWindow = null!;
 
         private TextField inpProgramName = null!;
         private TextField inpDescription = null!;
         private NumericUpDown numPoints = null!;
-        private NumericUpDown numDiscount = null!;
-        private NumericUpDown numMinSpend = null!;
+        private ComboBox cboRewardType = null!;
+        private NumericUpDown numRewardValue = null!;
         private DateTimePicker dtpStart = null!;
         private DateTimePicker dtpEnd = null!;
+
+        private NumericUpDown numMinTx = null!;
+        private NumericUpDown numMinSpent = null!;
+        private NumericUpDown numMaxIdle = null!;
+        private NumericUpDown numVisits = null!;
+        private NumericUpDown numVisitWindow = null!;
 
         private Label lblErrorName = null!;
 
@@ -46,8 +65,8 @@ namespace CRM.winforms
 
             BuildCard(
                 _isEditMode ? "Edit Loyalty Program" : "Add Loyalty Program",
-                width: 560,
-                height: _isEditMode ? 700 : 680);
+                width: 620,
+                height: 800);
 
             BuildContent();
         }
@@ -61,17 +80,17 @@ namespace CRM.winforms
             lblSubtitle = new Label
             {
                 Text = _isEditMode
-                    ? "Update this program's details."
-                    : "Create a new loyalty program for your customers.",
+                    ? "Update this program's details and eligibility criteria."
+                    : "Define the reward, validity and eligibility criteria. The system automatically determines which customers qualify based on their history.",
                 Font = AppTheme.FontSubtitle,
                 ForeColor = AppTheme.TextSecondary,
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 Location = new Point(x, y),
-                Size = new Size(w, 20)
+                Size = new Size(w, 34)
             };
             pnlCard.Controls.Add(lblSubtitle);
-            y += 32;
+            y += 44;
 
             // Program name
             lblProgramName = MakeLabel("Program name *", x, y);
@@ -85,33 +104,77 @@ namespace CRM.winforms
             lblDescription = MakeLabel("Description", x, y);
             y += 20;
             inpDescription = MakeField(x, y, w, "Short description", multiline: true);
-            y += 74 + 14;
+            y += 74 + 10;
 
-            // Points + Discount
+            // ── Reward ──
+            lblCriteria = MakeSectionLabel("Reward", x, y);
+            y += 24;
+
             int halfW = (w - 12) / 2;
+            int thirdW = (w - 24) / 3;
 
-            lblPoints = MakeLabel("Points per ₱1", x, y);
-            lblDiscount = MakeLabel("Discount %", x + halfW + 12, y);
+            lblRewardType = MakeLabel("Reward type", x, y);
+            lblRewardValue = MakeLabel("Reward value", x + thirdW + 12, y);
+            lblPoints = MakeLabel("Points per ₱1", x + (thirdW + 12) * 2, y);
             y += 20;
 
-            numPoints = MakeNumeric(x, y, halfW, 1, 1000, 1);
-            numDiscount = MakeNumeric(x + halfW + 12, y, halfW, 0, 100, 5, decimalPlaces: 1);
-            y += 38 + 14;
+            cboRewardType = new ComboBox
+            {
+                Font = new Font("Segoe UI", 9.5F),
+                Location = new Point(x, y),
+                Size = new Size(thirdW, 30),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = AppTheme.Surface,
+                ForeColor = AppTheme.TextPrimary,
+                FlatStyle = FlatStyle.Flat
+            };
+            cboRewardType.Items.AddRange(new object[]
+            {
+                "Discount % off next service",
+                "Free service (value cap)",
+                "Points multiplier",
+                "Cash voucher"
+            });
+            pnlCard.Controls.Add(cboRewardType);
 
-            // Minimum spend
-            lblMinSpend = MakeLabel("Minimum spend (₱)", x, y);
+            numRewardValue = MakeNumeric(x + thirdW + 12, y, thirdW, 0, 1000000, 10, decimalPlaces: 1);
+            numPoints = MakeNumeric(x + (thirdW + 12) * 2, y, thirdW, 1, 1000, 1);
+            y += 38 + 12;
+
+            // ── Eligibility criteria ──
+            lblCriteria = MakeSectionLabel("Eligibility criteria — evaluated automatically against each customer's history (0 = disabled)",
+                x, y);
+            y += 24;
+
+            lblMinTx = MakeLabel("Min completed transactions", x, y);
+            lblMinSpent = MakeLabel("Min total spending (₱)", x + thirdW + 12, y);
+            lblMaxIdle = MakeLabel("Max days since last visit", x + (thirdW + 12) * 2, y);
             y += 20;
-            numMinSpend = MakeNumeric(x, y, w, 0, 1000000, 0, decimalPlaces: 2);
-            y += 38 + 14;
 
-            // Start / End
+            numMinTx = MakeNumeric(x, y, thirdW, 0, 10000, 0);
+            numMinSpent = MakeNumeric(x + thirdW + 12, y, thirdW, 0, 1000000, 0, decimalPlaces: 2);
+            numMaxIdle = MakeNumeric(x + (thirdW + 12) * 2, y, thirdW, 0, 3650, 0);
+            y += 38 + 12;
+
+            lblVisits = MakeLabel("Min visits in window", x, y);
+            lblVisitWindow = MakeLabel("Visit window (days)", x + thirdW + 12, y);
+            y += 20;
+
+            numVisits = MakeNumeric(x, y, thirdW, 0, 1000, 0);
+            numVisitWindow = MakeNumeric(x + thirdW + 12, y, thirdW, 0, 3650, 0);
+            y += 38 + 12;
+
+            // ── Validity period ──
+            lblCriteria = MakeSectionLabel("Validity period", x, y);
+            y += 24;
+
             lblStart = MakeLabel("Start date *", x, y);
             lblEnd = MakeLabel("End date *", x + halfW + 12, y);
             y += 20;
 
             dtpStart = MakeDate(x, y, halfW);
             dtpEnd = MakeDate(x + halfW + 12, y, halfW);
-            y += 38 + 20;
+            y += 38 + 16;
 
             // Buttons
             int btnY = pnlCard.Height - ShadowPad - 60;
@@ -140,20 +203,29 @@ namespace CRM.winforms
             {
                 inpProgramName.Text = _editing.ProgramName ?? "";
                 inpDescription.Text = _editing.Description ?? "";
-                numPoints.Value = Math.Max(1, Math.Min(1000, _editing.PointsPerPeso));
-                numDiscount.Value = Math.Max(0, Math.Min(100, _editing.DiscountPercentage));
-                numMinSpend.Value = Math.Max(0, Math.Min(1000000, _editing.MinimumSpend));
+                numPoints.Value = Clamp(_editing.PointsPerPeso, 1, 1000);
+                cboRewardType.SelectedIndex = (int)Clamp(_editing.RewardType, 0, 3);
+                numRewardValue.Value = Clamp(_editing.RewardValue, 0, 1000000);
+                numMinTx.Value = Clamp(_editing.MinTransactions ?? 0, 0, 10000);
+                numMinSpent.Value = Clamp(_editing.MinTotalSpent ?? 0, 0, 1000000);
+                numMaxIdle.Value = Clamp(_editing.MaxInactiveDays ?? 0, 0, 3650);
+                numVisits.Value = Clamp(_editing.MinVisitsPerPeriod ?? 0, 0, 1000);
+                numVisitWindow.Value = Clamp(_editing.VisitPeriodDays ?? 0, 0, 3650);
                 dtpStart.Value = _editing.StartDate;
                 dtpEnd.Value = _editing.EndDate;
             }
             else
             {
+                cboRewardType.SelectedIndex = 0;
                 dtpStart.Value = DateTime.Today;
                 dtpEnd.Value = DateTime.Today.AddYears(1);
             }
 
             Shown += (s, e) => inpProgramName.Focus();
         }
+
+        private static decimal Clamp(decimal value, decimal min, decimal max) =>
+            Math.Max(min, Math.Min(max, value));
 
         private async Task SaveAsync()
         {
@@ -166,8 +238,13 @@ namespace CRM.winforms
                     ProgramName = inpProgramName.Text.Trim(),
                     Description = inpDescription.Text.Trim(),
                     PointsPerPeso = (int)numPoints.Value,
-                    DiscountPercentage = numDiscount.Value,
-                    MinimumSpend = numMinSpend.Value,
+                    RewardType = cboRewardType.SelectedIndex,
+                    RewardValue = numRewardValue.Value,
+                    MinTransactions = numMinTx.Value > 0 ? (int)numMinTx.Value : (int?)null,
+                    MinTotalSpent = numMinSpent.Value > 0 ? numMinSpent.Value : (decimal?)null,
+                    MaxInactiveDays = numMaxIdle.Value > 0 ? (int)numMaxIdle.Value : (int?)null,
+                    MinVisitsPerPeriod = numVisits.Value > 0 ? (int)numVisits.Value : (int?)null,
+                    VisitPeriodDays = numVisitWindow.Value > 0 ? (int)numVisitWindow.Value : (int?)null,
                     StartDate = dtpStart.Value,
                     EndDate = dtpEnd.Value,
                     IsActive = _editing?.IsActive ?? true
@@ -209,10 +286,32 @@ namespace CRM.winforms
                 return false;
             }
 
+            if (numVisits.Value > 0 && numVisitWindow.Value <= 0)
+            {
+                MessageBox.Show("Visit window (days) is required when a minimum visits value is set.",
+                    "Invalid criteria", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
             return true;
         }
 
         // ─── Factories ───
+
+        private Label MakeSectionLabel(string text, int x, int y)
+        {
+            var lbl = new Label
+            {
+                Text = text,
+                Font = new Font("Segoe UI Semibold", 9.5F),
+                ForeColor = AppTheme.TextPrimary,
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                Location = new Point(x, y)
+            };
+            pnlCard.Controls.Add(lbl);
+            return lbl;
+        }
 
         private Label MakeLabel(string text, int x, int y)
         {

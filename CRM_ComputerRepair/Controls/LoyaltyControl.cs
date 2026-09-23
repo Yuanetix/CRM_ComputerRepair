@@ -306,7 +306,10 @@ namespace CRM.winforms
             {
                 "LoyaltyProgramId", "CompanyId", "CreatedAt",
                 "PointsPerPeso", "DiscountPercentage", "MinimumSpend",
-                "IsActive", "StartDate", "EndDate"
+                "IsActive", "StartDate", "EndDate",
+                "PointsValidityDays", "RedeemPointsRequired", "MinTransactions",
+                "MinTotalSpent", "MaxInactiveDays", "MinVisitsPerPeriod",
+                "VisitPeriodDays", "RewardType", "RewardValue", "MaxRedemptionsPerCustomer"
             })
             {
                 if (dgv.Columns[hidden] != null)
@@ -325,14 +328,14 @@ namespace CRM.winforms
                 c.DisplayIndex = idx;
             }
 
-            Setup("ProgramName", "Program", 220, 0);
-            Setup("Description", "Description", 0, 1, fill: true);
-            Setup("PointsDisplay", "Points", 110, 2);
-            Setup("DiscountDisplay", "Discount", 100, 3);
-            Setup("MinSpendDisplay", "Min spend", 120, 4);
-            Setup("StartDateDisplay", "Start", 120, 5);
-            Setup("EndDateDisplay", "End", 120, 6);
-            Setup("StatusText", "Status", 100, 7);
+            Setup("ProgramName", "Program", 200, 0);
+            Setup("EligibilityText", "Eligibility criteria", 0, 1, fill: true);
+            Setup("RewardTypeText", "Reward", 110, 2);
+            Setup("RewardDisplay", "Value", 110, 3);
+            Setup("PointsDisplay", "Points", 90, 4);
+            Setup("StartDateDisplay", "Start", 110, 5);
+            Setup("EndDateDisplay", "End", 110, 6);
+            Setup("StatusText", "Status", 90, 7);
         }
 
         private void AddActionsColumn()

@@ -9,6 +9,7 @@ public class Payment
     public string? PaymentMethod { get; set; }
     public string? ReferenceNumber { get; set; }
     public bool IsPaid { get; set; } = false;
+    public bool IsVoid { get; set; } = false;
 
     // Navigation
     public RepairRequest? RepairRequest { get; set; }

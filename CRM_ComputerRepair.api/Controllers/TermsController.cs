@@ -1,4 +1,5 @@
-﻿using CRM_ComputerRepair.api.Dtos;
+using Microsoft.AspNetCore.Authorization;
+using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
@@ -8,6 +9,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("terms")]
+[Authorize(Roles = "Admin,Super Admin")]
 public class TermsController : ControllerBase
 {
     private readonly MasterCrmDbContext _db;

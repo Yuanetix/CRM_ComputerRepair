@@ -1,4 +1,5 @@
-﻿using CRM_ComputerRepair.api.Dtos;
+using Microsoft.AspNetCore.Authorization;
+using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +8,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("tenant/{companyId:int}/customer-history")]
+[Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
 public class CustomerHistoryController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;

@@ -1,4 +1,4 @@
-﻿using CRM.winforms;
+using CRM.winforms;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -11,9 +11,12 @@ using System.Windows.Forms;
 namespace CRM.winforms.Controls
 {
     /// <summary>
-    /// Business Intelligence Dashboard — KPI tiles + charts.
-    /// KPI tiles are clickable: they raise an ActionRequested event
-    /// so MainForm can navigate to the relevant page.
+    /// Business Intelligence Dashboard.
+    ///
+    /// • 10 clickable KPI tiles — each opens a drill-down dialog with the actual
+    ///   customer / transaction records behind the number.
+    /// • 6 interactive charts — clicking a data point opens the matching records.
+    /// • Every figure comes from the live database via /analytics/dashboard.
     /// </summary>
     [DesignerCategory("Code")]
     public class DashboardControl : UserControl
@@ -23,28 +26,21 @@ namespace CRM.winforms.Controls
         private readonly ApiClient _api = new ApiClient();
         private DashboardDto? _data;
 
-        /// <summary>
-        /// Raised when the user clicks a KPI tile that maps to an action.
-        /// Payload is the navigation key, e.g. "retention", "repairs", "interactions".
-        /// </summary>
+        /// <summary>Raised when a tile maps to a whole page (e.g. the retention page).</summary>
         public event EventHandler<string>? ActionRequested;
 
-        // ═══════════ CONTROLS ═══════════
+        private readonly List<KpiTile> _tiles = new();
+        private readonly List<ChartCard> _charts = new();
+
+        // Chart data caches (drill-down by selected point)
+        private List<(string Label, double Value)> _salesPoints = new();
+        private List<(string Label, double Value)> _transactionsPoints = new();
+        private List<(string Label, double Value)> _activityPoints = new();
+        private List<(string Label, double Value)> _retentionPoints = new();
 
         private Label lblTitle = null!;
         private Label lblSubtitle = null!;
         private FlatButton btnRefresh = null!;
-
-        private KpiTile tileCustomers = null!;
-        private KpiTile tileRetention = null!;
-        private KpiTile tileChurn = null!;
-        private KpiTile tileTurnaround = null!;
-
-        private ChartCard cardCustomersOverTime = null!;
-        private ChartCard cardRepairsByStatus = null!;
-        private ChartCard cardInteractionsByType = null!;
-        private ChartCard cardRetentionTrend = null!;
-
         private Label lblLoading = null!;
 
         // ═══════════ CONSTRUCTOR ═══════════
@@ -77,7 +73,7 @@ namespace CRM.winforms.Controls
 
             lblSubtitle = new Label
             {
-                Text = "Business intelligence from your CRM data  ·  click a tile to take action",
+                Text = "Business intelligence from your live CRM data  ·  click any tile or chart point to see the records behind it",
                 Font = UiKit.T.Subtitle,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
@@ -91,43 +87,28 @@ namespace CRM.winforms.Controls
             Controls.Add(lblSubtitle);
             Controls.Add(btnRefresh);
 
-            // KPI tiles
-            tileCustomers = new KpiTile();
-            tileRetention = new KpiTile();
-            tileChurn = new KpiTile();
-            tileTurnaround = new KpiTile();
+            // ── KPI tiles (2 rows × 5) ──
+            AddTile(() => DrillCustomersAll());
+            AddTile(() => DrillCustomersActive());
+            AddTile(() => DrillInactive());
+            AddTile(() => DrillCustomersReturning());
+            AddTile(() => DrillTransactionsAll());
+            AddTile(() => DrillSales());
+            AddTile(() => DrillServices());
+            AddTile(() => DrillVisits());
+            AddTile(() => DrillLoyaltyMembers(null));
+            AddTile(() => RaiseAction("retention"));
 
-            tileCustomers.Set("Total customers", "0", "Active customers", AppTheme.Primary, "\uE716");
-            tileRetention.Set("Retention rate", "0%", "Customers with 2+ repairs", AppTheme.Success, "\uE73E");
-            tileChurn.Set("Churn risk", "0", "No contact in 90 days", AppTheme.Danger, "\uE7BA");
-            tileTurnaround.Set("Avg turnaround", "0 d", "Repair completion time", AppTheme.Warning, "\uE823");
+            // ── Charts ──
+            AddChart("Sales trend", ChartKind.Line, label => DrillSalesMonth(label));
+            AddChart("Transaction trend", ChartKind.Line, label => DrillTransactionsMonth(label));
+            AddChart("Service popularity", ChartKind.Bar, label => DrillService(label));
+            AddChart("Customer activity", ChartKind.Line, label => DrillActivityMonth(label));
+            AddChart("Loyalty performance", ChartKind.Bar, label => DrillLoyaltyMembers(label));
+            AddChart("Customer retention trend", ChartKind.Line, label => DrillActivityMonth(label));
 
-            // ── Wire clicks ──
-            tileCustomers.Click += (s, e) => RaiseAction("customers");
-            tileRetention.Click += (s, e) => RaiseAction("customers");
-            tileChurn.Click += (s, e) => RaiseAction("retention");
-            tileTurnaround.Click += (s, e) => RaiseAction("repairs");
-
-            tileCustomers.Cursor = Cursors.Hand;
-            tileRetention.Cursor = Cursors.Hand;
-            tileChurn.Cursor = Cursors.Hand;
-            tileTurnaround.Cursor = Cursors.Hand;
-
-            Controls.Add(tileCustomers);
-            Controls.Add(tileRetention);
-            Controls.Add(tileChurn);
-            Controls.Add(tileTurnaround);
-
-            // Chart cards
-            cardCustomersOverTime = new ChartCard("Customers over time", ChartKind.Line);
-            cardRepairsByStatus = new ChartCard("Repairs by status", ChartKind.Bar);
-            cardInteractionsByType = new ChartCard("Interactions by type", ChartKind.Donut);
-            cardRetentionTrend = new ChartCard("Retention trend", ChartKind.Line);
-
-            Controls.Add(cardCustomersOverTime);
-            Controls.Add(cardRepairsByStatus);
-            Controls.Add(cardInteractionsByType);
-            Controls.Add(cardRetentionTrend);
+            foreach (var t in _tiles) Controls.Add(t);
+            foreach (var c in _charts) Controls.Add(c);
 
             lblLoading = new Label
             {
@@ -143,9 +124,201 @@ namespace CRM.winforms.Controls
             Resize += (s, e) => LayoutUi();
         }
 
-        private void RaiseAction(string key)
+        private void AddTile(Action onClick)
         {
-            ActionRequested?.Invoke(this, key);
+            var tile = new KpiTile { Tag = onClick };
+            tile.Click += (s, e) => ((Action)tile.Tag!).Invoke();
+            _tiles.Add(tile);
+        }
+
+        private void AddChart(string title, ChartKind kind, Action<string?> onPointClicked)
+        {
+            var card = new ChartCard(title, kind);
+            card.PointClicked += label =>
+            {
+                try { onPointClicked(label); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Couldn't open drill-down.\n\n{ex.Message}",
+                        "Drill-down", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+            _charts.Add(card);
+        }
+
+        private void RaiseAction(string key) => ActionRequested?.Invoke(this, key);
+
+        // ═══════════ DRILL-DOWN ACTIONS ═══════════
+
+        private void DrillCustomersAll() =>
+            OpenDrillDown("Customers — all records",
+                () => _api.GetAnalyticsDetailsAsync("customers"));
+
+        private void DrillCustomersActive() =>
+            OpenDrillDown("Active customers", async () =>
+            {
+                var details = await _api.GetAnalyticsDetailsAsync("customers");
+                if (details == null) return null;
+                details.Rows = details.Rows
+                    .Where(r => r.TryGetValue("status", out var s) && s?.ToString() == "Active")
+                    .ToList();
+                details.Title = $"Active customers — {details.Rows.Count} records";
+                return details;
+            });
+
+        private void DrillCustomersReturning() =>
+            OpenDrillDown("Returning customers (2+ transactions)", async () =>
+            {
+                var details = await _api.GetAnalyticsDetailsAsync("customers");
+                if (details == null) return null;
+                details.Rows = details.Rows
+                    .Where(r => r.TryGetValue("transactions", out var t) && ToInt(t) >= 2)
+                    .ToList();
+                details.Title = $"Returning customers — {details.Rows.Count} records";
+                return details;
+            });
+
+        private static int ToInt(object? value)
+        {
+            if (value is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                return je.TryGetInt32(out var i) ? i : 0;
+            try { return Convert.ToInt32(value ?? 0); }
+            catch { return 0; }
+        }
+
+        private void DrillInactive() =>
+            OpenDrillDown("Inactive customers — no completed transaction in 90 days",
+                () => _api.GetInactiveCustomersAsync());
+
+        private void DrillTransactionsAll() =>
+            OpenDrillDown("Transactions — all records",
+                () => _api.GetAnalyticsDetailsAsync("transactions"));
+
+        private void DrillSales() =>
+            OpenDrillDown("Sales — all payments",
+                () => _api.GetAnalyticsDetailsAsync("sales"));
+
+        private void DrillServices() =>
+            OpenDrillDown("Services — popularity and revenue",
+                () => _api.GetAnalyticsDetailsAsync("services"));
+
+        private void DrillService(string? service)
+        {
+            if (string.IsNullOrEmpty(service)) { DrillServices(); return; }
+            OpenDrillDown($"Transactions — {service}",
+                () => _api.GetAnalyticsDetailsAsync("transactions", service: service));
+        }
+
+        private void DrillSalesMonth(string? month)
+        {
+            if (string.IsNullOrEmpty(month)) { DrillSales(); return; }
+            var (from, to) = MonthRange(month);
+            OpenDrillDown($"Sales — {month}", () => _api.GetAnalyticsDetailsAsync("sales", from, to));
+        }
+
+        private void DrillTransactionsMonth(string? month)
+        {
+            if (string.IsNullOrEmpty(month)) { DrillTransactionsAll(); return; }
+            var (from, to) = MonthRange(month);
+            OpenDrillDown($"Transactions — {month}", () => _api.GetAnalyticsDetailsAsync("transactions", from, to));
+        }
+
+        private void DrillActivityMonth(string? month)
+        {
+            if (string.IsNullOrEmpty(month))
+            {
+                OpenDrillDown("Customer activity — interactions",
+                    () => _api.GetAnalyticsDetailsAsync("interactions"));
+                return;
+            }
+            var (from, to) = MonthRange(month);
+            OpenDrillDown($"Interactions — {month}", () => _api.GetAnalyticsDetailsAsync("interactions", from, to));
+        }
+
+        private void DrillVisits() =>
+            OpenDrillDown("Customer visit frequency", async () =>
+            {
+                var visits = await _api.GetCustomerVisitsAsync();
+                return new AnalyticsDetailsDto
+                {
+                    Metric = "visits",
+                    Title = "Visits per customer — from completed transactions",
+                    Columns = new List<DetailColumnDto>
+                    {
+                        new() { Key = "name", Label = "Customer", Type = "text" },
+                        new() { Key = "email", Label = "Email", Type = "text" },
+                        new() { Key = "visits", Label = "Visits", Type = "number" },
+                        new() { Key = "perMonth", Label = "Visits / month", Type = "number" },
+                        new() { Key = "first", Label = "First visit", Type = "date" },
+                        new() { Key = "last", Label = "Last visit", Type = "date" },
+                        new() { Key = "spent", Label = "Total spent", Type = "currency" }
+                    },
+                    Rows = visits.Select(v => (Dictionary<string, object?>)new Dictionary<string, object?>
+                    {
+                        ["name"] = v.CustomerName,
+                        ["email"] = v.Email,
+                        ["visits"] = v.VisitCount,
+                        ["perMonth"] = v.VisitsPerMonth,
+                        ["first"] = v.FirstVisit,
+                        ["last"] = v.LastVisit,
+                        ["spent"] = v.TotalSpent
+                    }).ToList()
+                };
+            });
+
+        private void DrillLoyaltyMembers(string? programName) =>
+            OpenDrillDown("Loyalty members", async () =>
+            {
+                var members = await _api.GetLoyaltyMembersAsync();
+                if (!string.IsNullOrEmpty(programName))
+                    members = members.Where(m => m.ProgramName == programName).ToList();
+
+                return new AnalyticsDetailsDto
+                {
+                    Metric = "loyalty-members",
+                    Title = string.IsNullOrEmpty(programName)
+                        ? "All loyalty program members"
+                        : $"Loyalty members — {programName}",
+                    Columns = new List<DetailColumnDto>
+                    {
+                        new() { Key = "name", Label = "Customer", Type = "text" },
+                        new() { Key = "program", Label = "Program", Type = "text" },
+                        new() { Key = "points", Label = "Points", Type = "number" },
+                        new() { Key = "joined", Label = "Joined", Type = "date" },
+                        new() { Key = "spent", Label = "Total spent", Type = "currency" },
+                        new() { Key = "active", Label = "Active", Type = "text" }
+                    },
+                    Rows = members.Select(m => (Dictionary<string, object?>)new Dictionary<string, object?>
+                    {
+                        ["name"] = m.CustomerName,
+                        ["program"] = m.ProgramName,
+                        ["points"] = m.Points,
+                        ["joined"] = m.JoinedDate,
+                        ["spent"] = m.TotalSpent,
+                        ["active"] = m.IsActive ? "Yes" : "No"
+                    }).ToList()
+                };
+            });
+
+        private static (DateTime from, DateTime to) MonthRange(string label)
+        {
+            // Chart labels are "MMM yyyy" (e.g. "Sep 2026").
+            if (DateTime.TryParseExact(label + " 1", "MMM yyyy d",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var m))
+            {
+                var start = new DateTime(m.Year, m.Month, 1);
+                return (start, start.AddMonths(1).AddSeconds(-1));
+            }
+            var now = DateTime.UtcNow;
+            var s = new DateTime(now.Year, now.Month, 1);
+            return (s, s.AddMonths(1).AddSeconds(-1));
+        }
+
+        private void OpenDrillDown(string title, Func<Task<AnalyticsDetailsDto?>> loader)
+        {
+            using var dlg = new DrillDownDialog(title, loader);
+            dlg.ShowModal(this.FindForm());
         }
 
         // ═══════════ HAIRLINE UNDER HEADER ═══════════
@@ -177,38 +350,35 @@ namespace CRM.winforms.Controls
             int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
             int contentTop = dividerY + UiKit.T.S5;
 
-            int pad = 0;
+            // KPI tiles — 2 rows × 5 columns
+            int gap = 12;
+            int tileHeight = 104;
+            int tileWidth = (Width - gap * 4) / 5;
 
-            // KPI tiles
-            int tileGap = 16;
-            int tileHeight = 110;
-            int tileWidth = (Width - tileGap * 3) / 4;
+            for (int i = 0; i < _tiles.Count; i++)
+            {
+                int row = i / 5;
+                int col = i % 5;
+                _tiles[i].Location = new Point(col * (tileWidth + gap),
+                    contentTop + row * (tileHeight + gap));
+                _tiles[i].Size = new Size(tileWidth, tileHeight);
+            }
 
-            tileCustomers.Location = new Point(pad, contentTop);
-            tileRetention.Location = new Point(pad + (tileWidth + tileGap), contentTop);
-            tileChurn.Location = new Point(pad + (tileWidth + tileGap) * 2, contentTop);
-            tileTurnaround.Location = new Point(pad + (tileWidth + tileGap) * 3, contentTop);
+            int tileRows = (_tiles.Count + 4) / 5;
+            int chartsTop = contentTop + tileRows * (tileHeight + gap);
 
-            tileCustomers.Size = new Size(tileWidth, tileHeight);
-            tileRetention.Size = new Size(tileWidth, tileHeight);
-            tileChurn.Size = new Size(tileWidth, tileHeight);
-            tileTurnaround.Size = new Size(tileWidth, tileHeight);
+            // Charts in a 2-column × 3-row grid
+            int rows = (_charts.Count + 1) / 2;
+            int chartH = Math.Max(160, (Height - chartsTop - gap * (rows - 1)) / rows);
+            int chartW = (Width - gap) / 2;
 
-            // Charts in a 2x2 grid
-            int chartsTop = contentTop + tileHeight + UiKit.T.S5;
-            int chartsAvail = Height - chartsTop - pad;
-            int chartH = (chartsAvail - 16) / 2;
-            int chartW = (Width - 16) / 2;
-
-            cardCustomersOverTime.Location = new Point(pad, chartsTop);
-            cardRepairsByStatus.Location = new Point(pad + chartW + 16, chartsTop);
-            cardInteractionsByType.Location = new Point(pad, chartsTop + chartH + 16);
-            cardRetentionTrend.Location = new Point(pad + chartW + 16, chartsTop + chartH + 16);
-
-            cardCustomersOverTime.Size = new Size(chartW, chartH);
-            cardRepairsByStatus.Size = new Size(chartW, chartH);
-            cardInteractionsByType.Size = new Size(chartW, chartH);
-            cardRetentionTrend.Size = new Size(chartW, chartH);
+            for (int i = 0; i < _charts.Count; i++)
+            {
+                int row = i / 2;
+                int col = i % 2;
+                _charts[i].Location = new Point(col * (chartW + gap), chartsTop + row * (chartH + gap));
+                _charts[i].Size = new Size(chartW, chartH);
+            }
 
             lblLoading.Location = new Point((Width - lblLoading.PreferredWidth) / 2, Height / 2);
         }
@@ -230,42 +400,8 @@ namespace CRM.winforms.Controls
                     return;
                 }
 
-                tileCustomers.Set("Total customers", _data.TotalCustomers.ToString(),
-                    $"{_data.ActiveCustomers} active", AppTheme.Primary, "\uE716");
-
-                tileRetention.Set("Retention rate", $"{_data.RetentionRate:0.#}%",
-                    $"{_data.RepeatCustomerRate:0.#}% repeat buyers", AppTheme.Success, "\uE73E");
-
-                tileChurn.Set("Churn risk", _data.ChurnRisk.ToString(),
-                    $"{_data.OpenInteractions} open interactions", AppTheme.Danger, "\uE7BA");
-
-                tileTurnaround.Set("Avg turnaround", $"{_data.AverageTurnaroundDays:0.#} d",
-                    $"{_data.RepairsCompletedThisMonth} completed this month", AppTheme.Warning, "\uE823");
-
-                cardCustomersOverTime.SetLineData(
-                    _data.CustomersOverTime.Select(p => (p.Label, (double)p.Count)).ToList(),
-                    AppTheme.Primary);
-
-                cardRepairsByStatus.SetBarData(new List<(string, double, Color)>
-                {
-                    ("Pending",     _data.RepairsByStatus.Pending,     AppTheme.Warning),
-                    ("Approved",    _data.RepairsByStatus.Approved,    AppTheme.Primary),
-                    ("In progress", _data.RepairsByStatus.InProgress,  AppTheme.Primary),
-                    ("Completed",   _data.RepairsByStatus.Completed,   AppTheme.Success),
-                    ("Rejected",    _data.RepairsByStatus.Rejected,    AppTheme.Danger),
-                    ("Reassigned",  _data.RepairsByStatus.Reassigned,  AppTheme.TextMuted)
-                });
-
-                cardInteractionsByType.SetDonutData(new List<(string, double, Color)>
-                {
-                    ("Inquiry",   _data.InteractionsByType.Inquiry,   AppTheme.Primary),
-                    ("Complaint", _data.InteractionsByType.Complaint, AppTheme.Danger),
-                    ("Feedback",  _data.InteractionsByType.Feedback,  AppTheme.Success)
-                });
-
-                cardRetentionTrend.SetLineData(
-                    _data.RetentionTrend.Select(p => (p.Label, (double)p.Active)).ToList(),
-                    AppTheme.Success);
+                BindTiles();
+                BindCharts();
             }
             catch (Exception ex)
             {
@@ -281,8 +417,68 @@ namespace CRM.winforms.Controls
             }
         }
 
+        private void BindTiles()
+        {
+            var d = _data!;
+
+            _tiles[0].Set("Total customers", d.TotalCustomers.ToString("N0"),
+                $"{d.ActiveCustomers} active", AppTheme.Primary, "\uE716");
+            _tiles[1].Set("Active customers", d.ActiveCustomers.ToString("N0"),
+                $"{d.NewThisMonth} new this month", AppTheme.Success, "\uE7EE");
+            _tiles[2].Set("Inactive customers", d.InactiveCustomers.ToString("N0"),
+                $"{d.Inactive90Days} idle 90+ days", AppTheme.Danger, "\uE712");
+            _tiles[3].Set("Returning customers", d.ReturningCustomers.ToString("N0"),
+                $"{d.RepeatCustomerRate:0.#}% repeat rate", AppTheme.Warning, "\uE73E");
+            _tiles[4].Set("Total transactions", d.TotalTransactions.ToString("N0"),
+                $"{d.TransactionsThisMonth} this month", AppTheme.Primary, "\uE9D5");
+            _tiles[5].Set("Total sales", $"\u20b1{d.TotalSales:N0}",
+                $"avg \u20b1{d.AverageTransactionValue:N0} / transaction", AppTheme.Success, "\uE8C7");
+            _tiles[6].Set("Top service",
+                d.TopService.Count > 0 ? d.TopService.Name : "\u2014",
+                d.TopService.Count > 0
+                    ? $"{d.TopService.Count} requests \u00b7 \u20b1{d.TopService.Revenue:N0}"
+                    : "No data yet",
+                AppTheme.Warning, "\uE945");
+            _tiles[7].Set("Visit frequency", $"{d.AverageVisitsPerCustomer:0.#}",
+                "avg visits per buying customer", AppTheme.Primary, "\uE823");
+            _tiles[8].Set("Loyalty members", d.LoyaltyMembers.ToString("N0"),
+                $"{d.LoyaltyParticipationRate:0.#}% participation", AppTheme.Primary, "\uE8C7");
+            _tiles[9].Set("Retention rate", $"{d.RetentionRate:0.#}%",
+                $"{d.ChurnRisk} at churn risk", AppTheme.Success, "\uE73E");
+        }
+
+        private void BindCharts()
+        {
+            var d = _data!;
+
+            _salesPoints = d.SalesOverTime.Select(p => (p.Label, (double)p.Sales)).ToList();
+            _transactionsPoints = d.TransactionsOverTime.Select(p => (p.Label, (double)p.Count)).ToList();
+            _activityPoints = d.CustomerActivityTrend
+                .Select(p => (p.Label, (double)(p.Repairs + p.Interactions))).ToList();
+            _retentionPoints = d.RetentionTrend.Select(p => (p.Label, (double)p.Active)).ToList();
+
+            _charts[0].SetLineData(_salesPoints, AppTheme.Success, currency: true);
+            _charts[1].SetLineData(_transactionsPoints, AppTheme.Primary);
+            _charts[2].SetBarData(d.PopularServices
+                .Select((p, i) => (p.Service, (double)p.Count, Palette(i))).ToList(), clickable: true);
+            _charts[3].SetLineData(_activityPoints, AppTheme.Primary);
+            _charts[4].SetBarData(d.LoyaltyPerformance
+                .Select((p, i) => (p.ProgramName, (double)p.Members, Palette(i + 2))).ToList(), clickable: true);
+            _charts[5].SetLineData(_retentionPoints, AppTheme.Success);
+        }
+
+        private static Color Palette(int i) => i switch
+        {
+            0 => AppTheme.Primary,
+            1 => AppTheme.Success,
+            2 => AppTheme.Warning,
+            3 => AppTheme.Danger,
+            4 => Color.FromArgb(0x7C, 0x5C, 0xFC),
+            _ => Color.FromArgb(0x0E, 0x9F, 0x9F)
+        };
+
         // ═══════════════════════════════════════════════════════════════
-        //  KPI TILE — clickable, shows a hover "action" hint
+        //  KPI TILE — clickable
         // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]
@@ -335,7 +531,6 @@ namespace CRM.winforms.Controls
                 using (var bg = new SolidBrush(AppTheme.Background))
                     g.FillRectangle(bg, ClientRectangle);
 
-                // Soft hover tint
                 var body = ClientRectangle;
                 body.Width -= 1;
                 body.Height -= 1;
@@ -349,45 +544,42 @@ namespace CRM.winforms.Controls
 
                 UiKit.Card(g, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
 
-                int pad = UiKit.T.S4;
+                int pad = UiKit.T.S3;
 
-                // Icon chip
-                var iconRect = new Rectangle(pad, pad, 36, 36);
+                var iconRect = new Rectangle(pad, pad, 30, 30);
                 UiKit.FillRounded(g, iconRect, 8, UiKit.Wash(_accent));
 
-                using (var f = UiKit.GlyphFont(13F))
+                using (var f = UiKit.GlyphFont(12F))
                     UiKit.Text(g, _glyph, f, _accent, iconRect, UiKit.Center);
 
-                // Label
                 UiKit.Text(g, _label, UiKit.T.Small, UiKit.T.InkMuted,
-                    new Rectangle(pad + 48, pad + 4, Width - pad * 2 - 48, 20),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                    new Rectangle(pad + 38, pad + 2, Width - pad * 2 - 38, 30),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-                // Number
-                using (var f = new Font("Segoe UI Semibold", 22F))
-                    UiKit.Text(g, _number, f, UiKit.T.Ink,
-                        new Rectangle(pad, pad + 44, Width - pad * 2, 34),
-                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                var numFont = _number.Length > 10 ? UiKit.T.Section
+                            : _number.Length > 7 ? new Font("Segoe UI Semibold", 15F)
+                            : new Font("Segoe UI Semibold", 18F);
+                UiKit.Text(g, _number, numFont, UiKit.T.Ink,
+                    new Rectangle(pad, pad + 34, Width - pad * 2, 30),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-                // Sub
-                UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkFaint,
-                    new Rectangle(pad, pad + 78, Width - pad * 2, 18),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                UiKit.Text(g, _sub, UiKit.Micro, UiKit.T.InkFaint,
+                    new Rectangle(pad, pad + 64, Width - pad * 2, 26),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-                // Hint on hover
                 if (_hover)
                 {
-                    var hint = new Rectangle(Width - 26, Height - 24, 16, 16);
+                    var hint = new Rectangle(Width - 24, Height - 22, 14, 14);
                     UiKit.Text(g, "\uE72A", UiKit.T.Glyph, _accent, hint, UiKit.Center);
                 }
             }
         }
 
         // ═══════════════════════════════════════════════════════════════
-        //  CHART CARD — unchanged
+        //  CHART CARD — hover tooltip + clickable data points
         // ═══════════════════════════════════════════════════════════════
 
-        private enum ChartKind { Line, Bar, Donut }
+        private enum ChartKind { Line, Bar }
 
         [DesignerCategory("Code")]
         private sealed class ChartCard : Control
@@ -397,8 +589,16 @@ namespace CRM.winforms.Controls
 
             private List<(string Label, double Value)> _lineData = new();
             private List<(string Label, double Value, Color Color)> _barData = new();
-            private List<(string Label, double Value, Color Color)> _donutData = new();
             private Color _lineColor = AppTheme.Primary;
+            private bool _clickableBars;
+            private bool _currency;
+
+            private readonly List<(Rectangle Hit, string Label, string Value)> _hits = new();
+            private int _hoverIndex = -1;
+            private string? _selectedLabel;
+
+            /// <summary>Raised with the label of the clicked data point.</summary>
+            public event Action<string>? PointClicked;
 
             public ChartCard(string title, ChartKind kind)
             {
@@ -410,23 +610,61 @@ namespace CRM.winforms.Controls
                 BackColor = AppTheme.Background;
             }
 
-            public void SetLineData(List<(string, double)> data, Color color)
+            public void SetLineData(List<(string, double)> data, Color color, bool currency = false)
             {
                 _lineData = data;
                 _lineColor = color;
+                _currency = currency;
+                _selectedLabel = null;
                 Invalidate();
             }
 
-            public void SetBarData(List<(string, double, Color)> data)
+            public void SetBarData(List<(string, double, Color)> data, bool clickable = false)
             {
                 _barData = data;
+                _clickableBars = clickable;
+                _selectedLabel = null;
                 Invalidate();
             }
 
-            public void SetDonutData(List<(string, double, Color)> data)
+            protected override void OnMouseMove(MouseEventArgs e)
             {
-                _donutData = data;
+                base.OnMouseMove(e);
+                int idx = _hits.FindIndex(h => h.Hit.Contains(e.Location));
+                if (idx != _hoverIndex)
+                {
+                    _hoverIndex = idx;
+                    Invalidate();
+                }
+                Cursor = idx >= 0 ? Cursors.Hand : Cursors.Default;
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                base.OnMouseLeave(e);
+                _hoverIndex = -1;
                 Invalidate();
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                base.OnMouseClick(e);
+
+                var hit = _hits.FirstOrDefault(h => h.Hit.Contains(e.Location));
+                if (hit.Hit != Rectangle.Empty)
+                {
+                    _selectedLabel = hit.Label;
+                    PointClicked?.Invoke(hit.Label);
+                    return;
+                }
+
+                // Click elsewhere on the card → drill into the selected / latest point.
+                var label = _selectedLabel
+                    ?? (_kind == ChartKind.Line
+                        ? (_lineData.Count > 0 ? _lineData[^1].Label : null)
+                        : (_barData.Count > 0 ? _barData[0].Label : null));
+                if (!string.IsNullOrEmpty(label))
+                    PointClicked?.Invoke(label!);
             }
 
             protected override void OnPaint(PaintEventArgs e)
@@ -442,22 +680,37 @@ namespace CRM.winforms.Controls
                 int pad = UiKit.T.S4;
 
                 UiKit.Text(g, _title, UiKit.T.Section, UiKit.T.Ink,
-                    new Rectangle(pad, pad, Width - pad * 2, 22),
+                    new Rectangle(pad, pad, Width - pad * 2 - 116, 22),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
-                var plot = new Rectangle(
-                    pad,
-                    pad + 30,
-                    Width - pad * 2,
-                    Height - pad * 2 - 30);
+                UiKit.Text(g, "\uE72A click a point", UiKit.Micro, UiKit.T.InkFaint,
+                    new Rectangle(Width - 130, pad, 114, 20),
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
-                switch (_kind)
+                var plot = new Rectangle(pad, pad + 28, Width - pad * 2, Height - pad * 2 - 28);
+
+                _hits.Clear();
+
+                if (_kind == ChartKind.Line) DrawLine(g, plot);
+                else DrawBar(g, plot);
+
+                if (_hoverIndex >= 0 && _hoverIndex < _hits.Count)
                 {
-                    case ChartKind.Line: DrawLine(g, plot); break;
-                    case ChartKind.Bar: DrawBar(g, plot); break;
-                    case ChartKind.Donut: DrawDonut(g, plot); break;
+                    var (_, label, value) = _hits[_hoverIndex];
+                    var text = $"{label}:  {value}";
+                    var size = UiKit.Measure(text, UiKit.T.SmallStrong);
+                    var tip = new Rectangle(
+                        Math.Min(Width - size.Width - 18, _hits[_hoverIndex].Hit.X),
+                        Math.Max(0, _hits[_hoverIndex].Hit.Y - 30),
+                        size.Width + 14, 24);
+                    UiKit.FillRounded(g, tip, 6, UiKit.T.Ink);
+                    UiKit.Text(g, text, UiKit.T.SmallStrong, Color.White, tip, UiKit.Center);
                 }
             }
+
+            private string FormatValue(double v) => _currency
+                ? $"\u20b1{v:N0}"
+                : v % 1 == 0 ? $"{v:N0}" : $"{v:0.##}";
 
             private void DrawLine(Graphics g, Rectangle plot)
             {
@@ -465,7 +718,6 @@ namespace CRM.winforms.Controls
 
                 int labelH = 20;
                 int chartH = plot.Height - labelH;
-
                 double max = Math.Max(1, _lineData.Max(p => p.Value));
 
                 int n = _lineData.Count;
@@ -495,16 +747,30 @@ namespace CRM.winforms.Controls
                     g.DrawLines(pen, points);
                 }
 
-                foreach (var p in points)
-                    UiKit.Dot(g, p.X, p.Y, 7, _lineColor);
+                for (int i = 0; i < n; i++)
+                {
+                    bool hot = i == _hoverIndex || _lineData[i].Label == _selectedLabel;
+                    int dotSize = hot ? 11 : 7;
+
+                    UiKit.Dot(g, points[i].X, points[i].Y, dotSize, _lineColor);
+
+                    if (hot)
+                    {
+                        using var halo = new Pen(UiKit.Wash(_lineColor), 2f);
+                        g.DrawEllipse(halo, points[i].X - dotSize - 2, points[i].Y - dotSize - 2,
+                            (dotSize + 2) * 2f, (dotSize + 2) * 2f);
+                    }
+
+                    _hits.Add((
+                        new Rectangle((int)points[i].X - 14, (int)points[i].Y - 14, 28, 28),
+                        _lineData[i].Label,
+                        FormatValue(_lineData[i].Value)));
+                }
 
                 int step = Math.Max(1, n / 6);
                 for (int i = 0; i < n; i += step)
                 {
-                    var r = new Rectangle(
-                        (int)(points[i].X - 30),
-                        plot.Top + chartH + 2,
-                        60, labelH);
+                    var r = new Rectangle((int)(points[i].X - 30), plot.Top + chartH + 2, 60, labelH);
                     UiKit.Text(g, _lineData[i].Label, UiKit.T.Small, UiKit.T.InkFaint, r, UiKit.Center);
                 }
             }
@@ -515,79 +781,33 @@ namespace CRM.winforms.Controls
 
                 double max = Math.Max(1, _barData.Max(b => b.Value));
                 int gap = 10;
-                int barW = (plot.Width - gap * (_barData.Count - 1)) / _barData.Count;
+                int barW = Math.Max(8, (plot.Width - gap * (_barData.Count - 1)) / _barData.Count);
+                int labelH = 18;
 
                 for (int i = 0; i < _barData.Count; i++)
                 {
                     var (label, value, color) = _barData[i];
 
                     int x = plot.Left + i * (barW + gap);
-                    int h = (int)(value / max * (plot.Height - 40));
-                    if (h < 3) h = 3;
+                    int h = Math.Max(3, (int)(value / max * (plot.Height - labelH - 24)));
+                    var bar = new Rectangle(x, plot.Bottom - h - labelH, barW, h);
 
-                    var bar = new Rectangle(x, plot.Bottom - h - 20, barW, h);
-                    UiKit.FillRounded(g, bar, 6, UiKit.Wash(color));
+                    bool hot = i == _hoverIndex || label == _selectedLabel;
 
-                    UiKit.Text(g, ((int)value).ToString(), UiKit.T.SmallStrong, color,
-                        new Rectangle(x, bar.Top - 18, barW, 16), UiKit.Center);
+                    UiKit.FillRounded(g, bar, 6, hot ? color : UiKit.Wash(color));
+                    if (label == _selectedLabel)
+                        UiKit.StrokeRounded(g, bar, 6, color, 1.6f);
 
-                    UiKit.Text(g, label, UiKit.T.Small, UiKit.T.InkMuted,
-                        new Rectangle(x, plot.Bottom - 18, barW, 16),
-                        TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
-                }
-            }
+                    var valueText = FormatValue(value);
+                    UiKit.Text(g, valueText, UiKit.Micro, hot ? color : UiKit.T.InkMuted,
+                        new Rectangle(x - 6, bar.Top - 16, barW + 12, 14), UiKit.Center);
 
-            private void DrawDonut(Graphics g, Rectangle plot)
-            {
-                if (_donutData.Count == 0) { DrawEmpty(g, plot); return; }
+                    UiKit.Text(g, label, UiKit.Micro, UiKit.T.InkMuted,
+                        new Rectangle(x - 8, plot.Bottom - labelH, barW + 16, labelH),
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.EndEllipsis);
 
-                double total = _donutData.Sum(d => d.Value);
-                if (total <= 0) { DrawEmpty(g, plot); return; }
-
-                int size = Math.Min(plot.Height - 30, plot.Width / 2);
-                int cx = plot.Left + plot.Width / 4;
-                int cy = plot.Top + plot.Height / 2;
-                var circle = new Rectangle(cx - size / 2, cy - size / 2, size, size);
-
-                float start = -90;
-
-                foreach (var (label, value, color) in _donutData)
-                {
-                    float sweep = (float)(value / total * 360);
-
-                    using (var b = new SolidBrush(color))
-                        g.FillPie(b, circle, start, sweep);
-
-                    start += sweep;
-                }
-
-                int holeSize = size / 2;
-                var hole = new Rectangle(cx - holeSize / 2, cy - holeSize / 2, holeSize, holeSize);
-                using (var b = new SolidBrush(UiKit.T.Surface))
-                    g.FillEllipse(b, hole);
-
-                using (var f = new Font("Segoe UI Semibold", 16F))
-                    UiKit.Text(g, ((int)total).ToString(), f, UiKit.T.Ink,
-                        new Rectangle(cx - 40, cy - 16, 80, 32), UiKit.Center);
-
-                int legendX = plot.Left + plot.Width / 2 + 20;
-                int legendY = cy - (_donutData.Count * 26) / 2;
-
-                for (int i = 0; i < _donutData.Count; i++)
-                {
-                    var (label, value, color) = _donutData[i];
-                    int y = legendY + i * 26;
-
-                    UiKit.Dot(g, legendX + 6, y + 10, 9, color);
-
-                    UiKit.Text(g, label, UiKit.T.Body, UiKit.T.Ink,
-                        new Rectangle(legendX + 20, y, plot.Right - legendX - 20, 20),
-                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-
-                    var pct = total > 0 ? value / total * 100 : 0;
-                    UiKit.Text(g, $"{value:0} ({pct:0.#}%)", UiKit.T.Small, UiKit.T.InkMuted,
-                        new Rectangle(legendX + 20, y + 2, plot.Right - legendX - 20, 20),
-                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                    if (_clickableBars)
+                        _hits.Add((new Rectangle(x, bar.Top - 18, barW, h + labelH + 18), label, valueText));
                 }
             }
 

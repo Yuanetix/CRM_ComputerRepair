@@ -1,4 +1,7 @@
 ﻿using CRM_ComputerRepair.api.Dtos;
+using CRM_ComputerRepair.api.Services;
+using CRM_ComputerRepair.domain.Entities;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CRM_ComputerRepair.api.Controllers;
@@ -7,44 +10,50 @@ namespace CRM_ComputerRepair.api.Controllers;
 [Route("auth")]
 public class AuthController : ControllerBase
 {
-    private static readonly Dictionary<string, DemoUser> Users = new(StringComparer.OrdinalIgnoreCase)
+    private readonly UserManager<User> _users;
+    private readonly JwtTokenService _jwt;
+
+    public AuthController(UserManager<User> users, JwtTokenService jwt)
     {
-        ["superadmin"] = new("superadmin", "Super Admin", "Super Admin", "admin@fixory.local", "SuperAdmin@123", 1),
-        ["admin"] = new("admin", "Admin User", "Admin", "admin.user@fixory.local", "Admin@123", 1),
-        ["manager"] = new("manager", "Manager User", "Manager", "manager@fixory.local", "Manager@123", 1),
-        ["staff"] = new("staff", "Juan Dela Cruz", "Staff", "staff@fixory.local", "Staff@123", 1),
-    };
+        _users = users;
+        _jwt = jwt;
+    }
 
     [HttpPost("login")]
-    public IActionResult Login([FromBody] LoginRequest request)
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
-        if (!Users.TryGetValue(request.Username, out var user) ||
-            user.Password != request.Password)
+        var user = await _users.FindByNameAsync(request.Username.Trim());
+        if (user is null)
+            return Unauthorized(new { error = "Invalid username or password." });
+
+        var passwordOk = await _users.CheckPasswordAsync(user, request.Password);
+        if (!passwordOk)
         {
+            await _users.AccessFailedAsync(user);
             return Unauthorized(new { error = "Invalid username or password." });
         }
 
+        if (!user.IsActive)
+            return Unauthorized(new { error = "This account has been deactivated. Contact your administrator." });
+
+        await _users.ResetAccessFailedCountAsync(user);
+
+        var roles = await _users.GetRolesAsync(user);
+        var role = roles.FirstOrDefault() ?? "Staff";
+
+        var token = _jwt.CreateToken(user, roles);
+
         return Ok(new LoginResponse
         {
-            UserId = user.UserId,
-            Username = user.Username,
-            FullName = user.FullName,
-            Role = user.Role,
-            Email = user.Email,
-            CompanyId = user.CompanyId
+            UserId = user.Id,
+            Username = user.UserName ?? string.Empty,
+            FullName = $"{user.FirstName} {user.LastName}".Trim(),
+            Role = role,
+            Email = user.Email ?? string.Empty,
+            CompanyId = 1,
+            Token = token
         });
     }
-}
-
-public record DemoUser(
-    string UserId,
-    string FullName,
-    string Role,
-    string Email,
-    string Password,
-    int CompanyId)
-{
-    public string Username => UserId;
 }

@@ -12,6 +12,7 @@
         public static string Email { get; set; } = "";
         public static string Role { get; set; } = "";
         public static int CompanyId { get; set; } = 1;
+        public static string Token { get; set; } = "";
 
         public static bool IsAuthenticated => !string.IsNullOrEmpty(UserId);
 
@@ -23,6 +24,7 @@
             Email = "";
             Role = "";
             CompanyId = 1;
+            Token = "";
         }
     }
 }

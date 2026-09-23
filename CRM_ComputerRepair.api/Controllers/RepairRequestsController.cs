@@ -1,4 +1,5 @@
-﻿using CRM_ComputerRepair.api.Dtos;
+using Microsoft.AspNetCore.Authorization;
+using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
@@ -9,6 +10,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("tenant/{companyId:int}/repair-requests")]
+[Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
 public class RepairRequestsController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
@@ -20,7 +22,7 @@ public class RepairRequestsController : ControllerBase
         _audit = audit;
     }
 
-    // ─── GET ALL ───
+    // --- GET ALL ---
     [HttpGet]
     public async Task<IActionResult> GetAll(
         int companyId, [FromQuery] RepairStatus? status)
@@ -35,7 +37,7 @@ public class RepairRequestsController : ControllerBase
         return Ok(list);
     }
 
-    // ─── GET ONE ───
+    // --- GET ONE ---
     [HttpGet("{repairRequestId:int}")]
     public async Task<IActionResult> GetById(int companyId, int repairRequestId)
     {
@@ -45,7 +47,7 @@ public class RepairRequestsController : ControllerBase
         return item is null ? NotFound() : Ok(item);
     }
 
-    // ─── CREATE ───
+    // --- CREATE ---
     [HttpPost]
     public async Task<IActionResult> Create(
         int companyId, [FromBody] CreateRepairRequestRequest request)
@@ -80,7 +82,7 @@ public class RepairRequestsController : ControllerBase
             new { companyId, repairRequestId = rr.RepairRequestId }, rr);
     }
 
-    // ─── UPDATE ───
+    // --- UPDATE ---
     [HttpPut("{repairRequestId:int}")]
     public async Task<IActionResult> Update(
         int companyId, int repairRequestId,
@@ -130,10 +132,10 @@ public class RepairRequestsController : ControllerBase
 
         await db.SaveChangesAsync();
 
-        // ─── Audit row ───
+        // --- Audit row ---
         var actor = changedByUserId ?? UserSessionHelper.GetUserId(HttpContext);
         var details = oldStatus != item.Status
-            ? $"{item.RequestNumber}: {oldStatus} → {item.Status}"
+            ? $"{item.RequestNumber}: {oldStatus} ? {item.Status}"
             : $"{item.RequestNumber}: updated";
 
         await _audit.WriteAsync(
@@ -141,6 +143,103 @@ public class RepairRequestsController : ControllerBase
             "Update", "RepairRequest",
             item.RepairRequestId.ToString(),
             details);
+
+        return Ok(item);
+    }
+
+    // --- APPROVE (Manager+) ---
+    [HttpPost("{repairRequestId:int}/approve")]
+    [Authorize(Roles = "Manager,Admin,Super Admin")]
+    public async Task<IActionResult> Approve(
+        int companyId, int repairRequestId,
+        [FromBody] ApproveRepairRequestRequest request,
+        [FromQuery] string? managerUserId = null)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        await using var db = await _factory.CreateAsync(companyId);
+
+        var item = await db.RepairRequests
+            .FirstOrDefaultAsync(x => x.RepairRequestId == repairRequestId);
+
+        if (item is null) return NotFound();
+
+        if (item.Status != RepairStatus.Pending)
+            return BadRequest(new { message =
+                $"Cannot approve: request is {item.Status}. Only pending requests can be approved." });
+
+        var oldStatus = item.Status;
+
+        item.Status = RepairStatus.Approved;
+        item.AssignedToManagerId = managerUserId ?? UserSessionHelper.GetUserId(HttpContext);
+        if (!string.IsNullOrWhiteSpace(request.AssignedToStaffId))
+            item.AssignedToStaffId = request.AssignedToStaffId.Trim();
+        if (request.EstimatedCost.HasValue)
+            item.EstimatedCost = request.EstimatedCost;
+        if (!string.IsNullOrWhiteSpace(request.ManagerNotes))
+            item.TechnicianNotes = request.ManagerNotes.Trim();
+
+        db.RepairStatusHistories.Add(new RepairStatusHistory
+        {
+            RepairRequestId = item.RepairRequestId,
+            OldStatus = oldStatus,
+            NewStatus = item.Status,
+            ChangedByUserId = managerUserId ?? UserSessionHelper.GetUserId(HttpContext),
+            ChangedAt = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync();
+
+        await _audit.WriteAsync(
+            managerUserId ?? UserSessionHelper.GetUserId(HttpContext),
+            "Approve", "RepairRequest",
+            item.RepairRequestId.ToString(),
+            $"{item.RequestNumber}: {oldStatus} ? {item.Status}");
+
+        return Ok(item);
+    }
+
+    // --- REASSIGN (Manager+) ---
+    [HttpPost("{repairRequestId:int}/reassign")]
+    [Authorize(Roles = "Manager,Admin,Super Admin")]
+    public async Task<IActionResult> Reassign(
+        int companyId, int repairRequestId,
+        [FromBody] ReassignRepairRequestRequest request,
+        [FromQuery] string? managerUserId = null)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        await using var db = await _factory.CreateAsync(companyId);
+
+        var item = await db.RepairRequests
+            .FirstOrDefaultAsync(x => x.RepairRequestId == repairRequestId);
+
+        if (item is null) return NotFound();
+
+        var oldStatus = item.Status;
+
+        item.AssignedToStaffId = request.AssignedToStaffId.Trim();
+        item.Status = RepairStatus.Reassigned;
+
+        if (!string.IsNullOrWhiteSpace(request.Notes))
+            item.TechnicianNotes = request.Notes.Trim();
+
+        db.RepairStatusHistories.Add(new RepairStatusHistory
+        {
+            RepairRequestId = item.RepairRequestId,
+            OldStatus = oldStatus,
+            NewStatus = item.Status,
+            ChangedByUserId = managerUserId ?? UserSessionHelper.GetUserId(HttpContext),
+            ChangedAt = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync();
+
+        await _audit.WriteAsync(
+            managerUserId ?? UserSessionHelper.GetUserId(HttpContext),
+            "Reassign", "RepairRequest",
+            item.RepairRequestId.ToString(),
+            $"{item.RequestNumber}: reassigned to {request.AssignedToStaffId}");
 
         return Ok(item);
     }

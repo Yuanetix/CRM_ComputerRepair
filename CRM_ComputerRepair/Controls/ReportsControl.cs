@@ -28,6 +28,11 @@ namespace CRM.winforms.Controls
         private List<CustomerDto> _customers = new();
         private List<RepairRequestDto> _repairs = new();
         private List<InteractionDto> _interactions = new();
+        private List<RetentionRecommendationDto> _retention = new();
+        private List<CustomerVisitDto> _visits = new();
+        private List<LoyaltyMemberDetailDto> _loyaltyMembers = new();
+        private AnalyticsDetailsDto? _salesDetails;
+        private AnalyticsDetailsDto? _servicesDetails;
 
         // ═══════════ CONTROLS ═══════════
 
@@ -102,6 +107,10 @@ namespace CRM.winforms.Controls
             _tabs.Add(new TabButton("Customers", ReportType.Customers));
             _tabs.Add(new TabButton("Repairs", ReportType.Repairs));
             _tabs.Add(new TabButton("Interactions", ReportType.Interactions));
+            _tabs.Add(new TabButton("Sales", ReportType.Sales));
+            _tabs.Add(new TabButton("Services", ReportType.Services));
+            _tabs.Add(new TabButton("Loyalty", ReportType.Loyalty));
+            _tabs.Add(new TabButton("Retention", ReportType.Retention));
 
             foreach (var tab in _tabs)
             {
@@ -191,6 +200,10 @@ namespace CRM.winforms.Controls
                 ReportType.Customers => "Customer report",
                 ReportType.Repairs => "Repair report",
                 ReportType.Interactions => "Interaction report",
+                ReportType.Sales => "Sales report",
+                ReportType.Services => "Service report",
+                ReportType.Loyalty => "Loyalty program report",
+                ReportType.Retention => "Retention report",
                 _ => "Report"
             };
 
@@ -199,6 +212,10 @@ namespace CRM.winforms.Controls
                 ReportType.Customers => "Search by name, email, phone...",
                 ReportType.Repairs => "Search by request #, device, issue...",
                 ReportType.Interactions => "Search by subject, notes...",
+                ReportType.Sales => "Search by request #, method, reference...",
+                ReportType.Services => "Search by service...",
+                ReportType.Loyalty => "Search by customer or program...",
+                ReportType.Retention => "Search by customer or basis...",
                 _ => "Search..."
             };
 
@@ -289,6 +306,13 @@ namespace CRM.winforms.Controls
                 _repairs = await _api.GetRepairRequestsAsync();
                 _interactions = await _api.GetInteractionsAsync(null, includeArchived: true);
 
+                // BI report sources (database-driven)
+                _salesDetails = await _api.GetAnalyticsDetailsAsync("sales", from, to);
+                _servicesDetails = await _api.GetAnalyticsDetailsAsync("services");
+                _loyaltyMembers = await _api.GetLoyaltyMembersAsync();
+                _retention = await _api.GetRetentionRecommendationsAsync();
+                _visits = await _api.GetCustomerVisitsAsync();
+
                 // Apply date filter on load data
                 _customers = _customers.Where(c => c.CreatedAt >= from && c.CreatedAt <= to).ToList();
                 _repairs = _repairs.Where(r => r.RequestDate >= from && r.RequestDate <= to).ToList();
@@ -353,7 +377,129 @@ namespace CRM.winforms.Controls
                         ShowEmpty(view.Count == 0);
                         break;
                     }
+
+                case ReportType.Sales:
+                    {
+                        var rows = FilterDetails(_salesDetails, term, new[]
+                            { "requestNumber", "customer", "service", "method", "reference" });
+                        dgv.DataSource = null;
+                        BindGenericDetails(rows, _salesDetails);
+                        lblCount.Text = $"{rows.Count} payment{(rows.Count == 1 ? "" : "s")}";
+                        ShowEmpty(rows.Count == 0);
+                        break;
+                    }
+
+                case ReportType.Services:
+                    {
+                        var rows = FilterDetails(_servicesDetails, term, new[] { "service" });
+                        dgv.DataSource = null;
+                        BindGenericDetails(rows, _servicesDetails);
+                        lblCount.Text = $"{rows.Count} service{(rows.Count == 1 ? "" : "s")}";
+                        ShowEmpty(rows.Count == 0);
+                        break;
+                    }
+
+                case ReportType.Loyalty:
+                    {
+                        var view = _loyaltyMembers
+                            .Where(m => string.IsNullOrEmpty(term) ||
+                                m.CustomerName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                                m.ProgramName.Contains(term, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        dgv.DataSource = null;
+                        dgv.DataSource = view;
+                        ConfigureLoyaltyColumns();
+                        lblCount.Text = $"{view.Count} member{(view.Count == 1 ? "" : "s")}";
+                        ShowEmpty(view.Count == 0);
+                        break;
+                    }
+
+                case ReportType.Retention:
+                    {
+                        var view = _retention
+                            .Where(r => string.IsNullOrEmpty(term) ||
+                                r.CustomerName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                                (r.Basis ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                                r.Category.Contains(term, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        dgv.DataSource = null;
+                        dgv.DataSource = view;
+                        ConfigureRetentionColumns();
+                        lblCount.Text = $"{view.Count} recommendation{(view.Count == 1 ? "" : "s")}";
+                        ShowEmpty(view.Count == 0);
+                        break;
+                    }
             }
+        }
+
+        /// <summary>Client-side term filter over the generic details rows.</summary>
+        private static List<Dictionary<string, object?>> FilterDetails(
+            AnalyticsDetailsDto? details, string term, string[] searchKeys)
+        {
+            if (details == null) return new List<Dictionary<string, object?>>();
+
+            if (string.IsNullOrEmpty(term)) return details.Rows;
+
+            return details.Rows.Where(r => searchKeys.Any(k =>
+                r.TryGetValue(k, out var v) &&
+                (v?.ToString() ?? "").Contains(term, StringComparison.OrdinalIgnoreCase))).ToList();
+        }
+
+        private void BindGenericDetails(
+            List<Dictionary<string, object?>> rows, AnalyticsDetailsDto? details)
+        {
+            if (details == null) { ShowEmpty(true); return; }
+
+            dgv.Columns.Clear();
+
+            foreach (var col in details.Columns)
+            {
+                var c = new DataGridViewTextBoxColumn
+                {
+                    Name = col.Key,
+                    HeaderText = col.Label,
+                    SortMode = DataGridViewColumnSortMode.Automatic
+                };
+                if (col.Type == "currency") c.DefaultCellStyle.Format = "N2";
+                else if (col.Type == "date") c.DefaultCellStyle.Format = "MMM d, yyyy";
+                dgv.Columns.Add(c);
+            }
+
+            foreach (var row in rows)
+            {
+                var cells = new object?[details.Columns.Count];
+                for (int i = 0; i < details.Columns.Count; i++)
+                    cells[i] = row.TryGetValue(details.Columns[i].Key, out var v) ? v : null;
+                dgv.Rows.Add(cells);
+            }
+        }
+
+        private void ConfigureLoyaltyColumns()
+        {
+            HideColumns("CustomerId", "CustomerLoyaltyAccountId");
+
+            ShowColumn("CustomerName", "Customer", 200);
+            ShowColumn("ProgramName", "Program", 180);
+            ShowColumn("Points", "Points", 90);
+            ShowColumn("JoinedDate", "Joined", 120, format: "MMM d, yyyy");
+            ShowColumn("TotalSpent", "Total spent", 120, format: "N2");
+            ShowColumn("IsActive", "Active", 80);
+        }
+
+        private void ConfigureRetentionColumns()
+        {
+            HideColumns("CustomerId", "Email", "Phone", "LoyaltyProgramId",
+                "TransactionCount", "Points", "CategoryDisplay", "LastVisitDisplay", "SpentDisplay");
+
+            ShowColumn("CustomerName", "Customer", 170);
+            ShowColumn("Category", "Type", 110);
+            ShowColumn("Action", "Recommended action", 180);
+            ShowColumn("Basis", "Basis (why)", 0, fill: true);
+            ShowColumn("Reward", "Reward", 170);
+            ShowColumn("TotalSpent", "Total spent", 100, format: "N2");
+            ShowColumn("DaysSinceLastTransaction", "Last visit", 90);
         }
 
         private void ShowEmpty(bool empty)
@@ -423,6 +569,30 @@ namespace CRM.winforms.Controls
                         sb.AppendLine("ID,Type,Subject,Status,Priority,Created,Closed");
                         foreach (var i in _interactions)
                             sb.AppendLine($"{i.CustomerInteractionId},{i.TypeText},\"{i.Subject}\",{i.StatusText},{i.PriorityText},{i.InteractionDate:yyyy-MM-dd},{(i.ClosedAt?.ToString("yyyy-MM-dd") ?? "")}");
+                        break;
+
+                    case ReportType.Sales:
+                        sb.AppendLine("Request #,Customer,Service,Paid On,Method,Reference,Amount");
+                        foreach (var row in FilterDetails(_salesDetails, search.Inner.Text?.Trim() ?? "", new[] { "requestNumber", "customer", "service", "method", "reference" }))
+                            sb.AppendLine($"\"{Val(row, "requestNumber")}\",\"{Val(row, "customer")}\",\"{Val(row, "service")}\",{Val(row, "paidOn")},\"{Val(row, "method")}\",\"{Val(row, "reference")}\",{Val(row, "amount")}");
+                        break;
+
+                    case ReportType.Services:
+                        sb.AppendLine("Service,Requests,Revenue,Avg Value,Last Request");
+                        foreach (var row in _servicesDetails?.Rows ?? new List<Dictionary<string, object?>>())
+                            sb.AppendLine($"\"{Val(row, "service")}\",{Val(row, "count")},{Val(row, "revenue")},{Val(row, "avgValue")},{Val(row, "lastRequest")}");
+                        break;
+
+                    case ReportType.Loyalty:
+                        sb.AppendLine("Customer,Program,Points,Joined,Total Spent,Active");
+                        foreach (var m in _loyaltyMembers)
+                            sb.AppendLine($"\"{m.CustomerName}\",\"{m.ProgramName}\",{m.Points},{m.JoinedDate:yyyy-MM-dd},{m.TotalSpent},{(m.IsActive ? "Yes" : "No")}");
+                        break;
+
+                    case ReportType.Retention:
+                        sb.AppendLine("Customer,Type,Action,Basis,Reward,Total Spent,Days Since Last Visit");
+                        foreach (var r in _retention)
+                            sb.AppendLine($"\"{r.CustomerName}\",{r.Category},\"{r.Action}\",\"{r.Basis}\",\"{r.Reward}\",{r.TotalSpent},{r.DaysSinceLastTransaction}");
                         break;
                 }
 
@@ -554,7 +724,10 @@ namespace CRM.winforms.Controls
         //  SUPPORTING CONTROLS
         // ═══════════════════════════════════════════════════════════════
 
-        private enum ReportType { Customers, Repairs, Interactions }
+        private enum ReportType { Customers, Repairs, Interactions, Sales, Services, Loyalty, Retention }
+
+        private static string Val(Dictionary<string, object?> row, string key) =>
+            row.TryGetValue(key, out var v) ? (v?.ToString() ?? "") : "";
 
         [DesignerCategory("Code")]
         private sealed class SurfaceCard : Panel

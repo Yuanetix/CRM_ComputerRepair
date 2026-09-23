@@ -1,4 +1,5 @@
-﻿using CRM_ComputerRepair.api.Dtos;
+using Microsoft.AspNetCore.Authorization;
+using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -8,6 +9,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("admin-accounts")]
+[Authorize(Roles = "Super Admin")]
 public class AdminAccountsController : ControllerBase
 {
     private readonly UserManager<User> _users;

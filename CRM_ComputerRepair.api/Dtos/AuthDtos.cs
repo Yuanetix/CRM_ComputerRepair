@@ -20,5 +20,6 @@ public class LoginResponse
     public string FullName { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
-    public int CompanyId { get; set; }
+    public int CompanyId { get; set; } = 1;
+    public string Token { get; set; } = string.Empty;
 }

@@ -74,3 +74,25 @@ public class UpdateRepairRequestRequest
     [MaxLength(450)]
     public string? AssignedToManagerId { get; set; }
 }
+
+public class ApproveRepairRequestRequest
+{
+    [MaxLength(450)]
+    public string? AssignedToStaffId { get; set; }
+
+    [Range(0, double.MaxValue)]
+    public decimal? EstimatedCost { get; set; }
+
+    [MaxLength(2000)]
+    public string? ManagerNotes { get; set; }
+}
+
+public class ReassignRepairRequestRequest
+{
+    [Required(ErrorMessage = "Assigned technician (staff id) is required.")]
+    [MaxLength(450)]
+    public string AssignedToStaffId { get; set; } = string.Empty;
+
+    [MaxLength(2000)]
+    public string? Notes { get; set; }
+}
