@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CRM.winforms
@@ -24,25 +25,46 @@ namespace CRM.winforms
                     (msg, cert, chain, errors) => true
             };
 
-            _http = new HttpClient(handler)
+            _http = new HttpClient(new SessionAuthHandler(handler))
             {
                 BaseAddress = new Uri(BaseUrl)
             };
-
-            // Forward the acting user to the API so audit rows are attributed.
-            if (!string.IsNullOrWhiteSpace(UserSession.Username))
-                _http.DefaultRequestHeaders.Add("X-User-Id", UserSession.Username);
-
-            // Authenticate with the signed JWT issued at login (server-side RBAC).
-            if (!string.IsNullOrWhiteSpace(UserSession.Token))
-                _http.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue(
-                        "Bearer", UserSession.Token);
 
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             };
+        }
+
+        /// <summary>
+        /// Attaches the *current* session's JWT and user id to every request.
+        /// ApiClient instances are cached per control/form, so credentials must
+        /// be resolved per request — not captured in the constructor — otherwise
+        /// a stale (or empty) token from a previous session is reused after
+        /// logout and a new sign-in.
+        /// </summary>
+        private sealed class SessionAuthHandler : DelegatingHandler
+        {
+            public SessionAuthHandler(HttpMessageHandler inner) : base(inner) { }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                if (!string.IsNullOrWhiteSpace(UserSession.Token))
+                {
+                    request.Headers.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue(
+                            "Bearer", UserSession.Token);
+                }
+
+                if (!string.IsNullOrWhiteSpace(UserSession.Username))
+                {
+                    request.Headers.Remove("X-User-Id");
+                    request.Headers.Add("X-User-Id", UserSession.Username);
+                }
+
+                return base.SendAsync(request, cancellationToken);
+            }
         }
 
         // ═══════════════════════════════════════════════════════

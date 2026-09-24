@@ -3,6 +3,7 @@ using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Threading.Tasks;
 
@@ -19,8 +20,37 @@ namespace CRM.winforms.Auth
         private const int FormW = 1100;
         private const int FormH = 700;
         private const int BrandPanelW = 495;
+        private const int BrandPad = 56;         // left/right margin of every brand-panel text
         private const int FormColW = 420;
-        private const int FormPad = 8;        // inner left/right margin for the form column
+        private const int FormPad = 8;           // inner left/right margin for the form column
+        private const int FieldH = 52;           // input + button height
+        private const int TextInset = 12;        // space between the input border and the typed text
+
+        // ─────────────────────────────────────────────
+        //  Native: real left/right text margin inside a TextBox
+        //  (TextBox ignores Padding/Margin, this is the supported way)
+        // ─────────────────────────────────────────────
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        private const int EM_SETMARGINS = 0xD3;
+        private const int EC_LEFTMARGIN = 0x1;
+        private const int EC_RIGHTMARGIN = 0x2;
+
+        private static void ApplyTextInset(TextBox tb, int px)
+        {
+            void Apply()
+            {
+                if (!tb.IsHandleCreated) return;
+                SendMessage(tb.Handle, EM_SETMARGINS,
+                    (IntPtr)(EC_LEFTMARGIN | EC_RIGHTMARGIN),
+                    (IntPtr)((px << 16) | px));
+            }
+
+            // Re-applied whenever the handle is recreated (e.g. show/hide password).
+            tb.HandleCreated += (s, e) => Apply();
+            Apply();
+        }
 
         // ─────────────────────────────────────────────
         //  Left (brand) panel
@@ -46,7 +76,7 @@ namespace CRM.winforms.Auth
         private TextField inpUsername = null!;
         private TextField inpPassword = null!;
 
-        // Show / Hide — now a real CheckBox + Label, right side of password field
+        // Show / Hide — a real CheckBox + Label under the password field
         private CheckBox chkShowPassword = null!;
         private Label lblShowPassword = null!;
 
@@ -94,6 +124,10 @@ namespace CRM.winforms.Auth
                 BackColor = UiKit.Accent
             };
 
+            int textW = BrandPanelW - BrandPad * 2;      // one shared text width → clean, equal margins
+            int featureY = 452;                          // first feature row
+            const int featureStep = 42;
+
             pnlBrand.Paint += (s, e) =>
             {
                 var g = e.Graphics;
@@ -124,14 +158,30 @@ namespace CRM.winforms.Auth
                 {
                     g.DrawEllipse(pen, pnlBrand.Width - 260, 60, 300, 300);
                 }
+
+                // Feature check marks (drawn, so no font-glyph dependency)
+                for (int i = 0; i < 3; i++)
+                {
+                    int cy = featureY + i * featureStep;
+                    var circle = new Rectangle(BrandPad, cy, 24, 24);
+                    using (var fill = new SolidBrush(Color.FromArgb(46, Color.White)))
+                        g.FillEllipse(fill, circle);
+                    using var tick = new Pen(Color.White, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+                    g.DrawLines(tick, new[]
+                    {
+                        new PointF(circle.Left + 7f,  circle.Top + 12.5f),
+                        new PointF(circle.Left + 10.5f, circle.Top + 16f),
+                        new PointF(circle.Left + 17f, circle.Top + 8.5f)
+                    });
+                }
             };
 
-            var softText = Color.FromArgb(210, 225, 245);
+            var softText = Color.FromArgb(215, 228, 246);
 
             pnlLogoBadge = new Panel
             {
                 Size = new Size(46, 46),
-                Location = new Point(56, 56),
+                Location = new Point(BrandPad, BrandPad),
                 BackColor = Color.FromArgb(40, Color.White)
             };
             pnlLogoBadge.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(pnlLogoBadge, 12);
@@ -158,9 +208,12 @@ namespace CRM.winforms.Auth
                 Text = "FIXORY CRM",
                 Font = new Font("Segoe UI Semibold", 11F),
                 ForeColor = Color.White,
-                AutoSize = true,
+                AutoSize = false,
                 BackColor = Color.Transparent,
-                Location = new Point(116, 68)
+                Location = new Point(BrandPad + 46 + 14, BrandPad),
+                Size = new Size(textW - 60, 46),
+                TextAlign = ContentAlignment.MiddleLeft,       // vertically centred on the badge
+                UseCompatibleTextRendering = false
             };
             pnlBrand.Controls.Add(lblBrandName);
 
@@ -171,8 +224,8 @@ namespace CRM.winforms.Auth
                 ForeColor = Color.White,
                 AutoSize = false,
                 BackColor = Color.Transparent,
-                Location = new Point(56, 240),
-                Size = new Size(BrandPanelW - 112, 110),
+                Location = new Point(BrandPad, 214),
+                Size = new Size(textW, 104),
                 TextAlign = ContentAlignment.TopLeft,
                 UseCompatibleTextRendering = false
             };
@@ -185,21 +238,47 @@ namespace CRM.winforms.Auth
                 ForeColor = softText,
                 AutoSize = false,
                 BackColor = Color.Transparent,
-                Location = new Point(56, 372),
-                Size = new Size(BrandPanelW - 96, 70),
+                Location = new Point(BrandPad, 336),
+                Size = new Size(textW, 60),
                 TextAlign = ContentAlignment.TopLeft,
                 UseCompatibleTextRendering = false
             };
             pnlBrand.Controls.Add(lblTagline);
 
+            // Feature list (text; check marks are painted above)
+            string[] features =
+            {
+                "All your customers in one place",
+                "Never miss a follow-up",
+                "Live reports and insights"
+            };
+            for (int i = 0; i < features.Length; i++)
+            {
+                pnlBrand.Controls.Add(new Label
+                {
+                    Text = features[i],
+                    Font = new Font("Segoe UI", 10F),
+                    ForeColor = Color.White,
+                    AutoSize = false,
+                    BackColor = Color.Transparent,
+                    Location = new Point(BrandPad + 24 + 12, featureY + i * featureStep),
+                    Size = new Size(textW - 36, 24),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    UseCompatibleTextRendering = false
+                });
+            }
+
             var lblFooter = new Label
             {
                 Text = "© " + DateTime.Now.Year + " Fixory CRM. All rights reserved.",
                 Font = new Font("Segoe UI", 8.5F),
-                ForeColor = Color.FromArgb(170, 200, 235),
-                AutoSize = true,
+                ForeColor = Color.FromArgb(185, 210, 240),
+                AutoSize = false,
                 BackColor = Color.Transparent,
-                Location = new Point(56, FormH - 56)
+                Location = new Point(BrandPad, FormH - BrandPad - 12),
+                Size = new Size(textW, 20),
+                TextAlign = ContentAlignment.MiddleLeft,
+                UseCompatibleTextRendering = false
             };
             pnlBrand.Controls.Add(lblFooter);
         }
@@ -218,7 +297,7 @@ namespace CRM.winforms.Auth
             // The form column is wider than FormColW to account for FormPad on both sides
             pnlForm = new Panel
             {
-                Size = new Size(FormColW + FormPad * 2, 580),
+                Size = new Size(FormColW + FormPad * 2, 500),
                 BackColor = Color.Transparent
             };
             pnlRight.Controls.Add(pnlForm);
@@ -245,12 +324,12 @@ namespace CRM.winforms.Auth
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 Location = new Point(x, y),
-                Size = new Size(w, 44),
+                Size = new Size(w, 46),
                 TextAlign = ContentAlignment.MiddleLeft,
                 UseCompatibleTextRendering = false
             };
             pnlForm.Controls.Add(lblTitle);
-            y += 44;
+            y += 46;
 
             // ── Subtitle ──
             lblSubtitle = new Label
@@ -261,62 +340,63 @@ namespace CRM.winforms.Auth
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 Location = new Point(x, y),
-                Size = new Size(w, 22),
+                Size = new Size(w, 24),
                 TextAlign = ContentAlignment.MiddleLeft,
                 UseCompatibleTextRendering = false
             };
             pnlForm.Controls.Add(lblSubtitle);
-            y += 22 + 36;
+            y += 24 + 34;
 
             // ── Username ──
             lblUsername = MakeLabel("Username", x, y);
-            y += 24;
+            y += 28;
 
             inpUsername = new TextField
             {
                 PlaceholderText = "Enter your username",
                 Location = new Point(x, y),
-                Size = new Size(w, 50),
+                Size = new Size(w, FieldH),
                 TabIndex = 0
             };
-            // Inner margin so typed text doesn't touch the border
-            inpUsername.InnerTextBox.Margin = new Padding(FormPad, 0, FormPad, 0);
-            inpUsername.InnerTextBox.Padding = new Padding(FormPad, 0, FormPad, 0);
+            ApplyTextInset(inpUsername.InnerTextBox, TextInset);
             pnlForm.Controls.Add(inpUsername);
-            y += 50 + 22;
+            y += FieldH + 22;
 
             // ── Password ──
             lblPassword = MakeLabel("Password", x, y);
-            y += 24;
+            y += 28;
 
             inpPassword = new TextField
             {
-                PlaceholderText = "••••••••",
+                PlaceholderText = "Enter your password",
                 Location = new Point(x, y),
-                Size = new Size(w, 50),
+                Size = new Size(w, FieldH),
                 TabIndex = 1
             };
             inpPassword.InnerTextBox.UseSystemPasswordChar = true;
-            inpPassword.InnerTextBox.Margin = new Padding(FormPad, 0, FormPad, 0);
-            inpPassword.InnerTextBox.Padding = new Padding(FormPad, 0, FormPad, 0);
+            ApplyTextInset(inpPassword.InnerTextBox, TextInset);
             pnlForm.Controls.Add(inpPassword);
 
-            // ── Show password: CheckBox + Label, right side BELOW the field ──
-            // Positioned just under the password input, aligned to the right edge.
-            int rowBelowPwd = inpPassword.Bottom + 6;
+            // Label turns darker while its field has focus (clear "where am I" feedback)
+            inpUsername.InnerTextBox.GotFocus += (s, e) => lblUsername.ForeColor = UiKit.Ink;
+            inpUsername.InnerTextBox.LostFocus += (s, e) => lblUsername.ForeColor = UiKit.InkMuted;
+            inpPassword.InnerTextBox.GotFocus += (s, e) => lblPassword.ForeColor = UiKit.Ink;
+            inpPassword.InnerTextBox.LostFocus += (s, e) => lblPassword.ForeColor = UiKit.InkMuted;
+
+            // ── Row under the password field:  [ ] Show password ........ Caps Lock is on ──
+            int rowBelowPwd = inpPassword.Bottom + 12;
 
             chkShowPassword = new CheckBox
             {
                 Appearance = Appearance.Normal,
                 AutoSize = false,
-                Size = new Size(16, 16),
-                Location = new Point(x + w - 130, rowBelowPwd + 1),
+                Size = new Size(18, 18),
+                Location = new Point(x + 2, rowBelowPwd + 2),
                 BackColor = Color.Transparent,
                 Cursor = Cursors.Hand,
                 TabIndex = 3,
                 Text = string.Empty
             };
-            // Flat, modern checkbox look
             chkShowPassword.FlatStyle = FlatStyle.Flat;
             chkShowPassword.ForeColor = UiKit.InkMuted;
             chkShowPassword.CheckedChanged += (s, e) => TogglePasswordVisibility();
@@ -329,8 +409,8 @@ namespace CRM.winforms.Auth
                 ForeColor = UiKit.InkMuted,
                 AutoSize = false,
                 BackColor = Color.Transparent,
-                Location = new Point(chkShowPassword.Right + 6, rowBelowPwd),
-                Size = new Size(110, 18),
+                Location = new Point(chkShowPassword.Right + 8, rowBelowPwd),
+                Size = new Size(130, 22),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Cursor = Cursors.Hand,
                 UseCompatibleTextRendering = false
@@ -339,51 +419,54 @@ namespace CRM.winforms.Auth
             lblShowPassword.Click += (s, e) => chkShowPassword.Checked = !chkShowPassword.Checked;
             pnlForm.Controls.Add(lblShowPassword);
 
-            // Move past the checkbox row
-            y = rowBelowPwd + 20 + 10;
+            lblCaps = new Label
+            {
+                Text = "Caps Lock is on",
+                Font = UiKit.SmallStrong,
+                ForeColor = Color.FromArgb(180, 83, 9),
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                Location = new Point(x + w - 170, rowBelowPwd),
+                Size = new Size(170, 22),
+                TextAlign = ContentAlignment.MiddleRight,
+                Visible = false,
+                UseCompatibleTextRendering = false
+            };
+            pnlForm.Controls.Add(lblCaps);
 
-            // ── Status row (error + caps-lock) ──
+            y = rowBelowPwd + 22 + 12;
+
+            // ── Error banner (space is always reserved, so the layout never jumps) ──
             lblError = new Label
             {
                 Text = "",
                 Font = UiKit.Small,
                 ForeColor = UiKit.Danger,
+                BackColor = Color.FromArgb(254, 242, 242),
                 AutoSize = false,
-                BackColor = Color.Transparent,
                 Location = new Point(x, y),
-                Size = new Size(w, 22),
+                Size = new Size(w, 46),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(14, 4, 14, 4),           // text margin inside the banner
                 Visible = false,
                 UseCompatibleTextRendering = false
             };
+            UiHelpers.ApplyRoundedRegion(lblError, 10);
             pnlForm.Controls.Add(lblError);
-
-            lblCaps = new Label
-            {
-                Text = "Caps Lock is on",
-                Font = UiKit.Small,
-                ForeColor = UiKit.InkMuted,
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(w, 22),
-                Visible = false,
-                UseCompatibleTextRendering = false
-            };
-            pnlForm.Controls.Add(lblCaps);
-            y += 22 + 14;
+            y += 46 + 16;
 
             // ── Primary CTA ──
             btnLogin = new Button
             {
                 Text = "Sign In",
-                Font = new Font("Segoe UI Semibold", 10.5F),
+                Font = new Font("Segoe UI Semibold", 11F),
                 BackColor = UiKit.Accent,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
                 UseVisualStyleBackColor = false,
                 Location = new Point(x, y),
-                Size = new Size(w, 50),
+                Size = new Size(w, FieldH),
                 TabIndex = 2
             };
             btnLogin.FlatAppearance.BorderSize = 0;
@@ -392,7 +475,7 @@ namespace CRM.winforms.Auth
             btnLogin.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(btnLogin, UiKit.RadiusSm);
             btnLogin.Click += async (s, e) => await LoginAsync();
             pnlForm.Controls.Add(btnLogin);
-            y += 50 + 26;
+            y += FieldH + 24;
 
             // ── Help text ──
             lblHelp = new Label
@@ -401,13 +484,16 @@ namespace CRM.winforms.Auth
                 Font = UiKit.Small,
                 ForeColor = UiKit.InkMuted,
                 AutoSize = false,
-                TextAlign = ContentAlignment.TopCenter,
+                TextAlign = ContentAlignment.MiddleCenter,
                 BackColor = Color.Transparent,
                 Location = new Point(x, y),
-                Size = new Size(w, 20),
+                Size = new Size(w, 22),
                 UseCompatibleTextRendering = false
             };
             pnlForm.Controls.Add(lblHelp);
+            y += 22;
+
+            pnlForm.Height = y + 4;      // fit the content so it is centred exactly
 
             WireInteractions();
         }

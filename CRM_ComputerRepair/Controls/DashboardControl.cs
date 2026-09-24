@@ -13,10 +13,11 @@ namespace CRM.winforms.Controls
     /// <summary>
     /// Business Intelligence Dashboard.
     ///
-    /// • 10 clickable KPI tiles — each opens a drill-down dialog with the actual
-    ///   customer / transaction records behind the number.
-    /// • 6 interactive charts — clicking a data point opens the matching records.
-    /// • Every figure comes from the live database via /analytics/dashboard.
+    ///   1. Key metrics          – 10 clickable KPI tiles (full, wrapped text — nothing is cut off)
+    ///   2. Trends & performance – 6 professional charts (headline value, change vs previous,
+    ///                             nice axis scale, smooth area lines, ranked horizontal bars)
+    ///
+    /// UI/UX only: all loading, binding and drill-down logic is unchanged.
     /// </summary>
     [DesignerCategory("Code")]
     public class DashboardControl : UserControl
@@ -31,6 +32,8 @@ namespace CRM.winforms.Controls
 
         private readonly List<KpiTile> _tiles = new();
         private readonly List<ChartCard> _charts = new();
+        private readonly List<(Label Title, Label Hint)> _sections = new();
+        private readonly ToolTip _tip = new ToolTip { InitialDelay = 400, ReshowDelay = 120, ShowAlways = true };
 
         // Chart data caches (drill-down by selected point)
         private List<(string Label, double Value)> _salesPoints = new();
@@ -40,8 +43,10 @@ namespace CRM.winforms.Controls
 
         private Label lblTitle = null!;
         private Label lblSubtitle = null!;
+        private Label _rule = null!;
         private FlatButton btnRefresh = null!;
         private Label lblLoading = null!;
+        private bool _layingOut;
 
         // ═══════════ CONSTRUCTOR ═══════════
 
@@ -52,10 +57,17 @@ namespace CRM.winforms.Controls
             DoubleBuffered = true;
             BackColor = AppTheme.Background;
             AutoScaleMode = AutoScaleMode.Font;
+            AutoScroll = true;
 
             BuildUi();
 
             this.Load += async (s, e) => await ReloadAsync();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _tip.Dispose();
+            base.Dispose(disposing);
         }
 
         // ═══════════ UI BUILD ═══════════
@@ -73,31 +85,39 @@ namespace CRM.winforms.Controls
 
             lblSubtitle = new Label
             {
-                Text = "Business intelligence from your live CRM data  ·  click any tile or chart point to see the records behind it",
+                Text = "Live business intelligence from your CRM data",
                 Font = UiKit.T.Subtitle,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
 
-            btnRefresh = new FlatButton("Refresh", "\uE72C");
+            _rule = new Label { AutoSize = false, Height = 1, BackColor = UiKit.T.Line, Text = "" };
+
+            btnRefresh = new FlatButton("Refresh", "\uE72C") { AccessibleName = "Refresh dashboard" };
             btnRefresh.Click += async (s, e) => await ReloadAsync();
+            _tip.SetToolTip(btnRefresh, "Reload the latest data");
 
             Controls.Add(lblTitle);
             Controls.Add(lblSubtitle);
+            Controls.Add(_rule);
             Controls.Add(btnRefresh);
 
+            // ── Section headings ──
+            AddSection("Key metrics", "Click a tile to see the records behind the number");
+            AddSection("Trends & performance", "Hover to inspect values  ·  click a point or bar to open its records");
+
             // ── KPI tiles (2 rows × 5) ──
-            AddTile(() => DrillCustomersAll());
-            AddTile(() => DrillCustomersActive());
-            AddTile(() => DrillInactive());
-            AddTile(() => DrillCustomersReturning());
-            AddTile(() => DrillTransactionsAll());
-            AddTile(() => DrillSales());
-            AddTile(() => DrillServices());
-            AddTile(() => DrillVisits());
-            AddTile(() => DrillLoyaltyMembers(null));
-            AddTile(() => RaiseAction("retention"));
+            AddTile(() => DrillCustomersAll(), "View all customer records");
+            AddTile(() => DrillCustomersActive(), "View active customers");
+            AddTile(() => DrillInactive(), "View customers with no completed transaction in 90 days");
+            AddTile(() => DrillCustomersReturning(), "View customers with 2+ transactions");
+            AddTile(() => DrillTransactionsAll(), "View all transactions");
+            AddTile(() => DrillSales(), "View all payments");
+            AddTile(() => DrillServices(), "View service popularity and revenue");
+            AddTile(() => DrillVisits(), "View visits per customer");
+            AddTile(() => DrillLoyaltyMembers(null), "View loyalty program members");
+            AddTile(() => RaiseAction("retention"), "Open the retention page");
 
             // ── Charts ──
             AddChart("Sales trend", ChartKind.Line, label => DrillSalesMonth(label));
@@ -112,7 +132,7 @@ namespace CRM.winforms.Controls
 
             lblLoading = new Label
             {
-                Text = "Loading…",
+                Text = "Loading latest data…",
                 Font = UiKit.T.Body,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
@@ -120,14 +140,40 @@ namespace CRM.winforms.Controls
                 Visible = false
             };
             Controls.Add(lblLoading);
+            lblLoading.BringToFront();
 
             Resize += (s, e) => LayoutUi();
         }
 
-        private void AddTile(Action onClick)
+        private void AddSection(string title, string hint)
+        {
+            var t = new Label
+            {
+                Text = title,
+                Font = UiKit.T.Section,
+                ForeColor = UiKit.T.Ink,
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+            var h = new Label
+            {
+                Text = hint,
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkMuted,
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+            _sections.Add((t, h));
+            Controls.Add(t);
+            Controls.Add(h);
+        }
+
+        private void AddTile(Action onClick, string tooltip)
         {
             var tile = new KpiTile { Tag = onClick };
             tile.Click += (s, e) => ((Action)tile.Tag!).Invoke();
+            tile.ContentChanged += (s, e) => LayoutUi();     // re-measure when text arrives
+            _tip.SetToolTip(tile, tooltip);
             _tiles.Add(tile);
         }
 
@@ -321,66 +367,101 @@ namespace CRM.winforms.Controls
             dlg.ShowModal(this.FindForm());
         }
 
-        // ═══════════ HAIRLINE UNDER HEADER ═══════════
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            UiKit.Quality(e.Graphics);
-
-            int y = lblSubtitle.Bottom + UiKit.T.S4;
-            using var pen = new Pen(UiKit.T.Line, 1);
-            e.Graphics.DrawLine(pen, 0, y, Width, y);
-        }
-
-        // ═══════════ LAYOUT ═══════════
+        // ═══════════ LAYOUT (responsive + scrollable) ═══════════
 
         private void LayoutUi()
         {
-            if (Width <= 0 || Height <= 0) return;
+            if (_layingOut) return;
+            if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
 
-            lblTitle.Location = new Point(0, 0);
+            _layingOut = true;
+            try
+            {
+                // A scrollbar appearing changes ClientSize.Width, so settle in up to 3 passes.
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    int w0 = ClientSize.Width;
+                    LayoutCore();
+                    if (ClientSize.Width == w0) break;
+                }
+            }
+            finally { _layingOut = false; }
+        }
 
+        private void LayoutCore()
+        {
+            int W = ClientSize.Width;
+            int H = ClientSize.Height;
+            const int gap = 14;
+
+            var plan = new List<(Control C, int X, int Y, int W, int H)>();
+            void P(Control c, int px, int py, int pw = 0, int ph = 0) => plan.Add((c, px, py, pw, ph));
+
+            int Section(int idx, int top)
+            {
+                var (t, h) = _sections[idx];
+                int th = t.PreferredHeight;
+                P(t, 0, top);
+                P(h, t.PreferredWidth + 12, top + Math.Max(0, th - h.PreferredHeight - 1));
+                return top + th + 12;
+            }
+
+            // ── Header ──
             int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
-            lblSubtitle.Location = new Point(1, subtitleY);
+            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
+
+            P(lblTitle, 0, 0);
+            P(lblSubtitle, 1, subtitleY);
 
             btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(Width - btnRefresh.Width, UiKit.T.S1);
+            P(btnRefresh, W - btnRefresh.Width, UiKit.T.S1);
+            P(_rule, 0, dividerY, W, 1);
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
-            int contentTop = dividerY + UiKit.T.S5;
+            int y = dividerY + UiKit.T.S5;
 
-            // KPI tiles — 2 rows × 5 columns
-            int gap = 12;
-            int tileHeight = 104;
-            int tileWidth = (Width - gap * 4) / 5;
+            // ── 1. Key metrics ──
+            y = Section(0, y);
+
+            int cols = W >= 1100 ? 5 : W >= 820 ? 4 : W >= 560 ? 3 : 2;
+            int tileW = (W - gap * (cols - 1)) / cols;
+            int tileH = _tiles.Max(t => t.HeightFor(tileW));   // uniform height, fits the longest text
 
             for (int i = 0; i < _tiles.Count; i++)
             {
-                int row = i / 5;
-                int col = i % 5;
-                _tiles[i].Location = new Point(col * (tileWidth + gap),
-                    contentTop + row * (tileHeight + gap));
-                _tiles[i].Size = new Size(tileWidth, tileHeight);
+                int row = i / cols, col = i % cols;
+                P(_tiles[i], col * (tileW + gap), y + row * (tileH + gap), tileW, tileH);
             }
+            int tileRows = (_tiles.Count + cols - 1) / cols;
+            y += tileRows * (tileH + gap) + 14;
 
-            int tileRows = (_tiles.Count + 4) / 5;
-            int chartsTop = contentTop + tileRows * (tileHeight + gap);
+            // ── 2. Trends & performance ──
+            y = Section(1, y);
 
-            // Charts in a 2-column × 3-row grid
-            int rows = (_charts.Count + 1) / 2;
-            int chartH = Math.Max(160, (Height - chartsTop - gap * (rows - 1)) / rows);
-            int chartW = (Width - gap) / 2;
+            int chartCols = W >= 940 ? 2 : 1;
+            int chartRows = (_charts.Count + chartCols - 1) / chartCols;
+            int available = H - y;
+            int chartH = Math.Min(400, Math.Max(290, (available - gap * (chartRows - 1)) / chartRows));
+            int chartW = (W - gap * (chartCols - 1)) / chartCols;
 
             for (int i = 0; i < _charts.Count; i++)
             {
-                int row = i / 2;
-                int col = i % 2;
-                _charts[i].Location = new Point(col * (chartW + gap), chartsTop + row * (chartH + gap));
-                _charts[i].Size = new Size(chartW, chartH);
+                int row = i / chartCols, col = i % chartCols;
+                P(_charts[i], col * (chartW + gap), y + row * (chartH + gap), chartW, chartH);
             }
 
-            lblLoading.Location = new Point((Width - lblLoading.PreferredWidth) / 2, Height / 2);
+            int total = y + chartRows * chartH + (chartRows - 1) * gap + 20;
+
+            var min = new Size(0, total);
+            if (AutoScrollMinSize != min) AutoScrollMinSize = min;
+
+            var o = AutoScrollPosition;
+            foreach (var p in plan)
+            {
+                if (p.W > 0) p.C.Bounds = new Rectangle(p.X + o.X, p.Y + o.Y, p.W, p.H);
+                else p.C.Location = new Point(p.X + o.X, p.Y + o.Y);
+            }
+
+            lblLoading.Location = new Point((W - lblLoading.PreferredWidth) / 2, H / 2);
         }
 
         // ═══════════ DATA ═══════════
@@ -478,12 +559,30 @@ namespace CRM.winforms.Controls
         };
 
         // ═══════════════════════════════════════════════════════════════
-        //  KPI TILE — clickable
+        //  KPI TILE — clean card, generous margins, full text (auto height)
         // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]
         private sealed class KpiTile : Control
         {
+            private const int Pad = 22;          // same margin on every side
+            private const int IconSize = 34;
+            private const int MinHeight = 128;
+
+            private const TextFormatFlags One =
+                TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+            private const TextFormatFlags Wrapped = One | TextFormatFlags.WordBreak;
+
+            // The number uses the largest font that fits the tile width.
+            private static readonly Font[] NumFonts =
+            {
+                new("Segoe UI Semibold", 26F),
+                new("Segoe UI Semibold", 22F),
+                new("Segoe UI Semibold", 18F),
+                new("Segoe UI Semibold", 15F),
+                new("Segoe UI Semibold", 12F)
+            };
+
             private string _label = "";
             private string _number = "0";
             private string _sub = "";
@@ -492,6 +591,9 @@ namespace CRM.winforms.Controls
             private bool _hover;
             private bool _down;
 
+            /// <summary>Raised after Set() so the dashboard can re-measure tile height.</summary>
+            public event EventHandler? ContentChanged;
+
             public KpiTile()
             {
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
@@ -499,6 +601,8 @@ namespace CRM.winforms.Controls
                 BackColor = AppTheme.Background;
                 TabStop = true;
                 Cursor = Cursors.Hand;
+                AccessibleRole = AccessibleRole.PushButton;
+                AccessibleName = "Loading metric";
             }
 
             public void Set(string label, string number, string sub, Color accent, string glyph)
@@ -508,13 +612,51 @@ namespace CRM.winforms.Controls
                 _sub = sub;
                 _accent = accent;
                 _glyph = glyph;
+                AccessibleName = $"{label}: {number}. {sub}";
                 Invalidate();
+                ContentChanged?.Invoke(this, EventArgs.Empty);
+            }
+
+            /// <summary>Height needed so that every line of text is fully visible at this width.</summary>
+            public int HeightFor(int width) =>
+                string.IsNullOrEmpty(_label) ? MinHeight : Math.Max(MinHeight, Measure(width).Total);
+
+            private static int TextH(string text, Font font, int width, bool wrap)
+            {
+                if (string.IsNullOrEmpty(text)) return font.Height;
+                var size = TextRenderer.MeasureText(text, font,
+                    new Size(Math.Max(10, width - 4), int.MaxValue), wrap ? Wrapped : One);
+                return Math.Max(font.Height, size.Height) + 2;
+            }
+
+            private (Font NumFont, bool NumWrap, int TopH, int NumH, int CapH, int Total) Measure(int width)
+            {
+                int inner = Math.Max(40, width - Pad * 2);
+                int labelW = Math.Max(40, inner - IconSize - 12);
+
+                int labelH = TextH(_label, UiKit.T.SmallStrong, labelW, true);
+                int topH = Math.Max(IconSize, labelH);
+
+                Font numFont = NumFonts[^1];
+                bool numWrap = true;
+                foreach (var f in NumFonts)
+                {
+                    var w = TextRenderer.MeasureText(_number, f, new Size(int.MaxValue, int.MaxValue), One).Width;
+                    if (w <= inner - 4) { numFont = f; numWrap = false; break; }
+                }
+                int numH = TextH(_number, numFont, inner, numWrap);
+                int capH = TextH(_sub, UiKit.T.Small, inner, true);
+
+                int total = Pad + topH + 14 + numH + 6 + capH + Pad;
+                return (numFont, numWrap, topH, numH, capH, total);
             }
 
             protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
             protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
-            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Focus(); Invalidate(); base.OnMouseDown(e); }
             protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+            protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+            protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
 
             protected override void OnKeyDown(KeyEventArgs e)
             {
@@ -531,52 +673,61 @@ namespace CRM.winforms.Controls
                 using (var bg = new SolidBrush(AppTheme.Background))
                     g.FillRectangle(bg, ClientRectangle);
 
-                var body = ClientRectangle;
-                body.Width -= 1;
-                body.Height -= 1;
+                bool loading = string.IsNullOrEmpty(_label);
+                Color accent = loading ? UiKit.T.InkFaint : _accent;
 
-                if (_hover && !_down)
+                // Plain white card. Hover = accent border, pressed = soft tint.
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius,
+                    _down && !loading ? UiKit.Wash(accent) : UiKit.T.Surface,
+                    _hover && !loading ? accent : UiKit.T.Line);
+
+                // Skeleton placeholder until the first data arrives.
+                if (loading)
                 {
-                    using var wash = new SolidBrush(UiKit.Wash(_accent));
-                    using var path = UiKit.Rounded(body, UiKit.T.Radius);
-                    g.FillPath(wash, path);
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad, IconSize, IconSize), 9, UiKit.T.Line);
+                    UiKit.FillRounded(g, new Rectangle(Pad + IconSize + 12, Pad + 11, Math.Max(20, Width / 3), 12), 4, UiKit.T.Line);
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad + 52, Math.Max(20, Width / 2), 24), 4, UiKit.T.Line);
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad + 88, Math.Max(20, Width * 2 / 3), 10), 4, UiKit.T.Line);
+                    return;
                 }
 
-                UiKit.Card(g, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
+                var m = Measure(Width);
+                int inner = Width - Pad * 2;
 
-                int pad = UiKit.T.S3;
-
-                var iconRect = new Rectangle(pad, pad, 30, 30);
-                UiKit.FillRounded(g, iconRect, 8, UiKit.Wash(_accent));
-
+                // Icon (soft tint, no bars or stripes)
+                var iconRect = new Rectangle(Pad, Pad + (m.TopH - IconSize) / 2, IconSize, IconSize);
+                UiKit.FillRounded(g, iconRect, 9, UiKit.Wash(accent));
                 using (var f = UiKit.GlyphFont(12F))
-                    UiKit.Text(g, _glyph, f, _accent, iconRect, UiKit.Center);
+                    UiKit.Text(g, _glyph, f, accent, iconRect, UiKit.Center);
 
-                UiKit.Text(g, _label, UiKit.T.Small, UiKit.T.InkMuted,
-                    new Rectangle(pad + 38, pad + 2, Width - pad * 2 - 38, 30),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                // Label — beside the icon, wraps instead of being cut
+                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(Pad + IconSize + 12, Pad, inner - IconSize - 12, m.TopH),
+                    Wrapped | TextFormatFlags.VerticalCenter);
 
-                var numFont = _number.Length > 10 ? UiKit.T.Section
-                            : _number.Length > 7 ? new Font("Segoe UI Semibold", 15F)
-                            : new Font("Segoe UI Semibold", 18F);
-                UiKit.Text(g, _number, numFont, UiKit.T.Ink,
-                    new Rectangle(pad, pad + 34, Width - pad * 2, 30),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                // Number
+                int numTop = Pad + m.TopH + 14;
+                UiKit.Text(g, _number, m.NumFont, UiKit.T.Ink,
+                    new Rectangle(Pad, numTop, inner, m.NumH),
+                    (m.NumWrap ? Wrapped : One) | TextFormatFlags.Top);
 
-                UiKit.Text(g, _sub, UiKit.Micro, UiKit.T.InkFaint,
-                    new Rectangle(pad, pad + 64, Width - pad * 2, 26),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                // Caption — full text, wraps
+                UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkMuted,
+                    new Rectangle(Pad, numTop + m.NumH + 6, inner, m.CapH),
+                    Wrapped | TextFormatFlags.Top);
 
-                if (_hover)
+                if (Focused)
                 {
-                    var hint = new Rectangle(Width - 24, Height - 22, 14, 14);
-                    UiKit.Text(g, "\uE72A", UiKit.T.Glyph, _accent, hint, UiKit.Center);
+                    var ring = ClientRectangle;
+                    ring.Inflate(-1, -1);
+                    UiKit.StrokeRounded(g, ring, UiKit.T.Radius, accent, 2f);
                 }
             }
         }
 
         // ═══════════════════════════════════════════════════════════════
-        //  CHART CARD — hover tooltip + clickable data points
+        //  CHART CARD — headline metric, nice axis, smooth area line,
+        //  ranked horizontal bars, crosshair + rich tooltip
         // ═══════════════════════════════════════════════════════════════
 
         private enum ChartKind { Line, Bar }
@@ -584,6 +735,8 @@ namespace CRM.winforms.Controls
         [DesignerCategory("Code")]
         private sealed class ChartCard : Control
         {
+            private static readonly Font HeadlineFont = new("Segoe UI Semibold", 19F);
+
             private readonly string _title;
             private readonly ChartKind _kind;
 
@@ -593,8 +746,9 @@ namespace CRM.winforms.Controls
             private bool _clickableBars;
             private bool _currency;
 
-            private readonly List<(Rectangle Hit, string Label, string Value)> _hits = new();
+            private readonly List<(Rectangle Hit, string Label, string Value, Point Anchor)> _hits = new();
             private int _hoverIndex = -1;
+            private bool _cardHover;
             private string? _selectedLabel;
 
             /// <summary>Raised with the label of the clicked data point.</summary>
@@ -608,6 +762,8 @@ namespace CRM.winforms.Controls
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
                 BackColor = AppTheme.Background;
+                AccessibleRole = AccessibleRole.Chart;
+                AccessibleName = title;
             }
 
             public void SetLineData(List<(string, double)> data, Color color, bool currency = false)
@@ -627,6 +783,13 @@ namespace CRM.winforms.Controls
                 Invalidate();
             }
 
+            protected override void OnMouseEnter(EventArgs e)
+            {
+                base.OnMouseEnter(e);
+                _cardHover = true;
+                Invalidate();
+            }
+
             protected override void OnMouseMove(MouseEventArgs e)
             {
                 base.OnMouseMove(e);
@@ -643,6 +806,7 @@ namespace CRM.winforms.Controls
             {
                 base.OnMouseLeave(e);
                 _hoverIndex = -1;
+                _cardHover = false;
                 Invalidate();
             }
 
@@ -667,6 +831,8 @@ namespace CRM.winforms.Controls
                     PointClicked?.Invoke(label!);
             }
 
+            // ───────────────────────── paint ─────────────────────────
+
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
@@ -675,145 +841,361 @@ namespace CRM.winforms.Controls
                 using (var bg = new SolidBrush(AppTheme.Background))
                     g.FillRectangle(bg, ClientRectangle);
 
-                UiKit.Card(g, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface,
+                    _cardHover ? UiKit.T.InkFaint : UiKit.T.Line);
 
                 int pad = UiKit.T.S4;
+                bool hasData = _kind == ChartKind.Line ? _lineData.Count > 0 : _barData.Count > 0;
 
+                // Title row
                 UiKit.Text(g, _title, UiKit.T.Section, UiKit.T.Ink,
-                    new Rectangle(pad, pad, Width - pad * 2 - 116, 22),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                    new Rectangle(pad, pad, Math.Max(10, Width - pad * 2 - 130), 24),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-                UiKit.Text(g, "\uE72A click a point", UiKit.Micro, UiKit.T.InkFaint,
-                    new Rectangle(Width - 130, pad, 114, 20),
-                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                if (hasData)
+                {
+                    string hint = _kind == ChartKind.Line ? "Click a point" : "Click a row";
+                    int hintW = UiKit.Measure(hint, UiKit.Micro).Width + 6;
+                    var hintRect = new Rectangle(Width - pad - hintW, pad, hintW, 24);
+                    UiKit.Text(g, hint, UiKit.Micro, UiKit.T.InkMuted, hintRect,
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                    UiKit.Text(g, "\uE72A", UiKit.T.Glyph, UiKit.T.InkMuted,
+                        new Rectangle(hintRect.Left - 16, pad + 5, 14, 14), UiKit.Center);
 
-                var plot = new Rectangle(pad, pad + 28, Width - pad * 2, Height - pad * 2 - 28);
+                    DrawHeadline(g, pad);
+                }
 
+                var plot = new Rectangle(pad, pad + 68, Width - pad * 2, Height - pad * 2 - 68);
                 _hits.Clear();
+                if (plot.Height < 50 || plot.Width < 80) return;
 
                 if (_kind == ChartKind.Line) DrawLine(g, plot);
                 else DrawBar(g, plot);
 
-                if (_hoverIndex >= 0 && _hoverIndex < _hits.Count)
-                {
-                    var (_, label, value) = _hits[_hoverIndex];
-                    var text = $"{label}:  {value}";
-                    var size = UiKit.Measure(text, UiKit.T.SmallStrong);
-                    var tip = new Rectangle(
-                        Math.Min(Width - size.Width - 18, _hits[_hoverIndex].Hit.X),
-                        Math.Max(0, _hits[_hoverIndex].Hit.Y - 30),
-                        size.Width + 14, 24);
-                    UiKit.FillRounded(g, tip, 6, UiKit.T.Ink);
-                    UiKit.Text(g, text, UiKit.T.SmallStrong, Color.White, tip, UiKit.Center);
-                }
+                DrawTooltip(g);
             }
 
             private string FormatValue(double v) => _currency
                 ? $"\u20b1{v:N0}"
                 : v % 1 == 0 ? $"{v:N0}" : $"{v:0.##}";
 
+            /// <summary>Compact axis label: 1.2K, 3.4M …</summary>
+            private string AxisText(double v)
+            {
+                string n = v >= 1_000_000 ? $"{v / 1_000_000:0.#}M"
+                         : v >= 1_000 ? $"{v / 1_000:0.#}K"
+                         : $"{v:0.#}";
+                return _currency ? "\u20b1" + n : n;
+            }
+
+            /// <summary>Round-number axis step (1, 2, 5, 10 × 10ⁿ) so gridlines read cleanly.</summary>
+            private static double NiceStep(double max, int ticks, bool integers)
+            {
+                double raw = max / ticks;
+                double mag = Math.Pow(10, Math.Floor(Math.Log10(raw)));
+                double norm = raw / mag;
+                double nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+                double step = nice * mag;
+                if (integers && step < 1) step = 1;
+                return step;
+            }
+
+            // ─────────────── headline (big number + change vs previous) ───────────────
+
+            private void DrawHeadline(Graphics g, int pad)
+            {
+                int y = pad + 26;
+
+                if (_kind == ChartKind.Line)
+                {
+                    var last = _lineData[^1];
+                    string big = FormatValue(last.Value);
+                    int bigW = UiKit.Measure(big, HeadlineFont).Width;
+                    UiKit.Text(g, big, HeadlineFont, UiKit.T.Ink,
+                        new Rectangle(pad, y, bigW + 6, 34),
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                    int x = pad + bigW + 12;
+
+                    // Right-aligned summary stats (only if there's room)
+                    string stats = $"Avg {FormatValue(_lineData.Average(p => p.Value))}    Peak {FormatValue(_lineData.Max(p => p.Value))}";
+                    int statsW = UiKit.Measure(stats, UiKit.T.Small).Width + 4;
+                    bool showStats = Width - pad - statsW > x + 150;
+                    if (showStats)
+                        UiKit.Text(g, stats, UiKit.T.Small, UiKit.T.InkMuted,
+                            new Rectangle(Width - pad - statsW, y, statsW, 34),
+                            TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+
+                    int limit = showStats ? Width - pad - statsW - 8 : Width - pad;
+                    string caption = last.Label;
+
+                    if (_lineData.Count >= 2 && _lineData[^2].Value != 0)
+                    {
+                        var prev = _lineData[^2];
+                        double pct = (last.Value - prev.Value) / Math.Abs(prev.Value) * 100;
+                        bool up = pct >= 0;
+                        Color c = up ? AppTheme.Success : AppTheme.Danger;
+                        string t = $"{(up ? "\u25B2" : "\u25BC")} {Math.Abs(pct):0.#}%";
+                        int tw = UiKit.Measure(t, UiKit.T.SmallStrong).Width;
+                        var pill = new Rectangle(x, y + 6, tw + 14, 22);
+                        UiKit.FillRounded(g, pill, 11, UiKit.Wash(c));
+                        UiKit.Text(g, t, UiKit.T.SmallStrong, c, pill, UiKit.Center);
+                        x = pill.Right + 8;
+                        caption = $"{last.Label}  vs  {prev.Label}";
+                    }
+
+                    if (limit - x > 40)
+                        UiKit.Text(g, caption, UiKit.T.Small, UiKit.T.InkMuted,
+                            new Rectangle(x, y, limit - x, 34),
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                }
+                else
+                {
+                    double sum = _barData.Sum(b => b.Value);
+                    string big = FormatValue(sum);
+                    int bigW = UiKit.Measure(big, HeadlineFont).Width;
+                    UiKit.Text(g, big, HeadlineFont, UiKit.T.Ink,
+                        new Rectangle(pad, y, bigW + 6, 34),
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                    var top = _barData.OrderByDescending(b => b.Value).First();
+                    int x = pad + bigW + 12;
+                    UiKit.Text(g, $"total  ·  top: {top.Label}", UiKit.T.Small, UiKit.T.InkMuted,
+                        new Rectangle(x, y, Math.Max(10, Width - pad - x), 34),
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                }
+            }
+
+            // ─────────────── line / area chart ───────────────
+
             private void DrawLine(Graphics g, Rectangle plot)
             {
                 if (_lineData.Count == 0) { DrawEmpty(g, plot); return; }
 
-                int labelH = 20;
-                int chartH = plot.Height - labelH;
-                double max = Math.Max(1, _lineData.Max(p => p.Value));
-
                 int n = _lineData.Count;
+                int labelH = 22;
+                int chartH = plot.Height - labelH;
+                if (chartH < 40) return;
+
+                double dataMax = Math.Max(1, _lineData.Max(p => p.Value));
+                bool allInt = _lineData.All(p => p.Value % 1 == 0);
+                const int ticks = 4;
+                double step = NiceStep(dataMax, ticks, allInt);
+                double axisMax = step * ticks;
+
+                int axisW = Math.Max(34, UiKit.Measure(AxisText(axisMax), UiKit.Micro).Width + 12);
+                float topY = plot.Top + 8;
+                float baseY = plot.Top + chartH - 2;
+                float span = baseY - topY;
+                float x0 = plot.Left + axisW + 12;
+                float xw = Math.Max(1, plot.Right - 12 - x0);
+                var clipRect = new Rectangle(plot.Left + axisW, plot.Top, plot.Width - axisW, chartH);
+
+                // Gridlines + y-axis labels
+                for (int k = 0; k <= ticks; k++)
+                {
+                    float gy = baseY - (float)k / ticks * span;
+                    using (var grid = new Pen(UiKit.T.Line, 1f))
+                    {
+                        if (k > 0) grid.DashStyle = DashStyle.Dot;
+                        g.DrawLine(grid, plot.Left + axisW, gy, plot.Right, gy);
+                    }
+                    UiKit.Text(g, AxisText(step * k), UiKit.Micro, UiKit.T.InkMuted,
+                        new Rectangle(plot.Left, (int)gy - 8, axisW - 8, 16),
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                }
+
+                // Points
                 var points = new PointF[n];
                 for (int i = 0; i < n; i++)
                 {
-                    float x = plot.Left + (n == 1 ? plot.Width / 2f : (float)i / (n - 1) * plot.Width);
-                    float y = plot.Top + chartH - (float)(_lineData[i].Value / max) * (chartH - 10) - 4;
+                    float x = n == 1 ? x0 + xw / 2f : x0 + (float)i / (n - 1) * xw;
+                    float y = baseY - (float)(_lineData[i].Value / axisMax) * span;
                     points[i] = new PointF(x, y);
                 }
 
-                using (var area = new GraphicsPath())
-                {
-                    area.AddLines(points);
-                    area.AddLine(points[^1].X, plot.Top + chartH, points[0].X, plot.Top + chartH);
-                    area.CloseFigure();
+                // Hover column (wide, forgiving target) + crosshair
+                float ColLeft(int i) => i == 0 ? plot.Left + axisW : (points[i - 1].X + points[i].X) / 2f;
+                float ColRight(int i) => i == n - 1 ? plot.Right : (points[i].X + points[i + 1].X) / 2f;
 
-                    using var brush = new LinearGradientBrush(
-                        new Rectangle(plot.Left, plot.Top, plot.Width, chartH),
-                        UiKit.Wash(_lineColor), Color.White, LinearGradientMode.Vertical);
-                    g.FillPath(brush, area);
+                if (_hoverIndex >= 0 && _hoverIndex < n)
+                {
+                    using var band = new SolidBrush(Color.FromArgb(22, _lineColor));
+                    g.FillRectangle(band, ColLeft(_hoverIndex), plot.Top, ColRight(_hoverIndex) - ColLeft(_hoverIndex), chartH);
+
+                    using var cross = new Pen(Color.FromArgb(150, _lineColor), 1f) { DashStyle = DashStyle.Dash };
+                    g.DrawLine(cross, points[_hoverIndex].X, topY, points[_hoverIndex].X, baseY);
                 }
 
-                using (var pen = new Pen(_lineColor, 2f))
+                // Smooth area + line (clipped to the plot so curve overshoot never leaks)
+                g.SetClip(clipRect);
+                if (n > 1)
                 {
-                    pen.LineJoin = LineJoin.Round;
-                    g.DrawLines(pen, points);
-                }
+                    using (var path = new GraphicsPath())
+                    {
+                        if (n >= 3) path.AddCurve(points, 0.35f); else path.AddLines(points);
+                        path.AddLine(points[^1], new PointF(points[^1].X, baseY));
+                        path.AddLine(new PointF(points[^1].X, baseY), new PointF(points[0].X, baseY));
+                        path.CloseFigure();
 
+                        using var brush = new LinearGradientBrush(
+                            new Rectangle(clipRect.Left, (int)topY, clipRect.Width, Math.Max(1, (int)span)),
+                            Color.FromArgb(90, _lineColor), Color.FromArgb(0, _lineColor), LinearGradientMode.Vertical);
+                        g.FillPath(brush, path);
+                    }
+
+                    using var pen = new Pen(_lineColor, 2.5f) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round };
+                    if (n >= 3) g.DrawCurve(pen, points, 0.35f); else g.DrawLines(pen, points);
+                }
+                g.ResetClip();
+
+                // Markers: hollow dots (few points) — always for hovered / selected / latest
+                bool showAll = n <= 14;
                 for (int i = 0; i < n; i++)
                 {
                     bool hot = i == _hoverIndex || _lineData[i].Label == _selectedLabel;
-                    int dotSize = hot ? 11 : 7;
+                    bool latest = i == n - 1;
 
-                    UiKit.Dot(g, points[i].X, points[i].Y, dotSize, _lineColor);
-
-                    if (hot)
+                    if (hot || latest || showAll)
                     {
-                        using var halo = new Pen(UiKit.Wash(_lineColor), 2f);
-                        g.DrawEllipse(halo, points[i].X - dotSize - 2, points[i].Y - dotSize - 2,
-                            (dotSize + 2) * 2f, (dotSize + 2) * 2f);
+                        float r = hot ? 6.5f : latest ? 5.5f : 4f;
+                        if (hot)
+                        {
+                            using var halo = new SolidBrush(Color.FromArgb(45, _lineColor));
+                            g.FillEllipse(halo, points[i].X - r - 5, points[i].Y - r - 5, (r + 5) * 2, (r + 5) * 2);
+                        }
+                        using var fill = new SolidBrush(latest || hot ? _lineColor : Color.White);
+                        g.FillEllipse(fill, points[i].X - r, points[i].Y - r, r * 2, r * 2);
+                        using var ring = new Pen(latest || hot ? Color.White : _lineColor, 2f);
+                        g.DrawEllipse(ring, points[i].X - r, points[i].Y - r, r * 2, r * 2);
                     }
 
                     _hits.Add((
-                        new Rectangle((int)points[i].X - 14, (int)points[i].Y - 14, 28, 28),
+                        new Rectangle((int)ColLeft(i), plot.Top, Math.Max(2, (int)(ColRight(i) - ColLeft(i))), chartH + labelH),
                         _lineData[i].Label,
-                        FormatValue(_lineData[i].Value)));
+                        FormatValue(_lineData[i].Value),
+                        new Point((int)points[i].X, (int)points[i].Y)));
                 }
 
-                int step = Math.Max(1, n / 6);
-                for (int i = 0; i < n; i += step)
+                // X labels: as many as fit, always including the latest period
+                int maxLabels = Math.Max(2, (int)(xw / 66));
+                int stepX = (int)Math.Ceiling(n / (double)maxLabels);
+                for (int i = n - 1; i >= 0; i -= stepX)
                 {
-                    var r = new Rectangle((int)(points[i].X - 30), plot.Top + chartH + 2, 60, labelH);
-                    UiKit.Text(g, _lineData[i].Label, UiKit.T.Small, UiKit.T.InkFaint, r, UiKit.Center);
+                    int lx = (int)(points[i].X - 33);
+                    lx = Math.Max(plot.Left + axisW - 8, Math.Min(plot.Right - 66, lx));
+                    bool hot = i == _hoverIndex;
+                    UiKit.Text(g, _lineData[i].Label, hot ? UiKit.T.SmallStrong : UiKit.T.Small,
+                        hot ? UiKit.T.Ink : UiKit.T.InkMuted,
+                        new Rectangle(lx, plot.Top + chartH + 2, 66, labelH), UiKit.Center);
                 }
             }
+
+            // ─────────────── ranked horizontal bars ───────────────
 
             private void DrawBar(Graphics g, Rectangle plot)
             {
                 if (_barData.Count == 0) { DrawEmpty(g, plot); return; }
 
+                int n = _barData.Count;
                 double max = Math.Max(1, _barData.Max(b => b.Value));
-                int gap = 10;
-                int barW = Math.Max(8, (plot.Width - gap * (_barData.Count - 1)) / _barData.Count);
-                int labelH = 18;
+                double sum = _barData.Sum(b => b.Value);
 
-                for (int i = 0; i < _barData.Count; i++)
+                int rowH = Math.Max(20, Math.Min(42, plot.Height / n));
+                int shown = Math.Min(n, Math.Max(1, plot.Height / rowH));
+
+                // Label column sized to the longest label (full names, capped at 40% of the width)
+                int labelW = 0;
+                for (int i = 0; i < shown; i++)
+                    labelW = Math.Max(labelW, UiKit.Measure(_barData[i].Label, UiKit.T.Small).Width);
+                labelW = Math.Min(labelW + 14, (int)(plot.Width * 0.40));
+
+                string sample = FormatValue(max) + (sum > 0 ? "  ·  100%" : "");
+                int valueW = UiKit.Measure(sample, UiKit.T.SmallStrong).Width + 10;
+
+                int trackL = plot.Left + labelW + 8;
+                int trackR = plot.Right - valueW - 8;
+                int trackW = Math.Max(20, trackR - trackL);
+                int barH = Math.Max(8, Math.Min(14, rowH - 10));
+
+                for (int i = 0; i < shown; i++)
                 {
                     var (label, value, color) = _barData[i];
-
-                    int x = plot.Left + i * (barW + gap);
-                    int h = Math.Max(3, (int)(value / max * (plot.Height - labelH - 24)));
-                    var bar = new Rectangle(x, plot.Bottom - h - labelH, barW, h);
-
                     bool hot = i == _hoverIndex || label == _selectedLabel;
 
-                    UiKit.FillRounded(g, bar, 6, hot ? color : UiKit.Wash(color));
-                    if (label == _selectedLabel)
-                        UiKit.StrokeRounded(g, bar, 6, color, 1.6f);
+                    var row = new Rectangle(plot.Left, plot.Top + i * rowH, plot.Width, rowH);
+                    int cy = row.Top + rowH / 2;
 
-                    var valueText = FormatValue(value);
-                    UiKit.Text(g, valueText, UiKit.Micro, hot ? color : UiKit.T.InkMuted,
-                        new Rectangle(x - 6, bar.Top - 16, barW + 12, 14), UiKit.Center);
+                    if (hot)
+                        UiKit.FillRounded(g, row, 8, Color.FromArgb(18, color));
 
-                    UiKit.Text(g, label, UiKit.Micro, UiKit.T.InkMuted,
-                        new Rectangle(x - 8, plot.Bottom - labelH, barW + 16, labelH),
-                        TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.EndEllipsis);
+                    // Category label (left)
+                    UiKit.Text(g, label, UiKit.T.Small, UiKit.T.Ink,
+                        new Rectangle(plot.Left + 6, row.Top, labelW - 6, rowH),
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+                    // Track + fill
+                    var track = new Rectangle(trackL, cy - barH / 2, trackW, barH);
+                    UiKit.FillRounded(g, track, barH / 2, UiKit.T.Line);
+
+                    int fillW = value <= 0 ? 0 : Math.Max(barH, (int)(value / max * trackW));
+                    var fill = new Rectangle(trackL, track.Top, fillW, barH);
+                    if (fillW > 0)
+                    {
+                        UiKit.FillRounded(g, fill, barH / 2, hot ? color : Color.FromArgb(215, color));
+                        if (label == _selectedLabel)
+                            UiKit.StrokeRounded(g, fill, barH / 2, color, 1.6f);
+                    }
+
+                    // Value + share of total (right)
+                    string pct = sum > 0 ? $"  ·  {value / sum * 100:0}%" : "";
+                    string valueText = FormatValue(value) + pct;
+                    UiKit.Text(g, valueText, UiKit.T.SmallStrong, hot ? color : UiKit.T.Ink,
+                        new Rectangle(plot.Right - valueW, row.Top, valueW, rowH),
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
                     if (_clickableBars)
-                        _hits.Add((new Rectangle(x, bar.Top - 18, barW, h + labelH + 18), label, valueText));
+                        _hits.Add((row, label, valueText, new Point(fill.Right, cy)));
                 }
+
+                if (shown < n && plot.Height - shown * rowH >= 14)
+                    UiKit.Text(g, $"+ {n - shown} more", UiKit.T.Small, UiKit.T.InkMuted,
+                        new Rectangle(plot.Left, plot.Top + shown * rowH, plot.Width, 16),
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            }
+
+            // ─────────────── tooltip (label + value, clamped) ───────────────
+
+            private void DrawTooltip(Graphics g)
+            {
+                if (_hoverIndex < 0 || _hoverIndex >= _hits.Count) return;
+
+                var (_, label, value, anchor) = _hits[_hoverIndex];
+                var ls = UiKit.Measure(label, UiKit.T.Small);
+                var vs = UiKit.Measure(value, UiKit.T.BodyStrong);
+                int tw = Math.Max(ls.Width, vs.Width) + 26;
+                int th = 48;
+
+                int tx = Math.Max(4, Math.Min(Width - tw - 4, anchor.X - tw / 2));
+                int ty = anchor.Y - th - 14;
+                if (ty < 4) ty = anchor.Y + 16;
+                ty = Math.Min(ty, Height - th - 4);
+
+                var tip = new Rectangle(tx, ty, tw, th);
+                UiKit.FillRounded(g, tip, 8, UiKit.T.Ink);
+                UiKit.Text(g, label, UiKit.T.Small, Color.FromArgb(200, 255, 255, 255),
+                    new Rectangle(tip.Left, tip.Top + 5, tip.Width, 16), UiKit.Center);
+                UiKit.Text(g, value, UiKit.T.BodyStrong, Color.White,
+                    new Rectangle(tip.Left, tip.Top + 21, tip.Width, 22), UiKit.Center);
             }
 
             private void DrawEmpty(Graphics g, Rectangle plot)
             {
-                UiKit.Text(g, "No data yet", UiKit.T.Body, UiKit.T.InkFaint, plot, UiKit.Center);
+                var top = new Rectangle(plot.Left, plot.Top + plot.Height / 2 - 22, plot.Width, 22);
+                var bottom = new Rectangle(plot.Left, top.Bottom, plot.Width, 20);
+                UiKit.Text(g, "No data yet", UiKit.T.BodyStrong, UiKit.T.InkMuted, top, UiKit.Center);
+                UiKit.Text(g, "This chart fills in as records are added", UiKit.T.Small, UiKit.T.InkFaint,
+                    bottom, UiKit.Center);
             }
         }
 
@@ -824,6 +1206,8 @@ namespace CRM.winforms.Controls
         [DesignerCategory("Code")]
         private sealed class FlatButton : Control
         {
+            private static readonly Font GlyphFont10 = new("Segoe MDL2 Assets", 10F);
+
             private readonly string _glyph;
             private bool _hover, _down;
 
@@ -837,6 +1221,7 @@ namespace CRM.winforms.Controls
                 Cursor = Cursors.Hand;
                 Font = UiKit.T.BodyStrong;
                 TabStop = true;
+                AccessibleRole = AccessibleRole.PushButton;
             }
 
             public int PreferredWidth => UiKit.Measure(Text, UiKit.T.BodyStrong).Width + 56;
@@ -845,6 +1230,8 @@ namespace CRM.winforms.Controls
             protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
             protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
             protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+            protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+            protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
 
             protected override void OnKeyDown(KeyEventArgs e)
             {
@@ -867,13 +1254,20 @@ namespace CRM.winforms.Controls
 
                 UiKit.FillRounded(g, ClientRectangle, 8, bg);
 
-                UiKit.Text(g, _glyph, new Font("Segoe MDL2 Assets", 10F), Color.White,
+                UiKit.Text(g, _glyph, GlyphFont10, Color.White,
                     new Rectangle(16, 0, 18, Height),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
                 UiKit.Text(g, Text, UiKit.T.BodyStrong, Color.White,
                     new Rectangle(36, 0, Width - 46, Height),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                if (Focused)
+                {
+                    var ring = ClientRectangle;
+                    ring.Inflate(-3, -3);
+                    UiKit.StrokeRounded(g, ring, 6, Color.White, 1.5f);
+                }
             }
         }
     }

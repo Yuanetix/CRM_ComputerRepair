@@ -160,17 +160,10 @@ namespace CRM.winforms
             if (result != DialogResult.Yes) return;
 
             UserSession.Clear();
-            this.Hide();
+            UserSession.LogoutRequested = true;
 
-            using (var login = new LoginForm())
-            {
-                if (login.ShowDialog() == DialogResult.OK && UserSession.IsAuthenticated)
-                {
-                    var next = new MainForm();
-                    next.Show();
-                }
-            }
-
+            // Program.cs runs the login → main-form loop; closing this form
+            // ends Application.Run and reopens the login screen.
             this.Close();
         }
 

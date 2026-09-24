@@ -14,6 +14,12 @@
         public static int CompanyId { get; set; } = 1;
         public static string Token { get; set; } = "";
 
+        /// <summary>
+        /// Set when the user signs out of the running app, so Program.cs can
+        /// reopen the login form instead of exiting the application.
+        /// </summary>
+        public static bool LogoutRequested { get; set; }
+
         public static bool IsAuthenticated => !string.IsNullOrEmpty(UserId);
 
         public static void Clear()
@@ -25,6 +31,7 @@
             Role = "";
             CompanyId = 1;
             Token = "";
+            LogoutRequested = false;
         }
     }
 }
