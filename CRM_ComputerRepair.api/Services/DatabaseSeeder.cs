@@ -47,12 +47,14 @@ public static class DatabaseSeeder
 
         if (await tenant.Customers.AnyAsync())
         {
-            logger.LogInformation("Tenant data already present — skipping tenant seed.");
+            logger.LogInformation("Tenant data already present — ensuring retention defaults are seeded...");
+            await SeedRetentionDefaultsAsync(tenant);
             return;
         }
 
         logger.LogInformation("Seeding tenant demo data (80 customers, 240 repairs, 220+ transactions)...");
         await SeedTenantAsync(tenant, master, seededPrograms);
+        await SeedRetentionDefaultsAsync(tenant);
 
         logger.LogInformation("Database seeding completed successfully.");
     }
@@ -102,7 +104,7 @@ public static class DatabaseSeeder
         const string code = "FIXORY-001";
 
         var company = await master.Companies
-            .FirstOrDefaultAsync(c => c.CompanyCode == code);
+            .FirstOrDefaultAsync(c => c.CompanyId == 1 || c.CompanyCode == code);
 
         if (company is null)
         {
@@ -766,6 +768,174 @@ public static class DatabaseSeeder
             {
                 master.CustomerLoyaltyAccounts.AddRange(newAccounts);
                 await master.SaveChangesAsync();
+            }
+        }
+    }
+
+    private static async Task SeedRetentionDefaultsAsync(TenantCrmDbContext tenant)
+    {
+        // ── 1. Settings ──
+        if (!await tenant.RetentionSettings.AnyAsync())
+        {
+            tenant.RetentionSettings.Add(new RetentionSettings
+            {
+                InactiveThresholdDays = 180,
+                AtRiskThresholdDays = 90,
+                AntiFatigueDays = 14,
+                DefaultOfferValidityDays = 14,
+                SmtpHost = "localhost",
+                SmtpPort = 25,
+                SmtpFromEmail = "retention@fixorycrm.local",
+                SmtpFromName = "Fixory Computer Repair Services",
+                SmtpEnableSsl = false,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await tenant.SaveChangesAsync();
+        }
+
+        // ── 2. Templates ──
+        if (!await tenant.RetentionEmailTemplates.AnyAsync())
+        {
+            tenant.RetentionEmailTemplates.AddRange(
+                new RetentionEmailTemplate
+                {
+                    Segment = RetentionSegment.New,
+                    TemplateName = "New Customer — Welcome & 5% Next Service",
+                    Subject = "Thank You for Choosing Fixory — Enjoy 5% Off Your Next Computer Service",
+                    Body = "<p>Thank you for trusting Fixory Computer Repair Services with your device!</p><p>As our way of saying thank you, please enjoy <strong>{{discount_percent}} off</strong> your next maintenance, checkup, or hardware accessory.</p><p>Use promo code <strong>{{promo_code}}</strong> within the next {{validity_days}} days (expires {{expiration_date}}).</p>",
+                    DefaultDiscountPercent = 5m,
+                    ValidityDays = 14,
+                    IsActive = true
+                },
+                new RetentionEmailTemplate
+                {
+                    Segment = RetentionSegment.Returning,
+                    TemplateName = "Returning Customer — Device Health & Upgrade Check",
+                    Subject = "Got Another Device Needing Care? Save with Fixory",
+                    Body = "<p>We hope your recently repaired computer is running at peak speed!</p><p>Whether you have a second computer that needs a tune-up or are looking for a hardware upgrade, we are pleased to offer you <strong>{{discount_percent}} off</strong> labor.</p><p>Mention promo code <strong>{{promo_code}}</strong> upon arrival. Valid through {{expiration_date}}.</p>",
+                    DefaultDiscountPercent = 10m,
+                    ValidityDays = 14,
+                    IsActive = true
+                },
+                new RetentionEmailTemplate
+                {
+                    Segment = RetentionSegment.Loyal,
+                    TemplateName = "Loyal Customer — VIP Appreciation Reward",
+                    Subject = "Exclusive Fixory VIP Reward — 10% Off Your Next Repair",
+                    Body = "<p>Thank you for being one of Fixory's most valued customers!</p><p>As a member of our loyal client community, we have activated a special <strong>{{discount_percent}} VIP discount</strong> with priority diagnostic bench placement.</p><p>Promo Code: <strong>{{promo_code}}</strong> &bull; Valid through {{expiration_date}}.</p>",
+                    DefaultDiscountPercent = 10m,
+                    ValidityDays = 14,
+                    IsActive = true
+                },
+                new RetentionEmailTemplate
+                {
+                    Segment = RetentionSegment.AtRisk,
+                    TemplateName = "At Risk — Preventative Care & Tune-up",
+                    Subject = "Is Your Computer Running Slower? Time for a Fixory Tune-up (10% Off)",
+                    Body = "<p>It has been a few months since your last repair, and computers accumulate dust, thermal paste wear, and software clutter over time.</p><p>Bring your system in for a preventative clean-up and tune-up and get <strong>{{discount_percent}} off</strong> with code <strong>{{promo_code}}</strong>.</p><p>Offer valid through {{expiration_date}}.</p>",
+                    DefaultDiscountPercent = 10m,
+                    ValidityDays = 14,
+                    IsActive = true
+                },
+                new RetentionEmailTemplate
+                {
+                    Segment = RetentionSegment.Inactive,
+                    TemplateName = "Inactive — Re-engagement & Comprehensive Diagnostic",
+                    Subject = "We Miss You at Fixory! Here is 15% Off Your Next Computer Repair",
+                    Body = "<p>It has been over 6 months since we last serviced your system, and we want to ensure everything is operating reliably!</p><p>We would love to welcome you back with a comprehensive diagnostic and <strong>{{discount_percent}} off</strong> all labor and services.</p><p>Redeem with code <strong>{{promo_code}}</strong> before {{expiration_date}}.</p>",
+                    DefaultDiscountPercent = 15m,
+                    ValidityDays = 14,
+                    IsActive = true
+                }
+            );
+            await tenant.SaveChangesAsync();
+        }
+
+        // ── 3. Sample Requests (if none exist) ──
+        if (!await tenant.RetentionRequests.AnyAsync())
+        {
+            var customers = await tenant.Customers.Take(4).ToListAsync();
+            if (customers.Count >= 3)
+            {
+                var req1 = new RetentionRequest
+                {
+                    CustomerId = customers[0].CustomerId,
+                    TargetSegment = RetentionSegment.AtRisk,
+                    ActionType = "Discount",
+                    ProposedDiscountPercent = 10m,
+                    RetentionDetails = "Customer had GPU fan replacement 4 months ago. Recommend 6-month thermal maintenance before summer heat.",
+                    ReasonCategory = "Prevent Customer Churn",
+                    ReasonNote = "Customer indicated high gaming workload; preventative outreach prevents hardware failure.",
+                    Status = RetentionRequestStatus.Pending,
+                    SubmittedByUserId = "manager",
+                    SubmittedByName = "Manager User",
+                    SubmittedAt = DateTime.UtcNow.AddDays(-2),
+                    AddedToCampaign = false
+                };
+
+                var req2 = new RetentionRequest
+                {
+                    CustomerId = customers[1].CustomerId,
+                    TargetSegment = RetentionSegment.Loyal,
+                    ActionType = "Discount",
+                    ProposedDiscountPercent = 15m,
+                    RetentionDetails = "High-value recurring client with 4 completed repairs. VIP loyalty discount for next office computer upgrade.",
+                    ReasonCategory = "Increase Customer Lifetime Value",
+                    ReasonNote = "Strategic account with multiple workstations.",
+                    Status = RetentionRequestStatus.Approved,
+                    SubmittedByUserId = "manager",
+                    SubmittedByName = "Manager User",
+                    SubmittedAt = DateTime.UtcNow.AddDays(-5),
+                    ReviewedByUserId = "admin",
+                    ReviewedByName = "Admin User",
+                    ReviewedAt = DateTime.UtcNow.AddDays(-4),
+                    ReviewRemarks = "Approved as part of Q3 VIP account retention push.",
+                    AddedToCampaign = true,
+                    CampaignAddedAt = DateTime.UtcNow.AddDays(-4)
+                };
+
+                var log2 = new RetentionEmailLog
+                {
+                    RetentionRequest = req2,
+                    CustomerId = customers[1].CustomerId,
+                    RecipientName = $"{customers[1].FirstName} {customers[1].LastName}".Trim(),
+                    RecipientEmail = customers[1].Email ?? "client@fixorycrm.local",
+                    Subject = "Exclusive Fixory VIP Reward — 15% Off Your Next Workstation Upgrade",
+                    FormattedBody = "<p>Dear <strong>" + customers[1].FirstName + "</strong>,</p><p>As one of our VIP clients, enjoy <strong>15% OFF</strong> on your next repair or workstation maintenance service.</p><p>Promo Code: <strong>FIXORY-VIP-7821</strong> (Valid for 14 days).</p>",
+                    Segment = RetentionSegment.Loyal,
+                    DiscountPercent = 15m,
+                    PromoCode = "FIXORY-VIP-7821",
+                    ValidUntil = DateTime.UtcNow.AddDays(10),
+                    IsDispatched = false,
+                    IsAutomated = true,
+                    CreatedAt = DateTime.UtcNow.AddDays(-4),
+                    DeliveryStatus = "Pending"
+                };
+
+                var req3 = new RetentionRequest
+                {
+                    CustomerId = customers[2].CustomerId,
+                    TargetSegment = RetentionSegment.Inactive,
+                    ActionType = "Discount",
+                    ProposedDiscountPercent = 25m,
+                    RetentionDetails = "Proposing a 25% discount to win back client who hasn't visited in 9 months.",
+                    ReasonCategory = "Promotional or Strategic Decision",
+                    ReasonNote = "High discount proposed to test win-back response.",
+                    Status = RetentionRequestStatus.Rejected,
+                    SubmittedByUserId = "manager",
+                    SubmittedByName = "Manager User",
+                    SubmittedAt = DateTime.UtcNow.AddDays(-7),
+                    ReviewedByUserId = "admin",
+                    ReviewedByName = "Admin User",
+                    ReviewedAt = DateTime.UtcNow.AddDays(-6),
+                    RejectionReason = "Discount exceeds company policy limit of 15% for inactive win-back campaigns.",
+                    ReviewRemarks = "Please adjust discount to 15% and resubmit.",
+                    AddedToCampaign = false
+                };
+
+                tenant.RetentionRequests.AddRange(req1, req2, req3);
+                tenant.RetentionEmailLogs.Add(log2);
+                await tenant.SaveChangesAsync();
             }
         }
     }

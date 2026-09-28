@@ -1,4 +1,4 @@
-﻿using CRM.winforms.Auth;
+using CRM.winforms.Auth;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -147,6 +147,7 @@ namespace CRM.winforms
         {
             AddSection("Main");
             AddNav("dashboard", IconFont.Dashboard, "Dashboard");
+            AddNav("retention", IconFont.Loyalty, "Retention");
 
             AddSection("Administration");
             AddNav("admin-accounts", IconFont.Profile, "Admin accounts");
@@ -198,7 +199,6 @@ namespace CRM.winforms
             AddNav("interactions", IconFont.Customers, "Interactions");
             AddNav("repairs", IconFont.Repairs, "Repair requests");
             AddNav("customer-history", IconFont.Dashboard, "Customer history");
-            AddNav("retention", IconFont.Loyalty, "Retention");
         }
 
         // ═══════════ ITEM FACTORIES ═══════════

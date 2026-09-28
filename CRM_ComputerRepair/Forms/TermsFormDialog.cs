@@ -1,4 +1,4 @@
-﻿using CRM.winforms.Controls;
+using CRM.winforms.Controls;
 using CRM.winforms.Forms;
 using System;
 using System.ComponentModel;
@@ -172,7 +172,7 @@ namespace CRM.winforms
             if (string.IsNullOrWhiteSpace(inpTitle.Text))
             {
                 inpTitle.HasError = true;
-                lblErrorTitle.Text = "⚠  Title is required.";
+                lblErrorTitle.Text = "Title is required.";
                 lblErrorTitle.Visible = true;
                 firstInvalid ??= inpTitle;
                 valid = false;
@@ -180,7 +180,7 @@ namespace CRM.winforms
 
             if (string.IsNullOrWhiteSpace(inpContent.Text))
             {
-                lblErrorContent.Text = "⚠  Content is required.";
+                lblErrorContent.Text = "Content is required.";
                 lblErrorContent.Visible = true;
                 firstInvalid ??= inpContent;
                 valid = false;

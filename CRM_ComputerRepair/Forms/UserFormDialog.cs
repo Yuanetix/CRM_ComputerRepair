@@ -1,4 +1,4 @@
-﻿using CRM.winforms.Controls;
+using CRM.winforms.Controls;
 using CRM.winforms.Forms;
 using System;
 using System.ComponentModel;
@@ -287,7 +287,7 @@ namespace CRM.winforms
         private static void ShowError(TextField input, Label err, string msg)
         {
             input.HasError = true;
-            err.Text = "⚠  " + msg;
+            err.Text = msg;
             err.Visible = true;
         }
 

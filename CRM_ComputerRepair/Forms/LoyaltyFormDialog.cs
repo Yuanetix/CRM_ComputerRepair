@@ -273,7 +273,7 @@ namespace CRM.winforms
             if (string.IsNullOrWhiteSpace(inpProgramName.Text))
             {
                 inpProgramName.HasError = true;
-                lblErrorName.Text = "⚠  Program name is required.";
+                lblErrorName.Text = "Program name is required.";
                 lblErrorName.Visible = true;
                 inpProgramName.Focus();
                 return false;

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -183,16 +183,16 @@ namespace CRM.winforms
             if (Width <= 0 || Height <= 0) return;
 
             lblTitle.Location = new Point(0, 0);
-            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
+            int subtitleY = lblTitle.PreferredHeight + 6;
             lblSubtitle.Location = new Point(1, subtitleY);
 
             int rightX = Width;
             btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(rightX - btnRefresh.Width, UiKit.T.S1);
+            btnRefresh.Location = new Point(rightX - btnRefresh.Width, 2);
             rightX -= btnRefresh.Width + 8;
 
             btnNew.Size = new Size(btnNew.PreferredWidth, UiKit.T.ButtonHeight);
-            btnNew.Location = new Point(rightX - btnNew.Width, UiKit.T.S1);
+            btnNew.Location = new Point(rightX - btnNew.Width, 2);
 
             int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
             int cardTop = dividerY + UiKit.T.S5;
@@ -253,7 +253,7 @@ namespace CRM.winforms
                 lstTerms.Items.Clear();
                 foreach (var t in _all)
                 {
-                    var prefix = t.IsActive ? "● " : "○ ";
+                    var prefix = t.IsActive ? "[Active] " : "[Archived] ";
                     lstTerms.Items.Add($"{prefix}{t.Title}  ({t.VersionDisplay})");
                 }
 

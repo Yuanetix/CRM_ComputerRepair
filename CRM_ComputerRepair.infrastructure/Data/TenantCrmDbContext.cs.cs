@@ -1,4 +1,4 @@
-﻿using CRM_ComputerRepair.domain.Entities;
+using CRM_ComputerRepair.domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace CRM_ComputerRepair.infrastructure.Data;
@@ -25,6 +25,12 @@ public class TenantCrmDbContext : DbContext
 
     // Step 1 addition
     public DbSet<FollowUp> FollowUps => Set<FollowUp>();
+
+    // Retention & Email Campaigns
+    public DbSet<RetentionRequest> RetentionRequests => Set<RetentionRequest>();
+    public DbSet<RetentionEmailLog> RetentionEmailLogs => Set<RetentionEmailLog>();
+    public DbSet<RetentionEmailTemplate> RetentionEmailTemplates => Set<RetentionEmailTemplate>();
+    public DbSet<RetentionSettings> RetentionSettings => Set<RetentionSettings>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -181,6 +187,74 @@ public class TenantCrmDbContext : DbContext
                 .WithMany(p => p.RepairParts)
                 .HasForeignKey(x => x.PartId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ═══════════ RetentionRequest ═══════════
+        builder.Entity<RetentionRequest>(entity =>
+        {
+            entity.HasKey(x => x.RetentionRequestId);
+            entity.Property(x => x.ActionType).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.ProposedDiscountPercent).HasPrecision(5, 2);
+            entity.Property(x => x.RetentionDetails).HasMaxLength(2000).IsRequired();
+            entity.Property(x => x.ReasonCategory).HasMaxLength(150).IsRequired();
+            entity.Property(x => x.ReasonNote).HasMaxLength(2000);
+            entity.Property(x => x.SubmittedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(x => x.SubmittedByName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.ReviewedByUserId).HasMaxLength(450);
+            entity.Property(x => x.ReviewedByName).HasMaxLength(200);
+            entity.Property(x => x.ReviewRemarks).HasMaxLength(2000);
+            entity.Property(x => x.RejectionReason).HasMaxLength(2000);
+
+            entity.HasOne(x => x.Customer)
+                .WithMany()
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ═══════════ RetentionEmailLog ═══════════
+        builder.Entity<RetentionEmailLog>(entity =>
+        {
+            entity.HasKey(x => x.RetentionEmailLogId);
+            entity.Property(x => x.RecipientEmail).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.RecipientName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Subject).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.FormattedBody).IsRequired();
+            entity.Property(x => x.DiscountPercent).HasPrecision(5, 2);
+            entity.Property(x => x.PromoCode).HasMaxLength(50);
+            entity.Property(x => x.DispatchedByUserId).HasMaxLength(450);
+            entity.Property(x => x.DeliveryStatus).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.DeliveryError).HasMaxLength(2000);
+
+            entity.HasOne(x => x.Customer)
+                .WithMany()
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(x => x.RetentionRequest)
+                .WithMany(r => r.EmailLogs)
+                .HasForeignKey(x => x.RetentionRequestId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ═══════════ RetentionEmailTemplate ═══════════
+        builder.Entity<RetentionEmailTemplate>(entity =>
+        {
+            entity.HasKey(x => x.RetentionEmailTemplateId);
+            entity.Property(x => x.TemplateName).HasMaxLength(150).IsRequired();
+            entity.Property(x => x.Subject).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.Body).IsRequired();
+            entity.Property(x => x.DefaultDiscountPercent).HasPrecision(5, 2);
+        });
+
+        // ═══════════ RetentionSettings ═══════════
+        builder.Entity<RetentionSettings>(entity =>
+        {
+            entity.HasKey(x => x.RetentionSettingsId);
+            entity.Property(x => x.SmtpHost).HasMaxLength(200);
+            entity.Property(x => x.SmtpUsername).HasMaxLength(200);
+            entity.Property(x => x.SmtpPassword).HasMaxLength(200);
+            entity.Property(x => x.SmtpFromEmail).HasMaxLength(200);
+            entity.Property(x => x.SmtpFromName).HasMaxLength(200);
         });
 
         // ═══════════════════════════════════════════════════════════

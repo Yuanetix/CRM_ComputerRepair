@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace CRM.winforms.Controls
@@ -26,8 +26,8 @@ namespace CRM.winforms.Controls
 
             lblIcon = new Label
             {
-                Text = "🚧",
-                Font = new Font("Segoe UI", 48F),
+                Text = "\uE897",
+                Font = IconFont.Create(48F),
                 AutoSize = true,
                 ForeColor = FixoryTheme.TextSecondary
             };

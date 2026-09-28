@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
@@ -243,7 +243,7 @@ namespace CRM.winforms
         {
             input.BackColor = AppTheme.DangerSoft;
             input.ForeColor = AppTheme.TextPrimary;
-            errorLabel.Text = "⚠  " + message;
+            errorLabel.Text = message;
             errorLabel.Visible = true;
         }
 

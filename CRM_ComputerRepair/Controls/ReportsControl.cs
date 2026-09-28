@@ -1,4 +1,4 @@
-﻿using CRM.winforms;
+using CRM.winforms;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -231,10 +231,10 @@ namespace CRM.winforms.Controls
 
             lblTitle.Location = new Point(0, 0);
 
-            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
+            int subtitleY = lblTitle.PreferredHeight + 6;
             lblSubtitle.Location = new Point(1, subtitleY);
 
-            int btnY = UiKit.T.S1;
+            int btnY = 2;
 
             btnExport.Size = new Size(btnExport.PreferredWidth, UiKit.T.ButtonHeight);
             btnExport.Location = new Point(Width - btnExport.Width, btnY);
@@ -252,7 +252,7 @@ namespace CRM.winforms.Controls
                 int w = tab.GetPreferredWidth();
                 tab.Location = new Point(tabsX, 0);
                 tab.Size = new Size(w, 34);
-                tabsX += w + 4;
+                tabsX += w + 6;
             }
 
             pnlTabs.Location = new Point(0, tabsY);
@@ -267,11 +267,11 @@ namespace CRM.winforms.Controls
 
             int cp = UiKit.T.S5;
 
-            lblGridTitle.Location = new Point(cp, UiKit.T.S5 - 2);
+            lblGridTitle.Location = new Point(cp, UiKit.T.S5);
             lblCount.Location = new Point(lblGridTitle.Right + UiKit.T.S2,
                 lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
 
-            int toolbarY = lblGridTitle.Bottom + UiKit.T.S4;
+            int toolbarY = lblGridTitle.Bottom + 14;
 
             dateRange.Size = new Size(dateRange.PreferredWidth, 34);
             dateRange.Location = new Point(cp, toolbarY);
@@ -280,7 +280,7 @@ namespace CRM.winforms.Controls
             search.Size = new Size(searchW, UiKit.T.InputHeight);
             search.Location = new Point(card.Width - cp - searchW, toolbarY + (34 - UiKit.T.InputHeight) / 2);
 
-            int gridTop = toolbarY + 34 + UiKit.T.S4;
+            int gridTop = toolbarY + 34 + 14;
             int gridW = card.Width - cp * 2;
             int gridH = card.Height - gridTop - cp;
 
@@ -841,8 +841,8 @@ namespace CRM.winforms.Controls
                 };
                 lblDash = new Label
                 {
-                    Text = "→",
-                    Font = UiKit.T.Body,
+                    Text = "to",
+                    Font = UiKit.T.SmallStrong,
                     ForeColor = UiKit.T.InkMuted,
                     AutoSize = true,
                     BackColor = Color.Transparent

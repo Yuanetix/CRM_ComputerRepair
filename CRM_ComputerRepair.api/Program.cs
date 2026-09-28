@@ -65,6 +65,7 @@ builder.Services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
 // ─── Services ───
 builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<IAuditWriter, AuditWriter>();
+builder.Services.AddScoped<IEmailDeliveryService, SmtpEmailDeliveryService>();
 builder.Services.AddScoped<RetentionEngine>();
 
 // ─── Controllers ───

@@ -430,14 +430,14 @@ namespace CRM.winforms.Controls
             }
 
             // ── Header ──
-            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
+            int subtitleY = lblTitle.PreferredHeight + 6;
             int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
 
             P(lblTitle, 0, 0);
             P(lblSubtitle, 1, subtitleY);
 
             btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            P(btnRefresh, W - btnRefresh.Width, UiKit.T.S1);
+            P(btnRefresh, W - btnRefresh.Width, 2);
             P(_rule, 0, dividerY, W, 1);
 
             int y = dividerY + UiKit.T.S5;

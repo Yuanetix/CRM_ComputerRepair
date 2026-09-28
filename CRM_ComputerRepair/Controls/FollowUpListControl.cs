@@ -1,4 +1,4 @@
-﻿using CRM.winforms;
+using CRM.winforms;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -251,11 +251,11 @@ namespace CRM.winforms.Controls
 
             lblTitle.Location = new Point(0, 0);
 
-            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
+            int subtitleY = lblTitle.PreferredHeight + 6;
             lblSubtitle.Location = new Point(1, subtitleY);
 
             btnAdd.Size = new Size(btnAdd.PreferredWidth, UiKit.T.ButtonHeight);
-            btnAdd.Location = new Point(Width - btnAdd.Width, UiKit.T.S1);
+            btnAdd.Location = new Point(Width - btnAdd.Width, 2);
 
             int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
 
@@ -272,11 +272,11 @@ namespace CRM.winforms.Controls
 
             const int cp = UiKit.T.S5;
 
-            lblGridTitle.Location = new Point(cp, UiKit.T.S5 - 2);
+            lblGridTitle.Location = new Point(cp, UiKit.T.S5);
             lblCount.Location = new Point(lblGridTitle.Right + UiKit.T.S2,
                                           lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
 
-            int toolbarY = lblGridTitle.Bottom + UiKit.T.S4;
+            int toolbarY = lblGridTitle.Bottom + 14;
 
             segments.Size = new Size(segments.PreferredWidth, 34);
             segments.Location = new Point(cp, toolbarY);
@@ -285,7 +285,7 @@ namespace CRM.winforms.Controls
             search.Size = new Size(searchW, UiKit.T.InputHeight);
             search.Location = new Point(card.Width - cp - searchW, toolbarY + (34 - UiKit.T.InputHeight) / 2);
 
-            int gridTop = toolbarY + 34 + UiKit.T.S4;
+            int gridTop = toolbarY + 34 + 14;
             int gridW = card.Width - cp * 2;
             int gridH = card.Height - gridTop - cp;
 

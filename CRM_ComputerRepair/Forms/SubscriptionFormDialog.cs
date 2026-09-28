@@ -1,4 +1,4 @@
-﻿using CRM.winforms.Controls;
+using CRM.winforms.Controls;
 using CRM.winforms.Forms;
 using System;
 using System.ComponentModel;
@@ -198,7 +198,7 @@ namespace CRM.winforms
             if (string.IsNullOrWhiteSpace(inpName.Text))
             {
                 inpName.HasError = true;
-                lblErrorName.Text = "⚠  Subscription name is required.";
+                lblErrorName.Text = "Subscription name is required.";
                 lblErrorName.Visible = true;
                 inpName.Focus();
                 return false;

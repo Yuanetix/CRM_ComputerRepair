@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -129,16 +129,16 @@ namespace CRM.winforms
             if (Width <= 0 || Height <= 0) return;
 
             lblTitle.Location = new Point(0, 0);
-            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
+            int subtitleY = lblTitle.PreferredHeight + 6;
             lblSubtitle.Location = new Point(1, subtitleY);
 
             int rightX = Width;
             btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(rightX - btnRefresh.Width, UiKit.T.S1);
+            btnRefresh.Location = new Point(rightX - btnRefresh.Width, 2);
             rightX -= btnRefresh.Width + 8;
 
             btnAdd.Size = new Size(btnAdd.PreferredWidth, UiKit.T.ButtonHeight);
-            btnAdd.Location = new Point(rightX - btnAdd.Width, UiKit.T.S1);
+            btnAdd.Location = new Point(rightX - btnAdd.Width, 2);
 
             int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
             int cardTop = dividerY + UiKit.T.S5;
@@ -148,12 +148,12 @@ namespace CRM.winforms
             card.Size = new Size(Width, cardH);
 
             const int cp = UiKit.T.S5;
-            lblGridTitle.Location = new Point(cp, UiKit.T.S5 - 2);
+            lblGridTitle.Location = new Point(cp, UiKit.T.S5);
             lblCount.Location = new Point(
                 lblGridTitle.Right + UiKit.T.S2,
                 lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
 
-            int gridTop = lblGridTitle.Bottom + UiKit.T.S4;
+            int gridTop = lblGridTitle.Bottom + 14;
             int gridW = card.Width - cp * 2;
             int gridH = card.Height - gridTop - cp;
 

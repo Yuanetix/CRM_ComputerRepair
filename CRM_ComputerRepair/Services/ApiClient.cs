@@ -1,4 +1,4 @@
-﻿using CRM.winforms.Auth;
+using CRM.winforms.Auth;
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -760,6 +760,15 @@ namespace CRM.winforms
             return result ?? new List<RetentionRecommendationDto>();
         }
 
+        public async Task<List<CustomerRetentionMetricsDto>> GetRetentionMetricsAsync()
+        {
+            var response = await _http.GetAsync($"/tenant/{CompanyId}/retention/metrics");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<CustomerRetentionMetricsDto>>(json, _jsonOptions);
+            return result ?? new List<CustomerRetentionMetricsDto>();
+        }
+
         public async Task<List<RetentionCandidateDto>> GetRetentionCandidatesAsync()
         {
             var response = await _http.GetAsync(
@@ -788,6 +797,142 @@ namespace CRM.winforms
             var response = await _http.PostAsync(
                 $"/tenant/{CompanyId}/retention/{customerId}/contact", content);
 
+            await EnsureSuccess(response);
+            return true;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // RETENTION REQUESTS, APPROVALS & CAMPAIGNS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<RetentionRequestDto>> GetRetentionRequestsAsync(
+            int? status = null, DateTime? fromDate = null, DateTime? toDate = null)
+        {
+            var qs = new List<string>();
+            if (status.HasValue) qs.Add($"status={status.Value}");
+            if (fromDate.HasValue) qs.Add($"fromDate={fromDate.Value:yyyy-MM-dd}");
+            if (toDate.HasValue) qs.Add($"toDate={toDate.Value:yyyy-MM-dd}");
+
+            var url = $"/tenant/{CompanyId}/retention/requests";
+            if (qs.Count > 0) url += "?" + string.Join("&", qs);
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<List<RetentionRequestDto>>(json, _jsonOptions) ?? new();
+        }
+
+        public async Task<RetentionRequestDto?> GetRetentionRequestAsync(int id)
+        {
+            var response = await _http.GetAsync($"/tenant/{CompanyId}/retention/requests/{id}");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<RetentionRequestDto>(json, _jsonOptions);
+        }
+
+        public async Task<bool> CreateRetentionRequestAsync(CreateRetentionRequestDto request)
+        {
+            var content = ToJsonContent(request);
+            var response = await _http.PostAsync($"/tenant/{CompanyId}/retention/requests", content);
+            await EnsureSuccess(response);
+            return true;
+        }
+
+        public async Task<bool> ApproveRetentionRequestAsync(int id, string? remarks = null)
+        {
+            var body = new { reviewRemarks = remarks };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync($"/tenant/{CompanyId}/retention/requests/{id}/approve", content);
+            await EnsureSuccess(response);
+            return true;
+        }
+
+        public async Task<bool> RejectRetentionRequestAsync(int id, string rejectionReason, string? remarks = null)
+        {
+            var body = new { rejectionReason, reviewRemarks = remarks };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync($"/tenant/{CompanyId}/retention/requests/{id}/reject", content);
+            await EnsureSuccess(response);
+            return true;
+        }
+
+        public async Task<List<RetentionCampaignDto>> GetRetentionCampaignsAsync(
+            bool? isDispatched = null, DateTime? fromDate = null, DateTime? toDate = null)
+        {
+            var qs = new List<string>();
+            if (isDispatched.HasValue) qs.Add($"isDispatched={isDispatched.Value}");
+            if (fromDate.HasValue) qs.Add($"fromDate={fromDate.Value:yyyy-MM-dd}");
+            if (toDate.HasValue) qs.Add($"toDate={toDate.Value:yyyy-MM-dd}");
+
+            var url = $"/tenant/{CompanyId}/retention/campaigns";
+            if (qs.Count > 0) url += "?" + string.Join("&", qs);
+
+            var response = await _http.GetAsync(url);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<List<RetentionCampaignDto>>(json, _jsonOptions) ?? new();
+        }
+
+        public async Task<bool> DispatchRetentionEmailAsync(int id, string? customSubject = null, string? customBody = null)
+        {
+            var body = new { customSubject, customBody };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync($"/tenant/{CompanyId}/retention/campaigns/{id}/dispatch", content);
+            await EnsureSuccess(response);
+            return true;
+        }
+
+        public async Task<ManualSendResultDto> SendManualRetentionEmailAsync(SendManualRetentionEmailRequestDto request)
+        {
+            var content = ToJsonContent(request);
+            var response = await _http.PostAsync($"/tenant/{CompanyId}/retention/campaigns/manual-send", content);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                var errorJson = await response.Content.ReadAsStringAsync();
+                string msg = "Anti-Fatigue Cooldown Active";
+                try
+                {
+                    using var doc = JsonDocument.Parse(errorJson);
+                    if (doc.RootElement.TryGetProperty("message", out var m))
+                        msg = m.GetString() ?? msg;
+                }
+                catch { }
+                return new ManualSendResultDto { Success = false, InCooldown = true, Message = msg };
+            }
+
+            await EnsureSuccess(response);
+            return new ManualSendResultDto { Success = true };
+        }
+
+        public async Task<List<RetentionTemplateDto>> GetRetentionTemplatesAsync()
+        {
+            var response = await _http.GetAsync($"/tenant/{CompanyId}/retention/templates");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<List<RetentionTemplateDto>>(json, _jsonOptions) ?? new();
+        }
+
+        public async Task<bool> UpdateRetentionTemplateAsync(int id, UpdateRetentionTemplateRequestDto request)
+        {
+            var content = ToJsonContent(request);
+            var response = await _http.PutAsync($"/tenant/{CompanyId}/retention/templates/{id}", content);
+            await EnsureSuccess(response);
+            return true;
+        }
+
+        public async Task<RetentionSettingsDto?> GetRetentionSettingsAsync()
+        {
+            var response = await _http.GetAsync($"/tenant/{CompanyId}/retention/settings");
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<RetentionSettingsDto>(json, _jsonOptions);
+        }
+
+        public async Task<bool> UpdateRetentionSettingsAsync(UpdateRetentionSettingsRequestDto request)
+        {
+            var content = ToJsonContent(request);
+            var response = await _http.PutAsync($"/tenant/{CompanyId}/retention/settings", content);
             await EnsureSuccess(response);
             return true;
         }
@@ -1064,6 +1209,12 @@ namespace CRM.winforms
         public int DaysSinceLastTransaction { get; set; }
         public int Points { get; set; }
 
+        public int Segment { get; set; }
+        public string SegmentName { get; set; } = "";
+        public bool InCooldown { get; set; }
+        public int? DaysUntilNextEligible { get; set; }
+        public DateTime? LastEmailSentDate { get; set; }
+
         public string CategoryDisplay => Category switch
         {
             "Discount" => "Discount",
@@ -1074,6 +1225,177 @@ namespace CRM.winforms
         };
         public string LastVisitDisplay => $"{DaysSinceLastTransaction} days ago";
         public string SpentDisplay => $"\u20b1{TotalSpent:N2}";
+    }
+
+    public class CustomerRetentionMetricsDto
+    {
+        public int CustomerId { get; set; }
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public int? LoyaltyPoints { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public bool IsActive { get; set; }
+
+        public int CompletedTransactions { get; set; }
+        public decimal TotalSpent { get; set; }
+        public DateTime? LastTransactionDate { get; set; }
+        public int DaysSinceLastTransaction { get; set; }
+        public int ActiveMonths { get; set; }
+        public int TransactionsLast90Days { get; set; }
+        public string PreviousServices { get; set; } = "";
+        public string? LastService { get; set; }
+
+        public string FullName => $"{FirstName} {LastName}".Trim();
+        public int SegmentEnum { get; set; }
+        public string Segment { get; set; } = "New";
+
+        public bool InCooldown { get; set; }
+        public DateTime? LastEmailSentDate { get; set; }
+        public int? DaysUntilNextEligible { get; set; }
+    }
+
+    public class RetentionRequestDto
+    {
+        public int RetentionRequestId { get; set; }
+        public int CustomerId { get; set; }
+        public string CustomerName { get; set; } = "";
+        public string? CustomerEmail { get; set; }
+        public string? CustomerPhone { get; set; }
+        public int TargetSegment { get; set; }
+        public string TargetSegmentName { get; set; } = "";
+        public string ActionType { get; set; } = "";
+        public decimal ProposedDiscountPercent { get; set; }
+        public string RetentionDetails { get; set; } = "";
+        public string ReasonCategory { get; set; } = "";
+        public string? ReasonNote { get; set; }
+        public int Status { get; set; } // 0 Pending, 1 Approved, 2 Rejected
+        public string StatusText => Status switch
+        {
+            0 => "Pending",
+            1 => "Approved",
+            2 => "Rejected",
+            _ => "Unknown"
+        };
+        public string SubmittedByUserId { get; set; } = "";
+        public string SubmittedByName { get; set; } = "";
+        public DateTime SubmittedAt { get; set; }
+        public string? ReviewedByUserId { get; set; }
+        public string? ReviewedByName { get; set; }
+        public DateTime? ReviewedAt { get; set; }
+        public string? ReviewRemarks { get; set; }
+        public string? RejectionReason { get; set; }
+        public bool AddedToCampaign { get; set; }
+        public DateTime? CampaignAddedAt { get; set; }
+        public int? CampaignEmailLogId { get; set; }
+        public bool IsDispatched { get; set; }
+    }
+
+    public class CreateRetentionRequestDto
+    {
+        public int CustomerId { get; set; }
+        public int TargetSegment { get; set; }
+        public string ActionType { get; set; } = "Discount";
+        public decimal ProposedDiscountPercent { get; set; } = 10m;
+        public string RetentionDetails { get; set; } = "";
+        public string ReasonCategory { get; set; } = "Improve Customer Retention";
+        public string? ReasonNote { get; set; }
+    }
+
+    public class RetentionCampaignDto
+    {
+        public int RetentionEmailLogId { get; set; }
+        public int? RetentionRequestId { get; set; }
+        public int CustomerId { get; set; }
+        public string RecipientName { get; set; } = "";
+        public string RecipientEmail { get; set; } = "";
+        public string Subject { get; set; } = "";
+        public string FormattedBody { get; set; } = "";
+        public int Segment { get; set; }
+        public string SegmentName { get; set; } = "";
+        public decimal DiscountPercent { get; set; }
+        public string? PromoCode { get; set; }
+        public DateTime? ValidUntil { get; set; }
+        public bool IsDispatched { get; set; }
+        public DateTime? DispatchedAt { get; set; }
+        public string? DispatchedByUserId { get; set; }
+        public bool IsAutomated { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public string DeliveryStatus { get; set; } = "Pending";
+        public string? DeliveryError { get; set; }
+    }
+
+    public class ManualSendResultDto
+    {
+        public bool Success { get; set; }
+        public bool InCooldown { get; set; }
+        public string? Message { get; set; }
+    }
+
+    public class SendManualRetentionEmailRequestDto
+    {
+        public int CustomerId { get; set; }
+        public int Segment { get; set; }
+        public string Subject { get; set; } = "";
+        public string Body { get; set; } = "";
+        public decimal DiscountPercent { get; set; } = 10m;
+        public string? PromoCode { get; set; }
+        public int ValidityDays { get; set; } = 14;
+        public bool OverrideCooldown { get; set; } = false;
+    }
+
+    public class RetentionTemplateDto
+    {
+        public int RetentionEmailTemplateId { get; set; }
+        public int Segment { get; set; }
+        public string SegmentName { get; set; } = "";
+        public string TemplateName { get; set; } = "";
+        public string Subject { get; set; } = "";
+        public string Body { get; set; } = "";
+        public decimal DefaultDiscountPercent { get; set; }
+        public int ValidityDays { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    public class UpdateRetentionTemplateRequestDto
+    {
+        public string TemplateName { get; set; } = "";
+        public string Subject { get; set; } = "";
+        public string Body { get; set; } = "";
+        public decimal DefaultDiscountPercent { get; set; }
+        public int ValidityDays { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class RetentionSettingsDto
+    {
+        public int InactiveThresholdDays { get; set; } = 180;
+        public int AtRiskThresholdDays { get; set; } = 90;
+        public int AntiFatigueDays { get; set; } = 14;
+        public int DefaultOfferValidityDays { get; set; } = 14;
+        public string? SmtpHost { get; set; }
+        public int SmtpPort { get; set; }
+        public string? SmtpUsername { get; set; }
+        public string? SmtpPassword { get; set; }
+        public string? SmtpFromEmail { get; set; }
+        public string? SmtpFromName { get; set; }
+        public bool SmtpEnableSsl { get; set; }
+    }
+
+    public class UpdateRetentionSettingsRequestDto
+    {
+        public int InactiveThresholdDays { get; set; } = 180;
+        public int AtRiskThresholdDays { get; set; } = 90;
+        public int AntiFatigueDays { get; set; } = 14;
+        public int DefaultOfferValidityDays { get; set; } = 14;
+        public string? SmtpHost { get; set; }
+        public int SmtpPort { get; set; } = 25;
+        public string? SmtpUsername { get; set; }
+        public string? SmtpPassword { get; set; }
+        public string? SmtpFromEmail { get; set; }
+        public string? SmtpFromName { get; set; }
+        public bool SmtpEnableSsl { get; set; }
     }
 
     public class InteractionsByTypeDto

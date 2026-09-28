@@ -1,4 +1,4 @@
-﻿using CRM_ComputerRepair.domain.Entities;
+using CRM_ComputerRepair.domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -235,5 +235,11 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.Details).HasMaxLength(2000);
             entity.Property(x => x.UserId).HasMaxLength(450);
         });
+
+        // Ignore tenant-specific retention entities in Master DB
+        builder.Ignore<RetentionRequest>();
+        builder.Ignore<RetentionEmailLog>();
+        builder.Ignore<RetentionEmailTemplate>();
+        builder.Ignore<RetentionSettings>();
     }
 }

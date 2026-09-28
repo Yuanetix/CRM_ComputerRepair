@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Threading.Tasks;
@@ -213,19 +213,19 @@ namespace CRM.winforms
             if (Width <= 0 || Height <= 0) return;
 
             lblTitle.Location = new Point(0, 0);
-            int subtitleY = lblTitle.PreferredHeight + UiKit.T.S1;
+            int subtitleY = lblTitle.PreferredHeight + 6;
             lblSubtitle.Location = new Point(1, subtitleY);
 
             int rightX = Width;
             btnReload.Size = new Size(btnReload.PreferredWidth, UiKit.T.ButtonHeight);
-            btnReload.Location = new Point(rightX - btnReload.Width, UiKit.T.S1);
+            btnReload.Location = new Point(rightX - btnReload.Width, 2);
             rightX -= btnReload.Width + 8;
 
             btnLoad.Size = new Size(btnLoad.PreferredWidth, UiKit.T.ButtonHeight);
-            btnLoad.Location = new Point(rightX - btnLoad.Width, UiKit.T.S1);
+            btnLoad.Location = new Point(rightX - btnLoad.Width, 2);
             rightX -= btnLoad.Width + 8;
 
-            inpCustomerId.Location = new Point(rightX - inpCustomerId.Width, UiKit.T.S1);
+            inpCustomerId.Location = new Point(rightX - inpCustomerId.Width, 2 + (UiKit.T.ButtonHeight - inpCustomerId.Height) / 2);
 
             int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
             int cardTop = dividerY + UiKit.T.S5;
