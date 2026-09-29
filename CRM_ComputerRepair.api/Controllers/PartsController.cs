@@ -17,10 +17,23 @@ public class PartsController : ControllerBase
     public PartsController(ITenantDbContextFactory factory) => _factory = factory;
 
     [HttpGet]
-    public async Task<IActionResult> GetAll(int companyId)
+    public async Task<IActionResult> GetAll(int companyId, [FromQuery] string? search = null)
     {
         await using var db = await _factory.CreateAsync(companyId);
-        var list = await db.Parts.AsNoTracking().ToListAsync();
+        var query = db.Parts.AsNoTracking().AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim();
+            query = query.Where(p =>
+                p.PartCode.Contains(s) ||
+                p.PartName.Contains(s) ||
+                (p.Category != null && p.Category.Contains(s)) ||
+                (p.Manufacturer != null && p.Manufacturer.Contains(s)) ||
+                (p.Model != null && p.Model.Contains(s)));
+        }
+
+        var list = await query.ToListAsync();
         return Ok(list);
     }
 

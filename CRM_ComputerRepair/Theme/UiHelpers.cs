@@ -141,7 +141,7 @@ namespace CRM.winforms
 
             panel.Paint += (s, e) =>
             {
-                var p = (Panel)s;
+                if (s is not Panel p) return;
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
                 using var pen = new Pen(AppTheme.Border, 1);
@@ -193,7 +193,9 @@ namespace CRM.winforms
             return path;
         }
 
-        // ═══════════ GRID ═══════════
+        // ═══════════ GRID (SaaS table) ═══════════
+        // HCI: quiet chrome, row hover as a whole, soft-tint selection so the
+        // focused row is visible without shouting. One header style everywhere.
 
         public static void StyleGrid(DataGridView grid)
         {
@@ -208,23 +210,31 @@ namespace CRM.winforms
             grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
             grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(249, 250, 252);
             grid.ColumnHeadersDefaultCellStyle.ForeColor = AppTheme.TextPrimary;
-            grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 8.5F);
-            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(12, 10, 12, 10);
+            grid.ColumnHeadersDefaultCellStyle.Font = AppFonts.Strong(8.5F);
+            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(12, 8, 12, 8);
             grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(249, 250, 252);
             grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
-            grid.ColumnHeadersHeight = 44;
+            grid.ColumnHeadersHeight = 42;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
 
             // Cells
-            grid.DefaultCellStyle.Font = new Font("Segoe UI", 9F);
+            grid.DefaultCellStyle.Font = AppFonts.Regular(9F);
             grid.DefaultCellStyle.ForeColor = AppTheme.TextPrimary;
             grid.DefaultCellStyle.BackColor = Color.White;
             grid.DefaultCellStyle.SelectionBackColor = AppTheme.PrimarySoft;
             grid.DefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
-            grid.DefaultCellStyle.Padding = new Padding(12, 8, 12, 8);
-            grid.RowTemplate.Height = 40;
+            grid.DefaultCellStyle.Padding = new Padding(12, 6, 12, 6);
+            grid.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            grid.RowTemplate.Height = 52;
 
             grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(252, 253, 255);
+            grid.AlternatingRowsDefaultCellStyle.SelectionBackColor = AppTheme.PrimarySoft;
+            grid.AlternatingRowsDefaultCellStyle.WrapMode = DataGridViewTriState.True;
+
+            // SaaS interaction: single-click selects, double-click opens, hover
+            // is handled per-module via CellPainting (row-hover wash).
+            grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+            grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
 
             // Behavior
             grid.RowHeadersVisible = false;
@@ -234,6 +244,7 @@ namespace CRM.winforms
             grid.AllowUserToDeleteRows = false;
             grid.AllowUserToResizeRows = false;
             grid.ReadOnly = true;
+            grid.ScrollBars = ScrollBars.Both;
             grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         }
 

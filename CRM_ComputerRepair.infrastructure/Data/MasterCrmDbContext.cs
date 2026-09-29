@@ -27,6 +27,12 @@ public class MasterCrmDbContext : IdentityDbContext<User>
     public DbSet<TermsAndConditions> TermsAndConditionsSet => Set<TermsAndConditions>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+    }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -36,7 +42,23 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.HasKey(x => x.CompanyId);
             entity.Property(x => x.CompanyCode).HasMaxLength(50).IsRequired();
             entity.Property(x => x.CompanyName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.ContactPhone).HasMaxLength(50);
+            entity.Property(x => x.ContactEmail).HasMaxLength(200);
+            entity.Property(x => x.ContactFirstName).HasMaxLength(100);
+            entity.Property(x => x.ContactLastName).HasMaxLength(100);
+            entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.City).HasMaxLength(100);
+            entity.Property(x => x.StateOrProvince).HasMaxLength(100);
+            entity.Property(x => x.PostalCode).HasMaxLength(20);
+            entity.Property(x => x.Country).HasMaxLength(100);
             entity.HasIndex(x => x.CompanyCode).IsUnique();
+
+            entity.Ignore(x => x.ContactPerson);
+
+            entity.HasOne(x => x.Subscription)
+                .WithMany()
+                .HasForeignKey(x => x.SubscriptionId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<CompanyDatabase>(entity =>
@@ -69,7 +91,13 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .HasForeignKey(x => x.CompanyId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            entity.HasOne(x => x.Customer)
+                .WithMany(c => c.Devices)
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(x => new { x.CompanyId, x.DeviceCode }).IsUnique();
+            entity.HasIndex(x => x.CustomerId);
         });
 
         builder.Entity<Customer>(entity =>
@@ -80,6 +108,18 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.Email).HasMaxLength(200);
             entity.Property(x => x.Phone).HasMaxLength(50);
             entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.City).HasMaxLength(100);
+            entity.Property(x => x.StateOrProvince).HasMaxLength(100);
+            entity.Property(x => x.PostalCode).HasMaxLength(20);
+            entity.Property(x => x.Country).HasMaxLength(100);
+
+            entity.Ignore(x => x.FullName);
+            entity.Ignore(x => x.FullAddress);
+
+            entity.HasIndex(x => x.Email);
+            entity.HasIndex(x => x.Phone);
+            entity.HasIndex(x => x.LastName);
+            entity.HasIndex(x => x.City);
         });
 
         // ═══════════ CustomerInteraction (Inquiry / Complaint / Feedback) ═══════════
@@ -102,6 +142,9 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .WithMany(r => r.CustomerInteractions)
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.RepairRequestId);
         });
 
         // ═══════════ FollowUp (NEW) ═══════════
@@ -124,6 +167,10 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.RepairRequestId);
+            entity.HasIndex(x => x.Status);
         });
 
         builder.Entity<RepairRequest>(entity =>
@@ -149,6 +196,10 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .WithMany(d => d.RepairRequests)
                 .HasForeignKey(x => x.DeviceId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => x.RequestDate);
         });
 
         builder.Entity<RepairStatusHistory>(entity =>
@@ -160,6 +211,8 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .WithMany()
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => x.RepairRequestId);
         });
 
         builder.Entity<Payment>(entity =>
@@ -173,6 +226,9 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .WithMany()
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.RepairRequestId);
+            entity.HasIndex(x => x.PaymentDate);
         });
 
         builder.Entity<LoyaltyProgram>(entity =>
@@ -195,11 +251,7 @@ public class MasterCrmDbContext : IdentityDbContext<User>
         {
             entity.HasKey(x => x.CustomerLoyaltyAccountId);
             entity.Property(x => x.TotalSpent).HasPrecision(18, 2);
-
-            entity.HasOne(x => x.Customer)
-                .WithMany()
-                .HasForeignKey(x => x.CustomerId)
-                .OnDelete(DeleteBehavior.Restrict);
+            entity.Ignore(x => x.Customer);
 
             entity.HasOne(x => x.LoyaltyProgram)
                 .WithMany()
@@ -213,6 +265,8 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.SubscriptionName).HasMaxLength(200).IsRequired();
             entity.Property(x => x.PricePerMonth).HasPrecision(18, 2);
             entity.Property(x => x.BillingCycle).HasMaxLength(50);
+            entity.Property(x => x.Duration).HasMaxLength(100);
+            entity.Property(x => x.Description).HasMaxLength(1000);
 
             entity.HasOne(x => x.Company)
                 .WithMany(c => c.Subscriptions)
@@ -234,6 +288,11 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.Entity).HasMaxLength(100).IsRequired();
             entity.Property(x => x.Details).HasMaxLength(2000);
             entity.Property(x => x.UserId).HasMaxLength(450);
+        });
+
+        builder.Entity<User>(entity =>
+        {
+            entity.Ignore(x => x.FullName);
         });
 
         // Ignore tenant-specific retention entities in Master DB

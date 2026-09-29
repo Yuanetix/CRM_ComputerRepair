@@ -1,4 +1,4 @@
-﻿namespace CRM_ComputerRepair.domain.Entities;
+namespace CRM_ComputerRepair.domain.Entities;
 
 public class Device
 {
@@ -19,7 +19,10 @@ public class Device
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
+    public int? CustomerId { get; set; }
+
     // Navigation
     public Company? Company { get; set; }
+    public Customer? Customer { get; set; }
     public ICollection<RepairRequest> RepairRequests { get; set; } = new List<RepairRequest>();
 }

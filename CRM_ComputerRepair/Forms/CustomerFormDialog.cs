@@ -1,5 +1,5 @@
+using CRM.winforms.Controls;
 using CRM.winforms.Forms;
-using CRM.winforms;
 using System;
 using System.ComponentModel;
 using System.Drawing;
@@ -9,7 +9,8 @@ using System.Windows.Forms;
 namespace CRM.winforms
 {
     /// <summary>
-    /// Modal dialog for Add / Edit customer with clean spacing.
+    /// Modal dialog for Add / Edit customer with 3NF-compliant atomic fields.
+    /// Captures First/Last Name, Email, Phone, Address, City, State/Province, Postal Code, Country.
     /// </summary>
     [DesignerCategory("Code")]
     public class CustomerFormDialog : ModalForm
@@ -22,27 +23,33 @@ namespace CRM.winforms
 
         // ═══════════ CONTROLS ═══════════
 
-        private Label lblSubtitle = null!;
-
         private Label lblFirstName = null!;
         private Label lblLastName = null!;
         private Label lblEmail = null!;
         private Label lblPhone = null!;
         private Label lblAddress = null!;
+        private Label lblCity = null!;
+        private Label lblProvince = null!;
+        private Label lblPostal = null!;
+        private Label lblCountry = null!;
 
         private TextField inpFirstName = null!;
         private TextField inpLastName = null!;
         private TextField inpEmail = null!;
         private TextField inpPhone = null!;
         private TextField inpAddress = null!;
+        private TextField inpCity = null!;
+        private TextField inpProvince = null!;
+        private TextField inpPostal = null!;
+        private TextField inpCountry = null!;
 
         private Label lblErrorFirstName = null!;
         private Label lblErrorLastName = null!;
         private Label lblErrorEmail = null!;
 
-        private Button btnSave = null!;
-        private Button btnCancel = null!;
-        private Button btnArchive = null!;
+        private SaasButton btnSave = null!;
+        private SaasButton btnCancel = null!;
+        private SaasButton btnArchive = null!;
 
         // ═══════════ CONSTRUCTOR ═══════════
 
@@ -53,8 +60,11 @@ namespace CRM.winforms
 
             BuildCard(
                 _isEditMode ? "Edit Customer" : "Add Customer",
-                width: 560,
-                height: _isEditMode ? 620 : 600);
+                _isEditMode
+                    ? "Update customer profile and contact details."
+                    : "Register a new customer and contact details.",
+                width: 640,
+                height: _isEditMode ? 720 : 690);
 
             BuildContent(existing);
         }
@@ -67,91 +77,90 @@ namespace CRM.winforms
             int w = ContentWidth;
             int y = ContentTopY;
 
-            // ── Subtitle ──
-            lblSubtitle = new Label
-            {
-                Text = _isEditMode
-                    ? "Update the customer's information below."
-                    : "Enter the customer's information below. Fields marked * are required.",
-                Font = AppTheme.FontSubtitle,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(w, 20)
-            };
-            pnlCard.Controls.Add(lblSubtitle);
+            int halfW = (w - 14) / 2;
 
-            y += 32;
+            // ── Section 1: Customer Details ──
+            ModalKit.MakeSection(pnlBody, "Customer Details", x, y, w);
+            y += 24;
 
-            // ── First Name * ──
-            lblFirstName = MakeLabel("First name *", x, y);
-            y += 20;
-            inpFirstName = MakeField(x, y, w, "Enter first name");
-            y += 38 + 4;
-            lblErrorFirstName = MakeErrorLabel(x, y);
+            // Row 1: First Name * & Last Name *
+            lblFirstName = ModalKit.MakeLabel(pnlBody, "First name *", x, y);
+            lblLastName = ModalKit.MakeLabel(pnlBody, "Last name *", x + halfW + 14, y);
             y += 20;
 
-            // ── Last Name * ──
-            lblLastName = MakeLabel("Last name *", x, y);
-            y += 20;
-            inpLastName = MakeField(x, y, w, "Enter last name");
-            y += 38 + 4;
-            lblErrorLastName = MakeErrorLabel(x, y);
+            inpFirstName = ModalKit.MakeField(pnlBody, x, y, halfW, "Enter first name");
+            inpLastName = ModalKit.MakeField(pnlBody, x + halfW + 14, y, halfW, "Enter last name");
+            y += 38 + 2;
+
+            lblErrorFirstName = ModalKit.MakeErrorLabel(pnlBody, x, y);
+            lblErrorLastName = ModalKit.MakeErrorLabel(pnlBody, x + halfW + 14, y);
+            y += 18;
+
+            // Row 2: Email & Phone
+            lblEmail = ModalKit.MakeLabel(pnlBody, "Email", x, y);
+            lblPhone = ModalKit.MakeLabel(pnlBody, "Phone", x + halfW + 14, y);
             y += 20;
 
-            // ── Email ──
-            lblEmail = MakeLabel("Email", x, y);
+            inpEmail = ModalKit.MakeField(pnlBody, x, y, halfW, "name@example.com");
+            inpPhone = ModalKit.MakeField(pnlBody, x + halfW + 14, y, halfW, "0917 123 4567");
+            y += 38 + 2;
+
+            lblErrorEmail = ModalKit.MakeErrorLabel(pnlBody, x, y);
+            y += 18;
+
+            // ── Section 2: Address Information (3NF Normalized) ──
+            ModalKit.MakeSection(pnlBody, "Address Information", x, y, w);
+            y += 24;
+
+            // Row 3: Street Address
+            lblAddress = ModalKit.MakeLabel(pnlBody, "Street Address", x, y);
             y += 20;
-            inpEmail = MakeField(x, y, w, "name@example.com");
-            y += 38 + 4;
-            lblErrorEmail = MakeErrorLabel(x, y);
+            inpAddress = ModalKit.MakeField(pnlBody, x, y, w, "Building, Street, Barangay");
+            y += 38 + 10;
+
+            // Row 4: City & State / Province
+            lblCity = ModalKit.MakeLabel(pnlBody, "City", x, y);
+            lblProvince = ModalKit.MakeLabel(pnlBody, "State / Province", x + halfW + 14, y);
             y += 20;
 
-            // ── Phone ──
-            lblPhone = MakeLabel("Phone", x, y);
-            y += 20;
-            inpPhone = MakeField(x, y, w, "0917 123 4567");
-            y += 38 + 14;
+            inpCity = ModalKit.MakeField(pnlBody, x, y, halfW, "e.g. Quezon City");
+            inpProvince = ModalKit.MakeField(pnlBody, x + halfW + 14, y, halfW, "e.g. Metro Manila");
+            y += 38 + 10;
 
-            // ── Address (multiline) ──
-            lblAddress = MakeLabel("Address", x, y);
+            // Row 5: Postal Code & Country
+            lblPostal = ModalKit.MakeLabel(pnlBody, "Postal Code", x, y);
+            lblCountry = ModalKit.MakeLabel(pnlBody, "Country", x + halfW + 14, y);
             y += 20;
-            inpAddress = MakeField(x, y, w, "Street, City, Province", multiline: true);
-            y += 74 + 20;
+
+            inpPostal = ModalKit.MakeField(pnlBody, x, y, halfW, "e.g. 1112");
+            inpCountry = ModalKit.MakeField(pnlBody, x + halfW + 14, y, halfW, "Philippines");
+            inpCountry.Text = "Philippines";
+            y += 38 + 20;
 
             // ── Buttons ──
-            int btnY = pnlCard.Height - ShadowPad - 60;
-            int rightEdge = ContentRightX;
-
-            int saveW = 110;
-            int cancelW = 100;
-
-            int saveX = rightEdge - saveW;
-            int cancelX = saveX - cancelW - 10;
-
-            btnCancel = MakeSecondaryButton("Cancel");
-            btnCancel.Size = new Size(cancelW, 40);
-            btnCancel.Location = new Point(cancelX, btnY);
+            btnCancel = new SaasButton("Cancel", SaasButtonVariant.Secondary);
             btnCancel.Click += (s, e) =>
             {
                 DialogResult = DialogResult.Cancel;
                 Close();
             };
 
-            btnSave = MakePrimaryButton(_isEditMode ? "Update" : "Save");
-            btnSave.Size = new Size(saveW, 40);
-            btnSave.Location = new Point(saveX, btnY);
+            btnSave = new SaasButton(_isEditMode ? "Update" : "Save", SaasButtonVariant.Primary);
             btnSave.Click += async (s, e) => await SaveAsync();
 
-            // Archive (edit mode) — bottom-left
+            // ── Archive (edit mode) — bottom-left ──
+            SaasButton? archive = null;
             if (_isEditMode)
             {
-                btnArchive = MakeDangerOutlineButton("Archive");
-                btnArchive.Size = new Size(110, 40);
-                btnArchive.Location = new Point(x, btnY);
+                btnArchive = new SaasButton("Archive", SaasButtonVariant.DangerOutline);
                 btnArchive.Click += async (s, e) => await ArchiveAsync();
+                archive = btnArchive;
             }
+
+            LayoutFooter(btnSave, btnCancel, archive);
+
+            AcceptButton = btnSave;
+            CancelButton = btnCancel;
 
             // ── Prefill ──
             if (existing != null)
@@ -161,6 +170,10 @@ namespace CRM.winforms
                 inpEmail.Text = existing.Email ?? "";
                 inpPhone.Text = existing.Phone ?? "";
                 inpAddress.Text = existing.Address ?? "";
+                inpCity.Text = existing.City ?? "";
+                inpProvince.Text = existing.StateOrProvince ?? "";
+                inpPostal.Text = existing.PostalCode ?? "";
+                inpCountry.Text = string.IsNullOrWhiteSpace(existing.Country) ? "Philippines" : existing.Country;
             }
 
             Shown += (s, e) => inpFirstName.Focus();
@@ -180,7 +193,11 @@ namespace CRM.winforms
                     LastName = inpLastName.Text.Trim(),
                     Email = inpEmail.Text.Trim(),
                     Phone = inpPhone.Text.Trim(),
-                    Address = inpAddress.Text.Trim()
+                    Address = inpAddress.Text.Trim(),
+                    City = inpCity.Text.Trim(),
+                    StateOrProvince = inpProvince.Text.Trim(),
+                    PostalCode = inpPostal.Text.Trim(),
+                    Country = string.IsNullOrWhiteSpace(inpCountry.Text) ? "Philippines" : inpCountry.Text.Trim()
                 };
 
                 if (_isEditMode && _editingCustomerId.HasValue)
@@ -259,15 +276,29 @@ namespace CRM.winforms
             }
 
             if (!string.IsNullOrWhiteSpace(inpEmail.Text) &&
-                !inpEmail.Text.Contains('@'))
+                !IsValidEmail(inpEmail.Text.Trim()))
             {
-                ShowError(inpEmail, lblErrorEmail, "Email must contain '@'.");
+                ShowError(inpEmail, lblErrorEmail, "Please enter a valid email address (e.g. name@example.com).");
                 firstInvalid ??= inpEmail;
                 valid = false;
             }
 
             firstInvalid?.Focus();
             return valid;
+        }
+
+        private static bool IsValidEmail(string email)
+        {
+            if (string.IsNullOrWhiteSpace(email)) return false;
+            try
+            {
+                var addr = new System.Net.Mail.MailAddress(email);
+                return addr.Address == email && email.Contains('.') && email.IndexOf('.') > email.IndexOf('@') + 1;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void ClearErrors()
@@ -289,112 +320,6 @@ namespace CRM.winforms
             input.HasError = false;
             err.Text = "";
             err.Visible = false;
-        }
-
-        // ═══════════ CONTROL FACTORIES ═══════════
-
-        private Label MakeLabel(string text, int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y)
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
-
-        private TextField MakeField(int x, int y, int width, string placeholder,
-                                    bool multiline = false)
-        {
-            var tf = new TextField
-            {
-                PlaceholderText = placeholder,
-                Location = new Point(x, y),
-                Size = new Size(width, multiline ? 68 : 38)
-            };
-            if (multiline) tf.Multiline = true;
-            pnlCard.Controls.Add(tf);
-            return tf;
-        }
-
-        private Label MakeErrorLabel(int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8F),
-                ForeColor = AppTheme.Danger,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Visible = false
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
-
-        private Button MakePrimaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
-
-        private Button MakeSecondaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
-
-        private Button MakeDangerOutlineButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.Danger,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.Danger;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.DangerSoft;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
         }
     }
 }

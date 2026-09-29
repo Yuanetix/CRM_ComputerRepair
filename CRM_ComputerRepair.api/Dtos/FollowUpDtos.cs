@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace CRM_ComputerRepair.api.Dtos;
 
@@ -52,4 +52,43 @@ public class UpdateFollowUpRequest
 
     [MaxLength(450)]
     public string? AssignedToUserId { get; set; }
+}
+
+public class CompleteFollowUpRequest
+{
+    [MaxLength(2000)]
+    public string? OutcomeNotes { get; set; }
+
+    public bool LogInteraction { get; set; }
+}
+
+public class RescheduleFollowUpRequest
+{
+    [Required]
+    public DateTime NewScheduledAt { get; set; }
+
+    [MaxLength(1000)]
+    public string? Reason { get; set; }
+}
+
+public class FollowUpResponseDto
+{
+    public int FollowUpId { get; set; }
+    public int? CustomerId { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerPhone { get; set; }
+    public string? CustomerEmail { get; set; }
+    public int? RepairRequestId { get; set; }
+    public string? RepairRequestNumber { get; set; }
+    public string? DeviceModel { get; set; }
+    public string Subject { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
+    public DateTime ScheduledAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public int Channel { get; set; }
+    public int Status { get; set; }
+    public string? AssignedToUserId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public bool IsActive { get; set; }
 }

@@ -12,7 +12,7 @@ namespace CRM.winforms
     public class ApiClient
     {
         private const string BaseUrl = "https://localhost:7042";
-        private const int CompanyId = 1;
+        private static int CompanyId => UserSession.CompanyId > 0 ? UserSession.CompanyId : 1;
 
         private readonly HttpClient _http;
         private readonly JsonSerializerOptions _jsonOptions;
@@ -71,9 +71,9 @@ namespace CRM.winforms
         // AUTH
         // ═══════════════════════════════════════════════════════
 
-        public async Task<LoginResponseDto?> LoginAsync(string username, string password)
+        public async Task<LoginResponseDto?> LoginAsync(string username, string password, int companyId = 1)
         {
-            var body = new { username, password };
+            var body = new { companyId, username, password };
             var content = ToJsonContent(body);
 
             var response = await _http.PostAsync("/auth/login", content);
@@ -95,6 +95,92 @@ namespace CRM.winforms
 
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<LoginResponseDto>(json, _jsonOptions);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // COMPANIES / TENANTS
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<CompanyDto>> GetCompaniesAsync()
+        {
+            var response = await _http.GetAsync("/companies");
+            if (!response.IsSuccessStatusCode)
+                return new List<CompanyDto>();
+
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<CompanyDto>>(json, _jsonOptions);
+            return result ?? new List<CompanyDto>();
+        }
+
+        public async Task<CompanyDto?> GetCompanyByIdAsync(int id)
+        {
+            var response = await _http.GetAsync($"/companies/{id}");
+            if (!response.IsSuccessStatusCode) return null;
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<CompanyDto>(json, _jsonOptions);
+        }
+
+        public async Task<List<CompanyDto>> GetActiveCompaniesAsync()
+        {
+            var response = await _http.GetAsync("/companies/active");
+            if (!response.IsSuccessStatusCode)
+                return new List<CompanyDto>();
+
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<List<CompanyDto>>(json, _jsonOptions);
+            return result ?? new List<CompanyDto>();
+        }
+
+        public async Task<string> GenerateCompanyCodeAsync()
+        {
+            try
+            {
+                var response = await _http.GetAsync("/companies/generate-code");
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("companyCode", out var prop))
+                        return prop.GetString() ?? $"CMP-{DateTime.UtcNow.Year}-1001";
+                }
+            }
+            catch { }
+
+            return $"CMP-{DateTime.UtcNow.Year}-{new Random().Next(1000, 9999)}";
+        }
+
+        public async Task<CompanyDto?> RegisterCompanyAsync(RegisterCompanyRequestDto request)
+        {
+            var content = ToJsonContent(request);
+            var response = await _http.PostAsync("/companies/register", content);
+            await EnsureSuccess(response);
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<CompanyDto>(json, _jsonOptions);
+        }
+
+        public async Task<CompanyDto?> UpdateCompanyAsync(int id, UpdateCompanyRequestDto request)
+        {
+            var content = ToJsonContent(request);
+            var response = await _http.PutAsync($"/companies/{id}", content);
+            await EnsureSuccess(response);
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<CompanyDto>(json, _jsonOptions);
+        }
+
+        public async Task<bool> ToggleCompanyStatusAsync(int id)
+        {
+            var response = await _http.PatchAsync($"/companies/{id}/toggle-status", null);
+            await EnsureSuccess(response);
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("isActive", out var prop))
+                return prop.GetBoolean();
+
+            return true;
         }
 
         // ═══════════════════════════════════════════════════════
@@ -226,6 +312,17 @@ namespace CRM.winforms
             await EnsureSuccess(response);
         }
 
+        public async Task<InteractionDto?> ResolveInteractionAsync(int interactionId, string resolution)
+        {
+            var body = new { resolution };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/interactions/{interactionId}/resolve", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<InteractionDto>(json, _jsonOptions);
+        }
+
         // ═══════════════════════════════════════════════════════
         // FOLLOW-UPS
         // ═══════════════════════════════════════════════════════
@@ -290,6 +387,30 @@ namespace CRM.winforms
             await EnsureSuccess(response);
         }
 
+        public async Task<FollowUpDto?> CompleteFollowUpAsync(
+            int followUpId, string? outcomeNotes = null, bool logInteraction = false)
+        {
+            var body = new { outcomeNotes, logInteraction };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/follow-ups/{followUpId}/complete", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<FollowUpDto>(json, _jsonOptions);
+        }
+
+        public async Task<FollowUpDto?> RescheduleFollowUpAsync(
+            int followUpId, DateTime newScheduledAt, string? reason = null)
+        {
+            var body = new { newScheduledAt, reason };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/follow-ups/{followUpId}/reschedule", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<FollowUpDto>(json, _jsonOptions);
+        }
+
         // ═══════════════════════════════════════════════════════
         // REPAIR REQUESTS
         // ═══════════════════════════════════════════════════════
@@ -332,6 +453,30 @@ namespace CRM.winforms
             var content = ToJsonContent(request);
             var response = await _http.PutAsync(
                 $"/tenant/{CompanyId}/repair-requests/{repairRequestId}", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
+        }
+
+        public async Task<RepairRequestDto?> ChangeRepairStatusAsync(
+            int repairRequestId, int status, string? notes = null)
+        {
+            var body = new { status, notes };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/repair-requests/{repairRequestId}/status", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
+        }
+
+        public async Task<RepairRequestDto?> QuickCompleteRepairAsync(
+            int repairRequestId, decimal? actualCost, decimal? partsCost, decimal? laborCost, string? technicianNotes)
+        {
+            var body = new { actualCost, partsCost, laborCost, technicianNotes };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/repair-requests/{repairRequestId}/quick-complete", content);
             await EnsureSuccess(response);
             var json = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
@@ -455,10 +600,13 @@ namespace CRM.winforms
         // SUBSCRIPTIONS
         // ═══════════════════════════════════════════════════════
 
-        public async Task<List<SubscriptionDto>> GetSubscriptionsAsync(bool activeOnly = false)
+        public async Task<List<SubscriptionDto>> GetSubscriptionsAsync(bool activeOnly = false, bool includeArchived = false)
         {
             var url = "/subscriptions";
-            if (activeOnly) url += "?activeOnly=true";
+            var query = new List<string>();
+            if (activeOnly) query.Add("activeOnly=true");
+            if (includeArchived) query.Add("includeArchived=true");
+            if (query.Count > 0) url += "?" + string.Join("&", query);
 
             var response = await _http.GetAsync(url);
             await EnsureSuccess(response);
@@ -467,16 +615,27 @@ namespace CRM.winforms
             return result ?? new List<SubscriptionDto>();
         }
 
+        public async Task<SubscriptionDto?> GetSubscriptionByIdAsync(int id)
+        {
+            var response = await _http.GetAsync($"/subscriptions/{id}");
+            if (!response.IsSuccessStatusCode) return null;
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<SubscriptionDto>(json, _jsonOptions);
+        }
+
         public async Task<SubscriptionDto?> CreateSubscriptionAsync(SubscriptionDto dto)
         {
             var body = new
             {
                 subscriptionName = dto.SubscriptionName,
                 pricePerMonth = dto.PricePerMonth,
+                durationMonths = dto.DurationMonths,
+                duration = dto.Duration,
                 maxUsers = dto.MaxUsers,
                 maxDevices = dto.MaxDevices,
-                startDate = dto.StartDate,
-                endDate = dto.EndDate,
+                enableMultiBranching = dto.EnableMultiBranching,
+                description = dto.Description,
                 billingCycle = dto.BillingCycle
             };
 
@@ -493,11 +652,14 @@ namespace CRM.winforms
             {
                 subscriptionName = dto.SubscriptionName,
                 pricePerMonth = dto.PricePerMonth,
+                durationMonths = dto.DurationMonths,
+                duration = dto.Duration,
                 maxUsers = dto.MaxUsers,
                 maxDevices = dto.MaxDevices,
-                startDate = dto.StartDate,
-                endDate = dto.EndDate,
+                enableMultiBranching = dto.EnableMultiBranching,
+                description = dto.Description,
                 isActive = dto.IsActive,
+                isArchived = dto.IsArchived,
                 billingCycle = dto.BillingCycle
             };
 
@@ -508,9 +670,28 @@ namespace CRM.winforms
             return JsonSerializer.Deserialize<SubscriptionDto>(json, _jsonOptions);
         }
 
+        public async Task<bool> ToggleSubscriptionStatusAsync(int id)
+        {
+            var response = await _http.PatchAsync($"/subscriptions/{id}/toggle-status", null);
+            await EnsureSuccess(response);
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("isActive", out var prop))
+                return prop.GetBoolean();
+
+            return true;
+        }
+
         public async Task ArchiveSubscriptionAsync(int id)
         {
-            var response = await _http.DeleteAsync($"/subscriptions/{id}");
+            var response = await _http.PostAsync($"/subscriptions/{id}/archive", null);
+            await EnsureSuccess(response);
+        }
+
+        public async Task RestoreSubscriptionAsync(int id)
+        {
+            var response = await _http.PostAsync($"/subscriptions/{id}/restore", null);
             await EnsureSuccess(response);
         }
 
@@ -953,777 +1134,5 @@ namespace CRM.winforms
             var error = await response.Content.ReadAsStringAsync();
             throw new Exception($"API error {(int)response.StatusCode}: {error}");
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // DTOs
-    // ═══════════════════════════════════════════════════════════
-
-    public class LoginResponseDto
-    {
-        public string UserId { get; set; } = "";
-        public string Username { get; set; } = "";
-        public string FullName { get; set; } = "";
-        public string Role { get; set; } = "";
-        public string Email { get; set; } = "";
-        public int CompanyId { get; set; }
-        public string Token { get; set; } = "";
-    }
-
-    public class CustomerDto
-    {
-        public int CustomerId { get; set; }
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        public string? Email { get; set; }
-        public string? Phone { get; set; }
-        public string? Address { get; set; }
-        public int? LoyaltyPoints { get; set; }
-        public bool IsActive { get; set; }
-        public DateTime CreatedAt { get; set; }
-
-        public string FullName => $"{FirstName} {LastName}".Trim();
-        public string Status => IsActive ? "Active" : "Archived";
-        public string NameDisplay => FullName;
-        public string StatusDisplay => Status;
-    }
-
-    public enum InteractionTypeFilter { Inquiry = 0, Complaint = 1, Feedback = 2 }
-    public enum FollowUpStatusFilter { Scheduled = 0, Completed = 1, Cancelled = 2 }
-    public enum RepairStatusFilter { Pending = 0, Approved = 1, InProgress = 2, Completed = 3, Rejected = 4, Reassigned = 5 }
-
-    public class InteractionDto
-    {
-        public int CustomerInteractionId { get; set; }
-        public int? CustomerId { get; set; }
-        public int? RepairRequestId { get; set; }
-        public int InteractionType { get; set; }
-        public int Status { get; set; }
-        public int Priority { get; set; }
-        public string Subject { get; set; } = "";
-        public string Notes { get; set; } = "";
-        public string? Resolution { get; set; }
-        public string? InteractionByUserId { get; set; }
-        public DateTime InteractionDate { get; set; }
-        public DateTime? UpdatedAt { get; set; }
-        public DateTime? ClosedAt { get; set; }
-        public bool IsActive { get; set; }
-
-        public string TypeText => InteractionType switch { 0 => "Inquiry", 1 => "Complaint", 2 => "Feedback", _ => "—" };
-        public string StatusText => Status switch { 0 => "Open", 1 => "In Progress", 2 => "Closed", _ => "—" };
-        public string PriorityText => Priority switch { 0 => "Low", 1 => "Medium", 2 => "High", _ => "—" };
-        public string ActivityStatus => IsActive ? "Active" : "Archived";
-    }
-
-    public class FollowUpDto
-    {
-        public int FollowUpId { get; set; }
-        public int? CustomerId { get; set; }
-        public int? RepairRequestId { get; set; }
-        public string Subject { get; set; } = "";
-        public string Notes { get; set; } = "";
-        public DateTime ScheduledAt { get; set; }
-        public DateTime? CompletedAt { get; set; }
-        public int Channel { get; set; }
-        public int Status { get; set; }
-        public string? AssignedToUserId { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime? UpdatedAt { get; set; }
-        public bool IsActive { get; set; }
-
-        public string ChannelText => Channel switch { 0 => "Call", 1 => "Email", 2 => "SMS", 3 => "Visit", _ => "—" };
-        public string StatusText => Status switch { 0 => "Scheduled", 1 => "Completed", 2 => "Cancelled", _ => "—" };
-        public string ActivityStatus => IsActive ? "Active" : "Archived";
-        public string CompletedAtDisplay => CompletedAt.HasValue
-            ? CompletedAt.Value.ToString("MMM d  HH:mm") : "—";
-    }
-
-    public class RepairRequestDto
-    {
-        public int RepairRequestId { get; set; }
-        public string RequestNumber { get; set; } = "";
-        public int CustomerId { get; set; }
-        public int? DeviceId { get; set; }
-        public string DeviceModel { get; set; } = "";
-        public string SerialNumber { get; set; } = "";
-        public string IssueDescription { get; set; } = "";
-        public int Status { get; set; }
-        public int Priority { get; set; }
-        public DateTime RequestDate { get; set; }
-        public DateTime? CompletionDate { get; set; }
-        public decimal? EstimatedCost { get; set; }
-        public decimal? ActualCost { get; set; }
-        public decimal? PartsCost { get; set; }
-        public decimal? LaborCost { get; set; }
-        public string? TechnicianNotes { get; set; }
-        public string? AssignedToStaffId { get; set; }
-        public string? AssignedToManagerId { get; set; }
-
-        public string StatusText => Status switch
-        {
-            0 => "Pending",
-            1 => "Approved",
-            2 => "In Progress",
-            3 => "Completed",
-            4 => "Rejected",
-            5 => "Reassigned",
-            _ => "—"
-        };
-        public string PriorityText => Priority switch
-        {
-            0 => "Low",
-            1 => "Medium",
-            2 => "High",
-            3 => "Urgent",
-            _ => "—"
-        };
-    }
-
-    public class DashboardDto
-    {
-        public int TotalCustomers { get; set; }
-        public int ActiveCustomers { get; set; }
-        public int InactiveCustomers { get; set; }
-        public int ReturningCustomers { get; set; }
-        public int NewThisMonth { get; set; }
-        public int TotalTransactions { get; set; }
-        public decimal TotalSales { get; set; }
-        public decimal AverageTransactionValue { get; set; }
-        public int TransactionsThisMonth { get; set; }
-        public int LoyaltyMembers { get; set; }
-        public double LoyaltyParticipationRate { get; set; }
-        public double AverageVisitsPerCustomer { get; set; }
-        public int Inactive90Days { get; set; }
-        public double RetentionRate { get; set; }
-        public int ChurnRisk { get; set; }
-        public int OpenInteractions { get; set; }
-        public int RepairsCompletedThisMonth { get; set; }
-        public double AverageTurnaroundDays { get; set; }
-        public double RepeatCustomerRate { get; set; }
-        public TopServiceDto TopService { get; set; } = new();
-        public InteractionsByTypeDto InteractionsByType { get; set; } = new();
-        public RepairsByStatusDto RepairsByStatus { get; set; } = new();
-        public List<TimeSeriesPointDto> CustomersOverTime { get; set; } = new();
-        public List<TimeSeriesPointDto> TransactionsOverTime { get; set; } = new();
-        public List<SalesPointDto> SalesOverTime { get; set; } = new();
-        public List<PopularServiceDto> PopularServices { get; set; } = new();
-        public List<ActivityPointDto> CustomerActivityTrend { get; set; } = new();
-        public List<RetentionTrendPointDto> RetentionTrend { get; set; } = new();
-        public List<LoyaltyPerformanceDto> LoyaltyPerformance { get; set; } = new();
-    }
-
-    public class TopServiceDto
-    {
-        public string Name { get; set; } = "\u2014";
-        public int Count { get; set; }
-        public decimal Revenue { get; set; }
-    }
-
-    public class SalesPointDto
-    {
-        public string Month { get; set; } = "";
-        public string Label { get; set; } = "";
-        public decimal Sales { get; set; }
-    }
-
-    public class PopularServiceDto
-    {
-        public string Service { get; set; } = "";
-        public int Count { get; set; }
-        public decimal Revenue { get; set; }
-    }
-
-    public class ActivityPointDto
-    {
-        public string Month { get; set; } = "";
-        public string Label { get; set; } = "";
-        public int Interactions { get; set; }
-        public int Repairs { get; set; }
-    }
-
-    public class LoyaltyPerformanceDto
-    {
-        public int LoyaltyProgramId { get; set; }
-        public string ProgramName { get; set; } = "";
-        public int Members { get; set; }
-        public int TotalPoints { get; set; }
-        public decimal TotalSpent { get; set; }
-        public bool IsActive { get; set; }
-    }
-
-    /// <summary>Generic drill-down response: {metric, title, columns, rows}.</summary>
-    public class AnalyticsDetailsDto
-    {
-        public string Metric { get; set; } = "";
-        public string? Title { get; set; }
-        public List<DetailColumnDto> Columns { get; set; } = new();
-        public List<Dictionary<string, object?>> Rows { get; set; } = new();
-    }
-
-    public class DetailColumnDto
-    {
-        public string Key { get; set; } = "";
-        public string Label { get; set; } = "";
-        public string Type { get; set; } = "text"; // text | number | currency | date
-    }
-
-    public class CustomerVisitDto
-    {
-        public int CustomerId { get; set; }
-        public string CustomerName { get; set; } = "";
-        public string? Email { get; set; }
-        public string? Phone { get; set; }
-        public int VisitCount { get; set; }
-        public DateTime? FirstVisit { get; set; }
-        public DateTime? LastVisit { get; set; }
-        public double VisitsPerMonth { get; set; }
-        public decimal TotalSpent { get; set; }
-    }
-
-    public class LoyaltyMemberDetailDto
-    {
-        public int CustomerId { get; set; }
-        public string CustomerName { get; set; } = "";
-        public string ProgramName { get; set; } = "";
-        public int Points { get; set; }
-        public DateTime JoinedDate { get; set; }
-        public decimal TotalSpent { get; set; }
-        public bool IsActive { get; set; }
-    }
-
-    /// <summary>Retention recommendation with the measurable basis behind it.</summary>
-    public class RetentionRecommendationDto
-    {
-        public int CustomerId { get; set; }
-        public string CustomerName { get; set; } = "";
-        public string? Email { get; set; }
-        public string? Phone { get; set; }
-        public string Category { get; set; } = "";
-        public string Action { get; set; } = "";
-        public string Basis { get; set; } = "";
-        public int? LoyaltyProgramId { get; set; }
-        public string? ProgramName { get; set; }
-        public string? Reward { get; set; }
-        public int TransactionCount { get; set; }
-        public decimal TotalSpent { get; set; }
-        public int DaysSinceLastTransaction { get; set; }
-        public int Points { get; set; }
-
-        public int Segment { get; set; }
-        public string SegmentName { get; set; } = "";
-        public bool InCooldown { get; set; }
-        public int? DaysUntilNextEligible { get; set; }
-        public DateTime? LastEmailSentDate { get; set; }
-
-        public string CategoryDisplay => Category switch
-        {
-            "Discount" => "Discount",
-            "Reward" => "Loyalty reward",
-            "Follow-up" => "Follow-up",
-            "Re-engagement" => "Re-engagement",
-            _ => Category
-        };
-        public string LastVisitDisplay => $"{DaysSinceLastTransaction} days ago";
-        public string SpentDisplay => $"\u20b1{TotalSpent:N2}";
-    }
-
-    public class CustomerRetentionMetricsDto
-    {
-        public int CustomerId { get; set; }
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        public string? Email { get; set; }
-        public string? Phone { get; set; }
-        public int? LoyaltyPoints { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public bool IsActive { get; set; }
-
-        public int CompletedTransactions { get; set; }
-        public decimal TotalSpent { get; set; }
-        public DateTime? LastTransactionDate { get; set; }
-        public int DaysSinceLastTransaction { get; set; }
-        public int ActiveMonths { get; set; }
-        public int TransactionsLast90Days { get; set; }
-        public string PreviousServices { get; set; } = "";
-        public string? LastService { get; set; }
-
-        public string FullName => $"{FirstName} {LastName}".Trim();
-        public int SegmentEnum { get; set; }
-        public string Segment { get; set; } = "New";
-
-        public bool InCooldown { get; set; }
-        public DateTime? LastEmailSentDate { get; set; }
-        public int? DaysUntilNextEligible { get; set; }
-    }
-
-    public class RetentionRequestDto
-    {
-        public int RetentionRequestId { get; set; }
-        public int CustomerId { get; set; }
-        public string CustomerName { get; set; } = "";
-        public string? CustomerEmail { get; set; }
-        public string? CustomerPhone { get; set; }
-        public int TargetSegment { get; set; }
-        public string TargetSegmentName { get; set; } = "";
-        public string ActionType { get; set; } = "";
-        public decimal ProposedDiscountPercent { get; set; }
-        public string RetentionDetails { get; set; } = "";
-        public string ReasonCategory { get; set; } = "";
-        public string? ReasonNote { get; set; }
-        public int Status { get; set; } // 0 Pending, 1 Approved, 2 Rejected
-        public string StatusText => Status switch
-        {
-            0 => "Pending",
-            1 => "Approved",
-            2 => "Rejected",
-            _ => "Unknown"
-        };
-        public string SubmittedByUserId { get; set; } = "";
-        public string SubmittedByName { get; set; } = "";
-        public DateTime SubmittedAt { get; set; }
-        public string? ReviewedByUserId { get; set; }
-        public string? ReviewedByName { get; set; }
-        public DateTime? ReviewedAt { get; set; }
-        public string? ReviewRemarks { get; set; }
-        public string? RejectionReason { get; set; }
-        public bool AddedToCampaign { get; set; }
-        public DateTime? CampaignAddedAt { get; set; }
-        public int? CampaignEmailLogId { get; set; }
-        public bool IsDispatched { get; set; }
-    }
-
-    public class CreateRetentionRequestDto
-    {
-        public int CustomerId { get; set; }
-        public int TargetSegment { get; set; }
-        public string ActionType { get; set; } = "Discount";
-        public decimal ProposedDiscountPercent { get; set; } = 10m;
-        public string RetentionDetails { get; set; } = "";
-        public string ReasonCategory { get; set; } = "Improve Customer Retention";
-        public string? ReasonNote { get; set; }
-    }
-
-    public class RetentionCampaignDto
-    {
-        public int RetentionEmailLogId { get; set; }
-        public int? RetentionRequestId { get; set; }
-        public int CustomerId { get; set; }
-        public string RecipientName { get; set; } = "";
-        public string RecipientEmail { get; set; } = "";
-        public string Subject { get; set; } = "";
-        public string FormattedBody { get; set; } = "";
-        public int Segment { get; set; }
-        public string SegmentName { get; set; } = "";
-        public decimal DiscountPercent { get; set; }
-        public string? PromoCode { get; set; }
-        public DateTime? ValidUntil { get; set; }
-        public bool IsDispatched { get; set; }
-        public DateTime? DispatchedAt { get; set; }
-        public string? DispatchedByUserId { get; set; }
-        public bool IsAutomated { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public string DeliveryStatus { get; set; } = "Pending";
-        public string? DeliveryError { get; set; }
-    }
-
-    public class ManualSendResultDto
-    {
-        public bool Success { get; set; }
-        public bool InCooldown { get; set; }
-        public string? Message { get; set; }
-    }
-
-    public class SendManualRetentionEmailRequestDto
-    {
-        public int CustomerId { get; set; }
-        public int Segment { get; set; }
-        public string Subject { get; set; } = "";
-        public string Body { get; set; } = "";
-        public decimal DiscountPercent { get; set; } = 10m;
-        public string? PromoCode { get; set; }
-        public int ValidityDays { get; set; } = 14;
-        public bool OverrideCooldown { get; set; } = false;
-    }
-
-    public class RetentionTemplateDto
-    {
-        public int RetentionEmailTemplateId { get; set; }
-        public int Segment { get; set; }
-        public string SegmentName { get; set; } = "";
-        public string TemplateName { get; set; } = "";
-        public string Subject { get; set; } = "";
-        public string Body { get; set; } = "";
-        public decimal DefaultDiscountPercent { get; set; }
-        public int ValidityDays { get; set; }
-        public bool IsActive { get; set; }
-    }
-
-    public class UpdateRetentionTemplateRequestDto
-    {
-        public string TemplateName { get; set; } = "";
-        public string Subject { get; set; } = "";
-        public string Body { get; set; } = "";
-        public decimal DefaultDiscountPercent { get; set; }
-        public int ValidityDays { get; set; }
-        public bool IsActive { get; set; } = true;
-    }
-
-    public class RetentionSettingsDto
-    {
-        public int InactiveThresholdDays { get; set; } = 180;
-        public int AtRiskThresholdDays { get; set; } = 90;
-        public int AntiFatigueDays { get; set; } = 14;
-        public int DefaultOfferValidityDays { get; set; } = 14;
-        public string? SmtpHost { get; set; }
-        public int SmtpPort { get; set; }
-        public string? SmtpUsername { get; set; }
-        public string? SmtpPassword { get; set; }
-        public string? SmtpFromEmail { get; set; }
-        public string? SmtpFromName { get; set; }
-        public bool SmtpEnableSsl { get; set; }
-    }
-
-    public class UpdateRetentionSettingsRequestDto
-    {
-        public int InactiveThresholdDays { get; set; } = 180;
-        public int AtRiskThresholdDays { get; set; } = 90;
-        public int AntiFatigueDays { get; set; } = 14;
-        public int DefaultOfferValidityDays { get; set; } = 14;
-        public string? SmtpHost { get; set; }
-        public int SmtpPort { get; set; } = 25;
-        public string? SmtpUsername { get; set; }
-        public string? SmtpPassword { get; set; }
-        public string? SmtpFromEmail { get; set; }
-        public string? SmtpFromName { get; set; }
-        public bool SmtpEnableSsl { get; set; }
-    }
-
-    public class InteractionsByTypeDto
-    {
-        public int Inquiry { get; set; }
-        public int Complaint { get; set; }
-        public int Feedback { get; set; }
-    }
-
-    public class RepairsByStatusDto
-    {
-        public int Pending { get; set; }
-        public int Approved { get; set; }
-        public int InProgress { get; set; }
-        public int Completed { get; set; }
-        public int Rejected { get; set; }
-        public int Reassigned { get; set; }
-    }
-
-    public class TimeSeriesPointDto
-    {
-        public string Month { get; set; } = "";
-        public string Label { get; set; } = "";
-        public int Count { get; set; }
-    }
-
-    public class RetentionTrendPointDto
-    {
-        public string Month { get; set; } = "";
-        public string Label { get; set; } = "";
-        public int Active { get; set; }
-    }
-
-    public class RetentionCandidateDto
-    {
-        public int CustomerId { get; set; }
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        public string? Email { get; set; }
-        public string? Phone { get; set; }
-        public int? LoyaltyPoints { get; set; }
-        public DateTime CreatedAt { get; set; }
-
-        public string FullName => $"{FirstName} {LastName}".Trim();
-        public string DisplayName => FullName;
-        public int InactiveDays => (int)(DateTime.UtcNow - CreatedAt).TotalDays;
-        public string LastContactDisplay => CreatedAt.ToString("MMM d, yyyy");
-    }
-
-    public class CustomerHistoryDto
-    {
-        public int CustomerId { get; set; }
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        public string? Email { get; set; }
-        public string? Phone { get; set; }
-        public string? Address { get; set; }
-        public int? LoyaltyPoints { get; set; }
-        public bool IsActive { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public List<CustomerHistoryRepairDto> Repairs { get; set; } = new();
-        public List<CustomerHistoryInteractionDto> Interactions { get; set; } = new();
-        public List<CustomerHistoryFollowUpDto> FollowUps { get; set; } = new();
-
-        public string FullName => $"{FirstName} {LastName}".Trim();
-    }
-
-    public class CustomerHistoryRepairDto
-    {
-        public int RepairRequestId { get; set; }
-        public string RequestNumber { get; set; } = "";
-        public string DeviceModel { get; set; } = "";
-        public string IssueDescription { get; set; } = "";
-        public int Status { get; set; }
-        public int Priority { get; set; }
-        public DateTime RequestDate { get; set; }
-        public DateTime? CompletionDate { get; set; }
-        public decimal? ActualCost { get; set; }
-
-        public string StatusText => Status switch
-        {
-            0 => "Pending",
-            1 => "Approved",
-            2 => "In Progress",
-            3 => "Completed",
-            4 => "Rejected",
-            5 => "Reassigned",
-            _ => "—"
-        };
-        public string PriorityText => Priority switch
-        {
-            0 => "Low",
-            1 => "Medium",
-            2 => "High",
-            3 => "Urgent",
-            _ => "—"
-        };
-        public string CostDisplay => ActualCost.HasValue
-            ? $"₱{ActualCost.Value:N2}" : "—";
-    }
-
-    public class CustomerHistoryInteractionDto
-    {
-        public int CustomerInteractionId { get; set; }
-        public int InteractionType { get; set; }
-        public int Status { get; set; }
-        public int Priority { get; set; }
-        public string Subject { get; set; } = "";
-        public string Notes { get; set; } = "";
-        public string? Resolution { get; set; }
-        public DateTime InteractionDate { get; set; }
-        public DateTime? ClosedAt { get; set; }
-
-        public string TypeText => InteractionType switch
-        {
-            0 => "Inquiry",
-            1 => "Complaint",
-            2 => "Feedback",
-            _ => "—"
-        };
-        public string StatusText => Status switch
-        {
-            0 => "Open",
-            1 => "In Progress",
-            2 => "Closed",
-            _ => "—"
-        };
-    }
-
-    public class CustomerHistoryFollowUpDto
-    {
-        public int FollowUpId { get; set; }
-        public string Subject { get; set; } = "";
-        public string Notes { get; set; } = "";
-        public int Channel { get; set; }
-        public int Status { get; set; }
-        public DateTime ScheduledAt { get; set; }
-        public DateTime? CompletedAt { get; set; }
-
-        public string ChannelText => Channel switch
-        {
-            0 => "Call",
-            1 => "Email",
-            2 => "SMS",
-            3 => "Visit",
-            _ => "—"
-        };
-        public string StatusText => Status switch
-        {
-            0 => "Scheduled",
-            1 => "Completed",
-            2 => "Cancelled",
-            _ => "—"
-        };
-    }
-
-    public class StaffActivityDto
-    {
-        public int RepairStatusHistoryId { get; set; }
-        public int RepairRequestId { get; set; }
-        public string RequestNumber { get; set; } = "";
-        public string DeviceModel { get; set; } = "";
-        public int OldStatus { get; set; }
-        public int NewStatus { get; set; }
-        public string? ChangedByUserId { get; set; }
-        public string? Notes { get; set; }
-        public DateTime ChangedAt { get; set; }
-
-        public string OldStatusText => OldStatus switch
-        {
-            0 => "Pending",
-            1 => "Approved",
-            2 => "In Progress",
-            3 => "Completed",
-            4 => "Rejected",
-            5 => "Reassigned",
-            _ => "—"
-        };
-        public string NewStatusText => NewStatus switch
-        {
-            0 => "Pending",
-            1 => "Approved",
-            2 => "In Progress",
-            3 => "Completed",
-            4 => "Rejected",
-            5 => "Reassigned",
-            _ => "—"
-        };
-        public string ChangeDisplay => $"{OldStatusText} → {NewStatusText}";
-        public string StaffDisplay => string.IsNullOrWhiteSpace(ChangedByUserId)
-            ? "(system)" : ChangedByUserId;
-        public string WhenDisplay => ChangedAt.ToString("MMM d, yyyy HH:mm");
-    }
-
-    public class LoyaltyProgramDto
-    {
-        public int LoyaltyProgramId { get; set; }
-        public int? CompanyId { get; set; }
-        public string ProgramName { get; set; } = "";
-        public string Description { get; set; } = "";
-        public int PointsPerPeso { get; set; }
-        public decimal DiscountPercentage { get; set; }
-        public decimal MinimumSpend { get; set; }
-        public DateTime StartDate { get; set; }
-        public DateTime EndDate { get; set; }
-        public bool IsActive { get; set; }
-        public DateTime CreatedAt { get; set; }
-
-        public int? PointsValidityDays { get; set; }
-        public int? RedeemPointsRequired { get; set; }
-
-        // Eligibility criteria — evaluated against real customer history
-        public int? MinTransactions { get; set; }
-        public decimal? MinTotalSpent { get; set; }
-        public int? MaxInactiveDays { get; set; }
-        public int? MinVisitsPerPeriod { get; set; }
-        public int? VisitPeriodDays { get; set; }
-
-        // Reward definition: 0 DiscountPercent, 1 FreeService, 2 PointsMultiplier, 3 Voucher
-        public int RewardType { get; set; }
-        public decimal RewardValue { get; set; }
-        public int? MaxRedemptionsPerCustomer { get; set; }
-
-        public string StatusText => IsActive ? "Active" : "Archived";
-        public string PointsDisplay => $"{PointsPerPeso} pt / ₱1";
-        public string DiscountDisplay => $"{DiscountPercentage:0.#}%";
-        public string MinSpendDisplay => $"₱{MinimumSpend:N2}";
-        public string StartDateDisplay => StartDate.ToString("MMM d, yyyy");
-        public string EndDateDisplay => EndDate.ToString("MMM d, yyyy");
-        public string RewardTypeText => RewardType switch
-        {
-            0 => "Discount %",
-            1 => "Free service",
-            2 => "Points multiplier",
-            3 => "Voucher",
-            _ => "—"
-        };
-        public string RewardDisplay => RewardType switch
-        {
-            0 => $"{RewardValue:0.#}% off",
-            1 => $"Free svc ≤₱{RewardValue:N0}",
-            2 => $"{RewardValue:0.#}× pts",
-            3 => $"₱{RewardValue:N0} voucher",
-            _ => "—"
-        };
-        public string EligibilityText
-        {
-            get
-            {
-                var parts = new List<string>();
-                if (MinTransactions.HasValue) parts.Add($"{MinTransactions}+ tx");
-                if (MinTotalSpent.HasValue) parts.Add($"₱{MinTotalSpent:N0}+ spent");
-                if (MaxInactiveDays.HasValue) parts.Add($"≤{MaxInactiveDays}d idle");
-                if (MinVisitsPerPeriod.HasValue && VisitPeriodDays.HasValue)
-                    parts.Add($"{MinVisitsPerPeriod}+ visits/{VisitPeriodDays}d");
-                if (MinimumSpend > 0) parts.Add($"min spend ₱{MinimumSpend:N0}");
-                return parts.Count > 0 ? string.Join(" · ", parts) : "All customers";
-            }
-        }
-    }
-
-    public class SubscriptionDto
-    {
-        public int SubscriptionId { get; set; }
-        public int? CompanyId { get; set; }
-        public string SubscriptionName { get; set; } = "";
-        public decimal PricePerMonth { get; set; }
-        public int MaxUsers { get; set; }
-        public int MaxDevices { get; set; }
-        public DateTime StartDate { get; set; }
-        public DateTime EndDate { get; set; }
-        public bool IsActive { get; set; }
-        public string? BillingCycle { get; set; }
-
-        public string StatusText => IsActive ? "Active" : "Archived";
-        public string PriceDisplay => $"₱{PricePerMonth:N2}";
-        public string StartDateDisplay => StartDate.ToString("MMM d, yyyy");
-        public string EndDateDisplay => EndDate.ToString("MMM d, yyyy");
-    }
-
-    public class TermsDto
-    {
-        public int TermsId { get; set; }
-        public string Title { get; set; } = "";
-        public string Content { get; set; } = "";
-        public DateTime Version { get; set; }
-        public bool IsActive { get; set; }
-        public string? CreatedByUserId { get; set; }
-        public DateTime CreatedAt { get; set; }
-
-        public string StatusText => IsActive ? "Active" : "Archived";
-        public string VersionDisplay => Version.ToString("MMM d, yyyy HH:mm");
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // USER / AUDIT DTOs
-    // ═══════════════════════════════════════════════════════════
-
-    public class UserSummaryDto
-    {
-        public string Id { get; set; } = "";
-        public string? UserName { get; set; }
-        public string? Email { get; set; }
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        public bool IsActive { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime? UpdatedAt { get; set; }
-        public List<string> Roles { get; set; } = new();
-
-        public string FullName => $"{FirstName} {LastName}".Trim();
-        public string RoleDisplay => Roles.Count > 0 ? string.Join(", ", Roles) : "—";
-        public string StatusText => IsActive ? "Active" : "Inactive";
-    }
-
-    public class AuditLogDto
-    {
-        public int AuditLogId { get; set; }
-        public string? UserId { get; set; }
-        public string Action { get; set; } = "";
-        public string Entity { get; set; } = "";
-        public string? EntityId { get; set; }
-        public string? Details { get; set; }
-        public DateTime Timestamp { get; set; }
-
-        public string UserDisplay => string.IsNullOrWhiteSpace(UserId) ? "(system)" : UserId;
-        public string WhenDisplay => Timestamp.ToString("MMM d, yyyy HH:mm:ss");
-        public string EntityDisplay => string.IsNullOrWhiteSpace(EntityId)
-            ? Entity : $"{Entity} #{EntityId}";
     }
 }

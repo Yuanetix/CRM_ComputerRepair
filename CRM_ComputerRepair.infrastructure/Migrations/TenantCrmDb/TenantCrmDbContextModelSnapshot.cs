@@ -35,6 +35,14 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<string>("City")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Country")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -64,7 +72,23 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("StateOrProvince")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.HasKey("CustomerId");
+
+                    b.HasIndex("City");
+
+                    b.HasIndex("Email");
+
+                    b.HasIndex("LastName");
+
+                    b.HasIndex("Phone");
 
                     b.ToTable("Customers");
                 });
@@ -149,6 +173,9 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<int?>("CustomerId")
+                        .HasColumnType("int");
+
                     b.Property<string>("DeviceCode")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -196,6 +223,8 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                         .HasColumnType("nvarchar(50)");
 
                     b.HasKey("DeviceId");
+
+                    b.HasIndex("CustomerId");
 
                     b.ToTable("Devices");
                 });
@@ -254,6 +283,8 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.HasIndex("CustomerId");
 
                     b.HasIndex("RepairRequestId");
+
+                    b.HasIndex("Status");
 
                     b.ToTable("FollowUps");
                 });
@@ -357,6 +388,8 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                         .HasColumnType("int");
 
                     b.HasKey("PaymentId");
+
+                    b.HasIndex("PaymentDate");
 
                     b.HasIndex("RepairRequestId");
 
@@ -478,8 +511,12 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
 
                     b.HasIndex("DeviceId");
 
+                    b.HasIndex("RequestDate");
+
                     b.HasIndex("RequestNumber")
                         .IsUnique();
+
+                    b.HasIndex("Status");
 
                     b.ToTable("RepairRequests");
                 });
@@ -571,10 +608,15 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<string>("RecipientName")
+                    b.Property<string>("RecipientFirstName")
                         .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("RecipientLastName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<int?>("RetentionRequestId")
                         .HasColumnType("int");
@@ -591,6 +633,8 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                         .HasColumnType("datetime2");
 
                     b.HasKey("RetentionEmailLogId");
+
+                    b.HasIndex("CreatedAt");
 
                     b.HasIndex("CustomerId");
 
@@ -696,9 +740,13 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.Property<DateTime?>("ReviewedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("ReviewedByName")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                    b.Property<string>("ReviewedByFirstName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("ReviewedByLastName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("ReviewedByUserId")
                         .HasMaxLength(450)
@@ -710,10 +758,13 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.Property<DateTime>("SubmittedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("SubmittedByName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                    b.Property<string>("SubmittedByFirstName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("SubmittedByLastName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("SubmittedByUserId")
                         .IsRequired()
@@ -726,6 +777,8 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.HasKey("RetentionRequestId");
 
                     b.HasIndex("CustomerId");
+
+                    b.HasIndex("Status");
 
                     b.ToTable("RetentionRequests");
                 });
@@ -796,11 +849,23 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<string>("City")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("ContactFirstName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("ContactLastName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<string>("ContactNumber")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<string>("ContactPerson")
+                    b.Property<string>("Country")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
@@ -817,6 +882,14 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.Property<string>("Notes")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("StateOrProvince")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("SupplierCode")
                         .IsRequired()
@@ -853,6 +926,16 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.Navigation("RepairRequest");
                 });
 
+            modelBuilder.Entity("CRM_ComputerRepair.domain.Entities.Device", b =>
+                {
+                    b.HasOne("CRM_ComputerRepair.domain.Entities.Customer", "Customer")
+                        .WithMany("Devices")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Customer");
+                });
+
             modelBuilder.Entity("CRM_ComputerRepair.domain.Entities.FollowUp", b =>
                 {
                     b.HasOne("CRM_ComputerRepair.domain.Entities.Customer", "Customer")
@@ -885,7 +968,7 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.HasOne("CRM_ComputerRepair.domain.Entities.RepairRequest", "RepairRequest")
                         .WithMany()
                         .HasForeignKey("RepairRequestId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("RepairRequest");
@@ -915,12 +998,13 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
                     b.HasOne("CRM_ComputerRepair.domain.Entities.Customer", "Customer")
                         .WithMany("RepairRequests")
                         .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("CRM_ComputerRepair.domain.Entities.Device", "Device")
                         .WithMany("RepairRequests")
-                        .HasForeignKey("DeviceId");
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Customer");
 
@@ -970,6 +1054,8 @@ namespace CRM_ComputerRepair.infrastructure.Migrations.TenantCrmDb
             modelBuilder.Entity("CRM_ComputerRepair.domain.Entities.Customer", b =>
                 {
                     b.Navigation("CustomerInteractions");
+
+                    b.Navigation("Devices");
 
                     b.Navigation("RepairRequests");
                 });

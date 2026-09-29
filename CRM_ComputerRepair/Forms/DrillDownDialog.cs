@@ -1,5 +1,7 @@
+using CRM.winforms.Auth;
 using CRM.winforms.Controls;
 using CRM.winforms.Forms;
+using CRM.winforms.Reports;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -26,36 +28,36 @@ namespace CRM.winforms
         private readonly Func<Task<AnalyticsDetailsDto?>>? _loader;
         private readonly AnalyticsDetailsDto? _prefetched;
 
-        private Label lblSubtitle = null!;
-        private Button btnExport = null!;
-        private Button btnRefresh = null!;
+        private SaasButton btnExport = null!;
+        private SaasButton btnRefresh = null!;
+        private Label lblDataTitle = null!;
 
         private DataGridView dgv = null!;
-        private Label lblEmpty = null!;
+        private SaasEmptyState emptyState = null!;
         private Label lblCount = null!;
 
         public DrillDownDialog(string title, AnalyticsDetailsDto details)
         {
             _prefetched = details;
-            BuildCard(title, width: 900, height: 620);
+            BuildCard(title, "Detailed analytics records and metric breakdown.", width: 940, height: 640);
             BuildContent();
         }
 
         public DrillDownDialog(string title, Func<Task<AnalyticsDetailsDto?>> loader)
         {
             _loader = loader;
-            BuildCard(title, width: 900, height: 620);
+            BuildCard(title, "Detailed analytics records and metric breakdown.", width: 940, height: 640);
             BuildContent();
             _ = LoadAsync();
         }
 
         private void BuildContent()
         {
-            int x = ContentLeftX;
-            int w = ContentWidth;
-            int y = ContentTopY;
+            int x = 24;
+            int w = pnlBody.ClientSize.Width - 48;
+            int y = 16;
 
-            lblSubtitle = new Label
+            lblDataTitle = new Label
             {
                 Text = "",
                 Font = AppTheme.FontSubtitle,
@@ -63,26 +65,29 @@ namespace CRM.winforms
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 Location = new Point(x, y),
-                Size = new Size(w - 220, 34)
+                Size = new Size(w - 260, 32)
             };
-            pnlCard.Controls.Add(lblSubtitle);
+            pnlBody.Controls.Add(lblDataTitle);
 
-            btnRefresh = MakeSecondaryButton("Refresh", "\uE72C");
-            btnRefresh.Location = new Point(x + w - btnRefresh.Width, y + 2);
-            pnlCard.Controls.Add(btnRefresh);
+            btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnRefresh.Size = new Size(110, 32);
+            btnRefresh.Location = new Point(x + w - btnRefresh.Width, y);
+            pnlBody.Controls.Add(btnRefresh);
             btnRefresh.Click += (s, e) => _ = LoadAsync();
 
-            btnExport = MakeSecondaryButton("Export CSV", "\uE74E");
-            btnExport.Location = new Point(btnRefresh.Left - btnExport.Width - 8, y + 2);
-            pnlCard.Controls.Add(btnExport);
-            btnExport.Click += (s, e) => ExportCsv();
+            btnExport = new SaasButton("Export PDF", SaasButtonVariant.Secondary, "\uE74E");
+            btnExport.Size = new Size(120, 32);
+            btnExport.Location = new Point(btnRefresh.Left - btnExport.Width - 8, y);
+            pnlBody.Controls.Add(btnExport);
+            btnExport.Click += (s, e) => ExportPdf();
 
-            y += 44;
+            y += 42;
 
             dgv = new DataGridView
             {
                 Location = new Point(x, y),
-                Size = new Size(w, pnlCard.Height - y - ShadowPad - 60),
+                Size = new Size(w, Math.Max(200, pnlBody.ClientSize.Height - y - 16)),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 ReadOnly = true,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
@@ -91,69 +96,42 @@ namespace CRM.winforms
                 MultiSelect = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                BackgroundColor = Color.White,
-                BorderStyle = BorderStyle.None,
-                EnableHeadersVisualStyles = false,
-                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
-                GridColor = AppTheme.Neutral,
-                RowTemplate = { Height = 34 }
+                ScrollBars = ScrollBars.Both
             };
-            dgv.ColumnHeadersDefaultCellStyle.BackColor = AppTheme.Surface;
-            dgv.ColumnHeadersDefaultCellStyle.ForeColor = AppTheme.TextSecondary;
-            dgv.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9F);
-            dgv.ColumnHeadersDefaultCellStyle.Padding = new Padding(6, 4, 6, 4);
-            dgv.ColumnHeadersHeight = 36;
-            dgv.DefaultCellStyle.BackColor = Color.White;
-            dgv.DefaultCellStyle.ForeColor = AppTheme.TextPrimary;
-            dgv.DefaultCellStyle.Font = new Font("Segoe UI", 9.5F);
-            dgv.DefaultCellStyle.SelectionBackColor = AppTheme.PrimaryHover;
-            dgv.DefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
-            dgv.DefaultCellStyle.Padding = new Padding(6, 0, 6, 0);
-            dgv.AlternatingRowsDefaultCellStyle.BackColor = AppTheme.Neutral;
-            pnlCard.Controls.Add(dgv);
+            TableKit.StyleGrid(dgv);
+            dgv.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            pnlBody.Controls.Add(dgv);
 
-            lblEmpty = new Label
+            emptyState = new SaasEmptyState
             {
-                Text = "No records found for this selection.",
-                Font = new Font("Segoe UI", 10F),
-                ForeColor = AppTheme.TextSecondary,
-                TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.Transparent,
-                Visible = false,
+                Icon = "\uE9D9",
+                Text = "No records found",
+                Subtitle = "No records found for this selection.",
+                Location = dgv.Location,
                 Size = dgv.Size,
-                Location = dgv.Location
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                Visible = false
             };
-            pnlCard.Controls.Add(lblEmpty);
+            pnlBody.Controls.Add(emptyState);
 
             lblCount = new Label
             {
                 Text = "",
-                Font = new Font("Segoe UI", 8.5F),
+                Font = UiKit.T.Small,
                 ForeColor = AppTheme.TextSecondary,
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                Location = new Point(x, pnlCard.Height - ShadowPad - 40)
+                Location = new Point(24, 22)
             };
-            pnlCard.Controls.Add(lblCount);
+            pnlFooter.Controls.Add(lblCount);
 
-            var btnClose = new Button
-            {
-                Text = "Close",
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(100, 40),
-                Location = new Point(ContentRightX - 100, pnlCard.Height - ShadowPad - 52),
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            btnClose.FlatAppearance.BorderSize = 1;
-            btnClose.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            btnClose.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            btnClose.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(btnClose, 8);
+            var btnClose = new SaasButton("Close", SaasButtonVariant.Secondary);
             btnClose.Click += (s, e) => { DialogResult = DialogResult.OK; Close(); };
-            pnlCard.Controls.Add(btnClose);
+            LayoutFooter(btnClose, null, saveW: 100);
+
+            AcceptButton = btnClose;
+            CancelButton = btnClose;
+            Shown += (s, e) => btnClose.Focus();
         }
 
         private async Task LoadAsync()
@@ -161,7 +139,7 @@ namespace CRM.winforms
             try
             {
                 dgv.Visible = true;
-                lblEmpty.Visible = false;
+                emptyState.Visible = false;
 
                 var data = _prefetched ?? await _loader!();
 
@@ -171,7 +149,7 @@ namespace CRM.winforms
                     return;
                 }
 
-                lblSubtitle.Text = data.Title ?? $"Metric: {data.Metric}";
+                lblDataTitle.Text = data.Title ?? $"Metric: {data.Metric}";
 
                 dgv.Columns.Clear();
                 dgv.Rows.Clear();
@@ -203,12 +181,20 @@ namespace CRM.winforms
                     for (int i = 0; i < data.Columns.Count; i++)
                         cells[i] = FormatCell(row.TryGetValue(data.Columns[i].Key, out var v) ? v : null,
                             data.Columns[i].Type);
-                    dgv.Rows.Add(cells);
+                    dgv.Rows.Add(cells!);
                 }
 
                 lblCount.Text = $"{data.Rows.Count:N0} record{(data.Rows.Count == 1 ? "" : "s")}";
-                dgv.Visible = data.Rows.Count > 0;
-                lblEmpty.Visible = data.Rows.Count == 0;
+                bool hasRows = data.Rows.Count > 0;
+                dgv.Visible = hasRows;
+                emptyState.Visible = !hasRows;
+                if (!hasRows)
+                {
+                    if (string.IsNullOrWhiteSpace(emptyState.Subtitle))
+                        emptyState.Subtitle = "No records found for this selection.";
+                    emptyState.BringToFront();
+                }
+                else dgv.ClearSelection();
             }
             catch (Exception ex)
             {
@@ -218,8 +204,9 @@ namespace CRM.winforms
 
         private void ShowEmpty(string message)
         {
-            lblEmpty.Text = message;
-            lblEmpty.Visible = true;
+            emptyState.Subtitle = message;
+            emptyState.Visible = true;
+            emptyState.BringToFront();
             dgv.Visible = false;
             lblCount.Text = "";
         }
@@ -227,96 +214,159 @@ namespace CRM.winforms
         private static object? FormatCell(object? value, string type)
         {
             if (value is null) return "—";
+            // API dictionaries deserialize as JsonElement — unwrap to CLR first.
+            if (value is System.Text.Json.JsonElement je)
+            {
+                switch (je.ValueKind)
+                {
+                    case System.Text.Json.JsonValueKind.Null:
+                    case System.Text.Json.JsonValueKind.Undefined:
+                        return "—";
+                    case System.Text.Json.JsonValueKind.String:
+                        value = je.GetString();
+                        if (value is null) return "—";
+                        break;
+                    case System.Text.Json.JsonValueKind.Number:
+                        // Keep as decimal for currency/number formatting below.
+                        value = je.GetDecimal();
+                        break;
+                    case System.Text.Json.JsonValueKind.True:
+                        value = true;
+                        break;
+                    case System.Text.Json.JsonValueKind.False:
+                        value = false;
+                        break;
+                    default:
+                        value = je.GetRawText();
+                        break;
+                }
+                if (value is null) return "—";
+            }
             try
             {
                 switch (type)
                 {
                     case "currency":
-                        return value is System.Text.Json.JsonElement je1 && je1.ValueKind == System.Text.Json.JsonValueKind.Number
-                            ? je1.GetDecimal()
-                            : Convert.ToDecimal(value);
+                        return Convert.ToDecimal(value);
                     case "number":
-                        return value is System.Text.Json.JsonElement je2 && je2.ValueKind == System.Text.Json.JsonValueKind.Number
-                            ? je2.GetDecimal().ToString("0.##")
-                            : value;
+                        if (value is decimal dec) return dec.ToString("0.##");
+                        if (value is double dbl) return dbl.ToString("0.##");
+                        if (decimal.TryParse(value.ToString(), out var n)) return n.ToString("0.##");
+                        return value.ToString();
                     case "date":
-                        if (value is System.Text.Json.JsonElement je3 &&
-                            je3.ValueKind == System.Text.Json.JsonValueKind.String &&
-                            DateTime.TryParse(je3.GetString(), out var dt))
-                            return dt;
+                        if (value is DateTime dto) return dto;
                         if (DateTime.TryParse(value.ToString(), out var d2))
                             return d2;
-                        return value;
+                        return "—";
                     default:
-                        return value.ToString();
+                        {
+                            var s = value.ToString();
+                            return string.IsNullOrEmpty(s) ? "—" : s;
+                        }
                 }
             }
             catch
             {
-                return value.ToString();
+                var s = value.ToString();
+                return string.IsNullOrEmpty(s) ? "—" : s;
             }
         }
 
-        private void ExportCsv()
+        private void ExportPdf()
         {
             if (dgv.Rows.Count == 0)
             {
-                MessageBox.Show("Nothing to export.", "Export CSV",
+                MessageBox.Show("Nothing to export.", "Export PDF",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
+            string safeTitle = string.Concat(Text.Split(Path.GetInvalidFileNameChars())).Replace(" ", "_");
+            if (string.IsNullOrWhiteSpace(safeTitle)) safeTitle = "DrillDown";
+
             using var sfd = new SaveFileDialog
             {
-                Filter = "CSV files|*.csv",
-                FileName = $"drilldown_{DateTime.Now:yyyyMMdd_HHmm}.csv"
+                Filter = "PDF Document (*.pdf)|*.pdf",
+                FileName = $"Fixory_{safeTitle}_{DateTime.Now:yyyyMMdd_HHmm}.pdf"
             };
             if (sfd.ShowDialog() != DialogResult.OK) return;
 
             try
             {
-                var sb = new StringBuilder();
-                sb.AppendLine(string.Join(",",
-                    dgv.Columns.Cast<DataGridViewColumn>().Select(c => Csv(c.HeaderText))));
+                var visibleCols = dgv.Columns.Cast<DataGridViewColumn>().Where(c => c.Visible).ToList();
+                var orientation = visibleCols.Count > 5 ? PdfSharp.PageOrientation.Landscape : PdfSharp.PageOrientation.Portrait;
 
-                foreach (DataGridViewRow row in dgv.Rows)
+                var doc = new PdfReportBuilder.ReportDocument
                 {
-                    sb.AppendLine(string.Join(",",
-                        row.Cells.Cast<DataGridViewCell>().Select(c => Csv(c.FormattedValue?.ToString() ?? ""))));
+                    Orientation = orientation,
+                    Metadata = new PdfReportBuilder.ReportMetadata
+                    {
+                        CompanyName = "FIXORY COMPUTER REPAIR",
+                        SystemTagline = "Executive Business Intelligence & Operational Audit",
+                        ReportTitle = Text,
+                        Subtitle = lblDataTitle.Text,
+                        PeriodText = "Analytics Drill-Down",
+                        GeneratedBy = !string.IsNullOrWhiteSpace(UserSession.FullName) ? UserSession.FullName : (!string.IsNullOrWhiteSpace(UserSession.Username) ? UserSession.Username : "User"),
+                        GeneratedAt = DateTime.Now
+                    }
+                };
+
+                // Add columns
+                foreach (var col in visibleCols)
+                {
+                    string h = col.HeaderText ?? "";
+                    string hLower = h.ToLowerInvariant();
+
+                    var align = PdfSharp.Drawing.XStringAlignment.Near;
+                    bool isBold = false;
+                    bool isPill = false;
+
+                    if (hLower.Contains("amount") || hLower.Contains("price") || hLower.Contains("cost") ||
+                        hLower.Contains("total") || hLower.Contains("revenue") || hLower.Contains("spent") ||
+                        hLower.Contains("balance") || hLower.Contains("points"))
+                    {
+                        align = PdfSharp.Drawing.XStringAlignment.Far;
+                        isBold = true;
+                    }
+                    else if (hLower.Contains("status") || hLower.Contains("priority") || hLower.Contains("tier") || hLower.Contains("active"))
+                    {
+                        align = PdfSharp.Drawing.XStringAlignment.Center;
+                        isPill = true;
+                    }
+                    else if (hLower.Contains("date") || hLower.Contains("id") || hLower.Contains("ticket"))
+                    {
+                        align = PdfSharp.Drawing.XStringAlignment.Center;
+                    }
+
+                    double w = Math.Max(60.0, Math.Min(200.0, col.Width * 0.75));
+                    doc.Columns.Add(new PdfReportBuilder.ColumnDef
+                    {
+                        Header = h,
+                        Width = w,
+                        Alignment = align,
+                        IsBold = isBold,
+                        IsPillBadge = isPill
+                    });
                 }
 
-                File.WriteAllText(sfd.FileName, sb.ToString(), Encoding.UTF8);
-                MessageBox.Show($"Exported {dgv.Rows.Count} rows.\n\n{sfd.FileName}",
-                    "Export complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // Add rows
+                foreach (DataGridViewRow row in dgv.Rows)
+                {
+                    var cells = visibleCols.Select(c => row.Cells[c.Index].FormattedValue?.ToString() ?? "—").ToArray();
+                    doc.Rows.Add(cells);
+                }
+
+                doc.SummaryFooterText = $"Total Records: {dgv.Rows.Count:N0}";
+
+                PdfReportBuilder.GenerateReport(doc, sfd.FileName);
+                MessageBox.Show($"Exported {dgv.Rows.Count:N0} records to PDF successfully.\n\n{sfd.FileName}",
+                    "Export Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Export failed.\n\n{ex.Message}",
-                    "Export error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    "Export Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-        }
-
-        private static string Csv(string value) =>
-            $"\"{(value ?? "").Replace("\"", "\"\"")}\"";
-
-        private static Button MakeSecondaryButton(string text, string glyph)
-        {
-            var b = new Button
-            {
-                Text = $"{glyph}  {text}",
-                Font = new Font("Segoe UI Semibold", 9F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(120, 34),
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            return b;
         }
     }
 }

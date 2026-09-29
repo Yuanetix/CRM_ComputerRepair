@@ -34,15 +34,54 @@ public class RetentionRequest
 
     // Submitter
     public string SubmittedByUserId { get; set; } = string.Empty;
-    public string SubmittedByName { get; set; } = string.Empty;
+    public string? SubmittedByFirstName { get; set; }
+    public string? SubmittedByLastName { get; set; }
     public DateTime SubmittedAt { get; set; } = DateTime.UtcNow;
+
+    public string SubmittedByName
+    {
+        get
+        {
+            var name = $"{SubmittedByFirstName} {SubmittedByLastName}".Trim();
+            return string.IsNullOrEmpty(name) ? SubmittedByUserId : name;
+        }
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            var parts = value.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            SubmittedByFirstName = parts[0];
+            SubmittedByLastName = parts.Length > 1 ? parts[1] : string.Empty;
+        }
+    }
 
     // Reviewer
     public string? ReviewedByUserId { get; set; }
-    public string? ReviewedByName { get; set; }
+    public string? ReviewedByFirstName { get; set; }
+    public string? ReviewedByLastName { get; set; }
     public DateTime? ReviewedAt { get; set; }
     public string? ReviewRemarks { get; set; }
     public string? RejectionReason { get; set; }
+
+    public string? ReviewedByName
+    {
+        get
+        {
+            var name = $"{ReviewedByFirstName} {ReviewedByLastName}".Trim();
+            return string.IsNullOrEmpty(name) ? ReviewedByUserId : name;
+        }
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                ReviewedByFirstName = null;
+                ReviewedByLastName = null;
+                return;
+            }
+            var parts = value.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            ReviewedByFirstName = parts[0];
+            ReviewedByLastName = parts.Length > 1 ? parts[1] : string.Empty;
+        }
+    }
 
     // Campaign linkage
     public bool AddedToCampaign { get; set; } = false;
@@ -60,7 +99,20 @@ public class RetentionEmailLog
     public int CustomerId { get; set; }
 
     public string RecipientEmail { get; set; } = string.Empty;
-    public string RecipientName { get; set; } = string.Empty;
+    public string RecipientFirstName { get; set; } = string.Empty;
+    public string RecipientLastName { get; set; } = string.Empty;
+
+    public string RecipientName
+    {
+        get => $"{RecipientFirstName} {RecipientLastName}".Trim();
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            var parts = value.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            RecipientFirstName = parts[0];
+            RecipientLastName = parts.Length > 1 ? parts[1] : string.Empty;
+        }
+    }
 
     public string Subject { get; set; } = string.Empty;
     public string FormattedBody { get; set; } = string.Empty;

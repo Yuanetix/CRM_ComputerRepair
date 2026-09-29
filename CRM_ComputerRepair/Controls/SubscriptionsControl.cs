@@ -1,7 +1,9 @@
+using CRM.winforms.Controls;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -12,23 +14,31 @@ namespace CRM.winforms
     {
         private readonly ApiClient _api = new ApiClient();
         private List<SubscriptionDto> _all = new();
+        private List<SubscriptionDto> _filtered = new();
+        private string _activeFilter = "All";
 
+        // ── Controls ──
         private Label lblTitle = null!;
         private Label lblSubtitle = null!;
-        private FlatButton btnAdd = null!;
-        private FlatButton btnRefresh = null!;
+        private SaasButton btnAdd = null!;
+        private SaasButton btnRefresh = null!;
 
+        // ── Stat Tiles ──
+        private StatTile tileTotal = null!;
+        private StatTile tileActive = null!;
+        private StatTile tileMultiBranch = null!;
+        private StatTile tileSubscribers = null!;
+
+        // ── Workbench Card ──
         private SurfaceCard card = null!;
-        private Label lblGridTitle = null!;
+        private WorkbenchSearch searchBox = null!;
+        private SegmentedFilter filterBar = null!;
         private Label lblCount = null!;
-
         private DataGridView dgv = null!;
-        private StateView state = null!;
+        private SaasEmptyState emptyState = null!;
 
-        private const string ColActions = "colActions";
         private ContextMenuStrip _actionsMenu = null!;
         private int _menuRowIndex = -1;
-        private int _hoverRow = -1;
 
         public SubscriptionsControl()
         {
@@ -44,11 +54,43 @@ namespace CRM.winforms
             this.Load += async (s, e) => await ReloadAsync();
         }
 
+        private void BuildActionsMenu()
+        {
+            _actionsMenu = new ContextMenuStrip { ShowImageMargin = false };
+            _actionsMenu.Renderer = new QuietMenuRenderer();
+
+            var miEdit = new ToolStripMenuItem("Edit Plan") { Height = 32 };
+            miEdit.Click += (s, e) => EditCurrentPlan();
+
+            var miToggle = new ToolStripMenuItem("Toggle Active / Inactive") { Height = 32 };
+            miToggle.Click += async (s, e) => await TogglePlanStatusAsync();
+
+            var miArchive = new ToolStripMenuItem("Archive Plan") { Height = 32 };
+            miArchive.Click += async (s, e) => await ArchivePlanAsync();
+
+            var miRestore = new ToolStripMenuItem("Restore Plan") { Height = 32 };
+            miRestore.Click += async (s, e) => await RestorePlanAsync();
+
+            _actionsMenu.Items.AddRange(new ToolStripItem[] { miEdit, miToggle, new ToolStripSeparator(), miArchive, miRestore });
+
+            _actionsMenu.Opening += (s, e) =>
+            {
+                var item = CurrentItem;
+                if (item != null)
+                {
+                    miArchive.Visible = !item.IsArchived;
+                    miRestore.Visible = item.IsArchived;
+                    miToggle.Enabled = !item.IsArchived;
+                }
+            };
+        }
+
         private void BuildUi()
         {
+            // Header
             lblTitle = new Label
             {
-                Text = "Subscriptions",
+                Text = "Subscription Plans",
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
@@ -57,17 +99,19 @@ namespace CRM.winforms
 
             lblSubtitle = new Label
             {
-                Text = "Company subscription plans and billing",
+                Text = "Manage subscription plans, pricing, and quotas.",
                 Font = UiKit.T.Subtitle,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
 
-            btnAdd = new FlatButton("Add subscription", "\uE710");
-            btnAdd.Click += async (s, e) => await AddAsync();
+            btnAdd = new SaasButton("Add Plan", SaasButtonVariant.Primary, "\uE710");
+            btnAdd.Size = new Size(130, UiKit.T.ButtonHeight);
+            btnAdd.Click += async (s, e) => await AddPlanAsync();
 
-            btnRefresh = new FlatButton("Refresh", "\uE72C");
+            btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnRefresh.Size = new Size(100, UiKit.T.ButtonHeight);
             btnRefresh.Click += async (s, e) => await ReloadAsync();
 
             Controls.Add(lblTitle);
@@ -75,15 +119,37 @@ namespace CRM.winforms
             Controls.Add(btnAdd);
             Controls.Add(btnRefresh);
 
+            // KPI Tiles
+            tileTotal = new StatTile("TOTAL PLANS", "0", "\uE9D5");
+            tileActive = new StatTile("ACTIVE TIERS", "0", "\uE73E");
+            tileMultiBranch = new StatTile("MULTI-BRANCH", "0", "\uE716");
+            tileSubscribers = new StatTile("SUBSCRIBED TENANTS", "0", "\uE716");
+
+            Controls.Add(tileTotal);
+            Controls.Add(tileActive);
+            Controls.Add(tileMultiBranch);
+            Controls.Add(tileSubscribers);
+
+            // Workbench Card
             card = new SurfaceCard();
 
-            lblGridTitle = new Label
+            searchBox = new WorkbenchSearch
             {
-                Text = "All subscriptions",
-                Font = UiKit.T.Section,
-                ForeColor = UiKit.T.Ink,
-                AutoSize = true,
-                BackColor = Color.Transparent
+                Placeholder = "Search by plan name, features, or billing cycle..."
+            };
+            searchBox.QueryChanged += (s, e) => ApplyFilter();
+
+            filterBar = new SegmentedFilter(new (string, int?)[]
+            {
+                ("All", null),
+                ("Active", null),
+                ("Inactive", null),
+                ("Archived", null)
+            });
+            filterBar.SelectionChanged += (s, key) =>
+            {
+                _activeFilter = key;
+                ApplyFilter();
             };
 
             lblCount = new Label
@@ -98,434 +164,538 @@ namespace CRM.winforms
             dgv = new DataGridView();
             StyleGrid(dgv);
             dgv.CellClick += Dgv_CellClick;
-            dgv.CellDoubleClick += Dgv_CellDoubleClick;
-            dgv.CellMouseEnter += Dgv_CellMouseEnter;
-            dgv.CellMouseLeave += Dgv_CellMouseLeave;
-            dgv.MouseLeave += (s, e) => { _hoverRow = -1; dgv.Invalidate(); };
+            dgv.CellDoubleClick += (s, e) =>
+            {
+                if (e.RowIndex >= 0 && e.RowIndex < _filtered.Count)
+                    EditCurrentPlan();
+            };
 
-            state = new StateView { Visible = false };
+            emptyState = new SaasEmptyState
+            {
+                Icon = "\uE9D5",
+                Text = "No subscription plans found",
+                Subtitle = "Create your first SaaS subscription tier with pricing in PHP and user limits."
+            };
+            emptyState.SetAction("Add Subscription Plan", async (s, e) => await AddPlanAsync());
 
-            card.Controls.Add(lblGridTitle);
+            card.Controls.Add(searchBox);
+            card.Controls.Add(filterBar);
             card.Controls.Add(lblCount);
             card.Controls.Add(dgv);
-            card.Controls.Add(state);
+            card.Controls.Add(emptyState);
 
             Controls.Add(card);
 
             Resize += (s, e) => LayoutUi();
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            UiKit.Quality(e.Graphics);
-            int y = lblSubtitle.Bottom + UiKit.T.S4;
-            using var pen = new Pen(UiKit.T.Line, 1);
-            e.Graphics.DrawLine(pen, 0, y, Width, y);
+            LayoutUi();
         }
 
         private void LayoutUi()
         {
-            if (Width <= 0 || Height <= 0) return;
+            int pad = UiKit.T.S6;
+            int right = Width - pad;
 
-            lblTitle.Location = new Point(0, 0);
-            int subtitleY = lblTitle.PreferredHeight + 6;
-            lblSubtitle.Location = new Point(1, subtitleY);
+            lblTitle.Location = new Point(pad, pad);
+            lblSubtitle.Location = new Point(pad, lblTitle.Bottom + 4);
 
-            int rightX = Width;
-            btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(rightX - btnRefresh.Width, 2);
-            rightX -= btnRefresh.Width + 8;
+            btnRefresh.Location = new Point(right - btnRefresh.Width, pad);
+            btnAdd.Location = new Point(btnRefresh.Left - btnAdd.Width - UiKit.T.S3, pad);
 
-            btnAdd.Size = new Size(btnAdd.PreferredWidth, UiKit.T.ButtonHeight);
-            btnAdd.Location = new Point(rightX - btnAdd.Width, 2);
+            // Stats
+            int tileY = lblSubtitle.Bottom + UiKit.T.S5;
+            int gap = UiKit.T.S4;
+            int tileW = Math.Max(180, (Width - pad * 2 - gap * 3) / 4);
+            int tileH = 88;
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
-            int cardTop = dividerY + UiKit.T.S5;
-            int cardH = Math.Max(240, Height - cardTop);
+            tileTotal.SetBounds(pad, tileY, tileW, tileH);
+            tileActive.SetBounds(pad + (tileW + gap), tileY, tileW, tileH);
+            tileMultiBranch.SetBounds(pad + (tileW + gap) * 2, tileY, tileW, tileH);
+            tileSubscribers.SetBounds(pad + (tileW + gap) * 3, tileY, tileW, tileH);
 
-            card.Location = new Point(0, cardTop);
-            card.Size = new Size(Width, cardH);
+            // Card
+            int cardY = tileY + tileH + UiKit.T.S5;
+            int cardH = Height - cardY - pad;
+            card.SetBounds(pad, cardY, Width - pad * 2, Math.Max(260, cardH));
 
-            const int cp = UiKit.T.S5;
-            lblGridTitle.Location = new Point(cp, UiKit.T.S5);
-            lblCount.Location = new Point(
-                lblGridTitle.Right + UiKit.T.S2,
-                lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
+            // Card content
+            int innerW = card.Width - pad * 2;
+            searchBox.SetBounds(pad, pad, Math.Min(420, innerW - 280), 38);
+            filterBar.SetBounds(card.Width - pad - filterBar.PreferredWidth, pad + 1, filterBar.PreferredWidth, 36);
 
-            int gridTop = lblGridTitle.Bottom + 14;
-            int gridW = card.Width - cp * 2;
-            int gridH = card.Height - gridTop - cp;
+            int gridY = searchBox.Bottom + UiKit.T.S4;
+            int gridH = card.Height - gridY - pad - 26;
 
-            if (gridW > 100 && gridH > 60)
-            {
-                dgv.Location = new Point(cp, gridTop);
-                dgv.Size = new Size(gridW, gridH);
-                state.Location = new Point(cp, gridTop);
-                state.Size = new Size(gridW, gridH);
-            }
+            dgv.SetBounds(pad, gridY, innerW, Math.Max(120, gridH));
+            emptyState.SetBounds(pad, gridY, innerW, Math.Max(120, gridH));
+            lblCount.Location = new Point(pad, dgv.Bottom + 6);
         }
 
-        public async Task ReloadAsync()
+        private void StyleGrid(DataGridView g)
         {
-            try
-            {
-                _all = await _api.GetSubscriptionsAsync();
-                dgv.DataSource = null;
-                dgv.DataSource = _all;
-                ConfigureColumns();
-                AddActionsColumn();
-
-                lblCount.Text = $"{_all.Count} {(_all.Count == 1 ? "subscription" : "subscriptions")}";
-
-                if (_all.Count > 0)
-                {
-                    state.Visible = false;
-                    dgv.Visible = true;
-                    dgv.ClearSelection();
-                }
-                else
-                {
-                    dgv.Visible = false;
-                    state.Show("\uE8C7", "No subscriptions yet",
-                        "Use Add subscription to create the first plan.");
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Couldn't load subscriptions.\n\n{ex.Message}",
-                    "Connection problem", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        private async Task AddAsync()
-        {
-            using var dlg = new SubscriptionFormDialog(null);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-                await ReloadAsync();
-        }
-
-        private void BuildActionsMenu()
-        {
-            _actionsMenu = new ContextMenuStrip
-            {
-                Font = UiKit.T.Body,
-                ShowImageMargin = false,
-                BackColor = UiKit.T.Surface,
-                ForeColor = UiKit.T.Ink,
-                Renderer = new QuietMenuRenderer()
-            };
-
-            _actionsMenu.Items.Add("Edit");
-            _actionsMenu.Items.Add(new ToolStripSeparator());
-            _actionsMenu.Items.Add("Archive");
-
-            foreach (ToolStripItem item in _actionsMenu.Items)
-                item.Padding = new Padding(UiKit.T.S2, UiKit.T.S1, UiKit.T.S2, UiKit.T.S1);
-
-            _actionsMenu.Items[0].Click += async (s, e) => await OnEditAsync();
-            _actionsMenu.Items[2].Click += async (s, e) => await OnArchiveAsync();
-            _actionsMenu.Closed += (s, e) => dgv.Invalidate();
-        }
-
-        private async Task OnEditAsync()
-        {
-            if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not SubscriptionDto dto) return;
-
-            using var dlg = new SubscriptionFormDialog(dto);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-                await ReloadAsync();
-        }
-
-        private async Task OnArchiveAsync()
-        {
-            if (_menuRowIndex < 0) return;
-            if (dgv.Rows[_menuRowIndex].DataBoundItem is not SubscriptionDto dto) return;
-
-            var confirm = MessageBox.Show(
-                $"Archive \u201c{dto.SubscriptionName}\u201d?",
-                "Archive subscription",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (confirm != DialogResult.Yes) return;
-
-            try
-            {
-                await _api.ArchiveSubscriptionAsync(dto.SubscriptionId);
-                await ReloadAsync();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Archive failed.\n\n{ex.Message}",
-                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        private static void StyleGrid(DataGridView g)
-        {
-            g.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            g.BackgroundColor = UiKit.T.Surface;
-            g.BorderStyle = BorderStyle.None;
-            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
-            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
-            g.EnableHeadersVisualStyles = false;
-            g.GridColor = UiKit.T.LineSoft;
-            g.RowHeadersVisible = false;
+            g.AutoGenerateColumns = false;
             g.AllowUserToAddRows = false;
             g.AllowUserToDeleteRows = false;
             g.AllowUserToResizeRows = false;
-            g.ReadOnly = true;
-            g.MultiSelect = false;
+            g.RowHeadersVisible = false;
             g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            g.ScrollBars = ScrollBars.Vertical;
-            g.RowTemplate.Height = UiKit.T.RowHeight;
-            g.ColumnHeadersHeight = UiKit.T.HeaderHeight;
-            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            g.MultiSelect = false;
+            g.BackgroundColor = UiKit.T.Surface;
+            g.BorderStyle = BorderStyle.None;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            g.GridColor = UiKit.T.LineSoft;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            g.EnableHeadersVisualStyles = false;
+            g.ScrollBars = ScrollBars.Both;
+            g.RowTemplate.Height = 52;
+            g.ColumnHeadersHeight = 42;
 
             g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
             g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
-            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
-            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
             g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
-            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(12, 0, 12, 0);
 
             g.DefaultCellStyle.BackColor = UiKit.T.Surface;
             g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
             g.DefaultCellStyle.Font = UiKit.T.Body;
-            g.DefaultCellStyle.SelectionBackColor = UiKit.Wash(AppTheme.Primary);
+            g.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
             g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
-            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
-        }
+            g.DefaultCellStyle.Padding = new Padding(12, 6, 12, 6);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
 
-        private void ConfigureColumns()
-        {
-            foreach (var hidden in new[]
+            g.Columns.Clear();
+
+            g.Columns.Add(new DataGridViewTextBoxColumn
             {
-                "SubscriptionId", "CompanyId",
-                "IsActive", "StartDate", "EndDate",
-                "MaxUsers", "MaxDevices", "BillingCycle"
-            })
+                Name = "colName",
+                HeaderText = "PLAN NAME",
+                DataPropertyName = "SubscriptionName",
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                FillWeight = 180,
+                MinimumWidth = 220
+            });
+
+            g.Columns.Add(new DataGridViewTextBoxColumn
             {
-                if (dgv.Columns[hidden] != null)
-                    dgv.Columns[hidden].Visible = false;
-            }
+                Name = "colPrice",
+                HeaderText = "PRICE (PHP)",
+                DataPropertyName = "PriceDisplay",
+                Width = 160,
+                MinimumWidth = 140
+            });
 
-            void Setup(string name, string header, int width, int idx, bool fill = false)
+            g.Columns.Add(new DataGridViewTextBoxColumn
             {
-                var c = dgv.Columns[name];
-                if (c == null) return;
-                c.HeaderText = header;
-                c.SortMode = DataGridViewColumnSortMode.Automatic;
-                c.AutoSizeMode = fill ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None;
-                if (!fill) c.Width = width;
-                else c.MinimumWidth = 180;
-                c.DisplayIndex = idx;
-            }
+                Name = "colDuration",
+                HeaderText = "DURATION",
+                DataPropertyName = "DurationDisplay",
+                Width = 140,
+                MinimumWidth = 120
+            });
 
-            Setup("SubscriptionName", "Plan", 220, 0);
-            Setup("PriceDisplay", "Price / mo", 130, 1);
-            Setup("MaxUsers", "Max users", 110, 2);
-            Setup("MaxDevices", "Max devices", 120, 3);
-            Setup("StartDateDisplay", "Start", 130, 4);
-            Setup("EndDateDisplay", "End", 130, 5);
-            Setup("StatusText", "Status", 100, 6);
-
-            if (dgv.Columns["SubscriptionName"] != null)
-                dgv.Columns["SubscriptionName"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
-        }
-
-        private void AddActionsColumn()
-        {
-            if (dgv.Columns[ColActions] != null)
-                dgv.Columns.Remove(ColActions);
-
-            var col = new DataGridViewTextBoxColumn
+            g.Columns.Add(new DataGridViewTextBoxColumn
             {
-                Name = ColActions,
+                Name = "colUsers",
+                HeaderText = "QUOTAS (USERS / DEVICES)",
+                Width = 240,
+                MinimumWidth = 200
+            });
+
+            g.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                Name = "colMultiBranch",
+                HeaderText = "MULTI-BRANCH",
+                Width = 140,
+                MinimumWidth = 125
+            });
+
+            g.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                Name = "colSubscribers",
+                HeaderText = "SUBSCRIBED",
+                Width = 120,
+                MinimumWidth = 105
+            });
+
+            g.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                Name = "colStatus",
+                HeaderText = "STATUS",
+                Width = 120,
+                MinimumWidth = 105
+            });
+
+            var btnCol = new DataGridViewButtonColumn
+            {
+                Name = "colActions",
                 HeaderText = "",
-                Width = 44,
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
-                SortMode = DataGridViewColumnSortMode.NotSortable,
-                Resizable = DataGridViewTriState.False,
-                ReadOnly = true
+                Text = "\u22EF",
+                UseColumnTextForButtonValue = true,
+                Width = 48,
+                FlatStyle = FlatStyle.Flat
             };
+            btnCol.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            btnCol.DefaultCellStyle.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+            btnCol.DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.Columns.Add(btnCol);
 
-            dgv.Columns.Add(col);
-            col.DisplayIndex = dgv.Columns.Count - 1;
+            g.CellPainting += (s, e) =>
+            {
+                if (e.RowIndex < 0 || e.RowIndex >= _filtered.Count) return;
+                var item = _filtered[e.RowIndex];
+
+                // Quotas column
+                if (e.ColumnIndex == g.Columns["colUsers"]!.Index)
+                {
+                    e.PaintBackground(e.CellBounds, true);
+                    string quotaText = $"Max {item.MaxUsers} Users  ·  {item.MaxDevices} Units";
+                    UiKit.Text(e.Graphics, quotaText, UiKit.T.Body, UiKit.T.Ink, e.CellBounds, UiKit.LeftWrap);
+                    e.Handled = true;
+                }
+                // Multi-branch badge
+                else if (e.ColumnIndex == g.Columns["colMultiBranch"]!.Index)
+                {
+                    e.PaintBackground(e.CellBounds, true);
+                    var gState = e.Graphics;
+                    UiKit.Quality(gState);
+
+                    Color bg = item.EnableMultiBranching ? UiKit.Wash(AppTheme.Primary) : UiKit.LineSoft;
+                    Color fg = item.EnableMultiBranching ? AppTheme.Primary : UiKit.T.InkMuted;
+                    string txt = item.EnableMultiBranching ? "ENABLED" : "SINGLE";
+
+                    var pill = new Rectangle(e.CellBounds.Left + 8, e.CellBounds.Top + (e.CellBounds.Height - 22) / 2, 74, 22);
+                    UiKit.FillRounded(gState, pill, 11, bg);
+                    UiKit.Text(gState, txt, UiKit.MicroStrong, fg, pill, UiKit.Center);
+                    e.Handled = true;
+                }
+                // Subscribers count
+                else if (e.ColumnIndex == g.Columns["colSubscribers"]!.Index)
+                {
+                    e.PaintBackground(e.CellBounds, true);
+                    string subsText = $"{item.SubscribedCompaniesCount} tenant(s)";
+                    UiKit.Text(e.Graphics, subsText, UiKit.T.Small, UiKit.T.InkMuted, e.CellBounds, UiKit.Left);
+                    e.Handled = true;
+                }
+                // Status Pill Cell
+                else if (e.ColumnIndex == g.Columns["colStatus"]!.Index)
+                {
+                    e.PaintBackground(e.CellBounds, true);
+                    var stateG = e.Graphics;
+                    UiKit.Quality(stateG);
+
+                    Color bg = item.IsArchived
+                        ? UiKit.LineSoft
+                        : (item.IsActive ? UiKit.Wash(AppTheme.Success) : UiKit.Wash(AppTheme.Danger));
+                    Color fg = item.IsArchived
+                        ? UiKit.T.InkMuted
+                        : (item.IsActive ? AppTheme.Success : AppTheme.Danger);
+                    string txt = item.IsArchived ? "ARCHIVED" : (item.IsActive ? "ACTIVE" : "INACTIVE");
+
+                    var pill = new Rectangle(e.CellBounds.Left + 8, e.CellBounds.Top + (e.CellBounds.Height - 22) / 2, 88, 22);
+                    UiKit.FillRounded(stateG, pill, 11, bg);
+                    UiKit.Text(stateG, txt, UiKit.MicroStrong, fg, pill, UiKit.Center);
+                    e.Handled = true;
+                }
+            };
+        }
+
+        private async Task ReloadAsync()
+        {
+            try
+            {
+                _all = await _api.GetSubscriptionsAsync(includeArchived: true);
+
+                int total = _all.Count;
+                int active = _all.Count(p => p.IsActive && !p.IsArchived);
+                int inactive = _all.Count(p => !p.IsActive && !p.IsArchived);
+                int archived = _all.Count(p => p.IsArchived);
+                int multiBranch = _all.Count(p => p.EnableMultiBranching && !p.IsArchived);
+                int totalSubs = _all.Sum(p => p.SubscribedCompaniesCount);
+
+                tileTotal.Value = total.ToString();
+                tileActive.Value = active.ToString();
+                tileMultiBranch.Value = multiBranch.ToString();
+                tileSubscribers.Value = totalSubs.ToString();
+
+                filterBar.UpdateCounts(new Dictionary<string, int?>
+                {
+                    ["All"] = total,
+                    ["Active"] = active,
+                    ["Inactive"] = inactive,
+                    ["Archived"] = archived
+                });
+
+                ApplyFilter();
+            }
+            catch (Exception ex)
+            {
+                SaasToast.Show(FindForm(), $"Failed to load subscription plans: {ex.Message}", ToastKind.Danger);
+            }
+        }
+
+        private void ApplyFilter()
+        {
+            string query = searchBox.Query.Trim().ToLowerInvariant();
+
+            _filtered = _all.Where(p =>
+            {
+                if (_activeFilter == "Active" && (!p.IsActive || p.IsArchived)) return false;
+                if (_activeFilter == "Inactive" && (p.IsActive || p.IsArchived)) return false;
+                if (_activeFilter == "Archived" && !p.IsArchived) return false;
+
+                if (!string.IsNullOrWhiteSpace(query))
+                {
+                    bool matchName = p.SubscriptionName.ToLowerInvariant().Contains(query);
+                    bool matchDesc = p.Description?.ToLowerInvariant().Contains(query) ?? false;
+                    bool matchBilling = p.BillingCycle?.ToLowerInvariant().Contains(query) ?? false;
+                    bool matchDuration = p.DurationDisplay.ToLowerInvariant().Contains(query);
+                    if (!matchName && !matchDesc && !matchBilling && !matchDuration) return false;
+                }
+
+                return true;
+            }).ToList();
+
+            dgv.DataSource = null;
+            dgv.DataSource = _filtered;
+
+            bool hasData = _filtered.Count > 0;
+            dgv.Visible = hasData;
+            emptyState.Visible = !hasData;
+
+            lblCount.Text = $"Showing {_filtered.Count} of {_all.Count} subscription plans";
         }
 
         private void Dgv_CellClick(object? sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            if (dgv.Columns[e.ColumnIndex].Name != ColActions) return;
+            if (e.RowIndex < 0 || e.RowIndex >= _filtered.Count) return;
 
-            _menuRowIndex = e.RowIndex;
-            var r = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
-            _actionsMenu.Show(dgv, new Point(r.Right - 160, r.Bottom));
+            if (e.ColumnIndex == dgv.Columns["colActions"]!.Index)
+            {
+                _menuRowIndex = e.RowIndex;
+                var cellRect = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
+                _actionsMenu.Show(dgv, new Point(cellRect.Left, cellRect.Bottom));
+            }
         }
 
-        private void Dgv_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
-        {
-            if (e.RowIndex < 0) return;
-            if (dgv.Rows[e.RowIndex].DataBoundItem is not SubscriptionDto dto) return;
+        private SubscriptionDto? CurrentItem => _menuRowIndex >= 0 && _menuRowIndex < _filtered.Count
+            ? _filtered[_menuRowIndex]
+            : (dgv.CurrentRow != null && dgv.CurrentRow.Index < _filtered.Count ? _filtered[dgv.CurrentRow.Index] : null);
 
-            using var dlg = new SubscriptionFormDialog(dto);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
+        private async Task AddPlanAsync()
+        {
+            using var dlg = new SubscriptionFormDialog(null);
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK && dlg.ResultPlan != null)
+            {
+                SaasToast.Show(FindForm(),
+                    $"Created plan '{dlg.ResultPlan.SubscriptionName}'!",
+                    ToastKind.Success);
+                await ReloadAsync();
+            }
+        }
+
+        private void EditCurrentPlan()
+        {
+            var item = CurrentItem;
+            if (item == null) return;
+
+            using var dlg = new SubscriptionFormDialog(item);
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK)
+            {
+                SaasToast.Show(FindForm(), $"Updated plan '{item.SubscriptionName}'.", ToastKind.Success);
                 _ = ReloadAsync();
-        }
-
-        private void Dgv_CellMouseEnter(object? sender, DataGridViewCellEventArgs e)
-        {
-            if (e.RowIndex < 0) { _hoverRow = -1; return; }
-            _hoverRow = e.RowIndex;
-            dgv.Cursor = e.ColumnIndex >= 0 && dgv.Columns[e.ColumnIndex].Name == ColActions
-                ? Cursors.Hand : Cursors.Default;
-            dgv.InvalidateRow(e.RowIndex);
-        }
-
-        private void Dgv_CellMouseLeave(object? sender, DataGridViewCellEventArgs e)
-        {
-            if (e.RowIndex < 0) return;
-            _hoverRow = -1;
-            dgv.InvalidateRow(e.RowIndex);
-        }
-
-        // ═══════════ NESTED UI ═══════════
-
-        [DesignerCategory("Code")]
-        private sealed class SurfaceCard : Panel
-        {
-            public SurfaceCard()
-            {
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = AppTheme.Background;
-            }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                UiKit.Quality(e.Graphics);
-                using (var b = new SolidBrush(AppTheme.Background))
-                    e.Graphics.FillRectangle(b, ClientRectangle);
-                UiKit.Card(e.Graphics, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
-                base.OnPaint(e);
             }
         }
 
-        [DesignerCategory("Code")]
-        private sealed class FlatButton : Control
+        private async Task TogglePlanStatusAsync()
         {
-            private readonly string _glyph;
-            private bool _hover, _down;
+            var item = CurrentItem;
+            if (item == null) return;
 
-            public FlatButton(string text, string glyph)
+            try
             {
-                _glyph = glyph;
-                Text = text;
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = AppTheme.Background;
-                Cursor = Cursors.Hand;
-                Font = UiKit.T.BodyStrong;
-                TabStop = true;
+                bool newState = await _api.ToggleSubscriptionStatusAsync(item.SubscriptionId);
+                item.IsActive = newState;
+                SaasToast.Show(FindForm(),
+                    $"Plan '{item.SubscriptionName}' is now {(newState ? "active" : "inactive")}.",
+                    newState ? ToastKind.Success : ToastKind.Warning);
+                await ReloadAsync();
             }
-
-            public int PreferredWidth => UiKit.Measure(Text, UiKit.T.BodyStrong).Width + 56;
-
-            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
-            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
-            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
-            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
-
-            protected override void OnPaint(PaintEventArgs e)
+            catch (Exception ex)
             {
-                var g = e.Graphics;
-                UiKit.Quality(g);
-                using (var b = new SolidBrush(AppTheme.Background))
-                    g.FillRectangle(b, ClientRectangle);
+                SaasToast.Show(FindForm(), $"Failed to update status: {ex.Message}", ToastKind.Danger);
+            }
+        }
 
-                Color bg = _down ? AppTheme.PrimaryActive : _hover ? AppTheme.PrimaryHover : AppTheme.Primary;
-                UiKit.FillRounded(g, ClientRectangle, 8, bg);
+        private async Task ArchivePlanAsync()
+        {
+            var item = CurrentItem;
+            if (item == null) return;
 
-                UiKit.Text(g, _glyph, new Font("Segoe MDL2 Assets", 10F), Color.White,
-                    new Rectangle(16, 0, 18, Height),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            bool confirm = SaasConfirm.Ask(
+                FindForm(),
+                "Archive Subscription Plan",
+                $"Archive '{item.SubscriptionName}'?",
+                confirmText: "Archive Plan",
+                danger: true,
+                detail: "Existing subscribed businesses will maintain their current plan, but new registrations will no longer see this tier.");
 
-                UiKit.Text(g, Text, UiKit.T.BodyStrong, Color.White,
-                    new Rectangle(36, 0, Width - 46, Height),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            if (!confirm) return;
+
+            try
+            {
+                await _api.ArchiveSubscriptionAsync(item.SubscriptionId);
+                SaasToast.Show(FindForm(), $"Plan '{item.SubscriptionName}' archived.", ToastKind.Warning);
+                await ReloadAsync();
+            }
+            catch (Exception ex)
+            {
+                SaasToast.Show(FindForm(), $"Failed to archive plan: {ex.Message}", ToastKind.Danger);
+            }
+        }
+
+        private async Task RestorePlanAsync()
+        {
+            var item = CurrentItem;
+            if (item == null) return;
+
+            try
+            {
+                await _api.RestoreSubscriptionAsync(item.SubscriptionId);
+                SaasToast.Show(FindForm(), $"Plan '{item.SubscriptionName}' restored and activated.", ToastKind.Success);
+                await ReloadAsync();
+            }
+            catch (Exception ex)
+            {
+                SaasToast.Show(FindForm(), $"Failed to restore plan: {ex.Message}", ToastKind.Danger);
             }
         }
 
         [DesignerCategory("Code")]
-        private sealed class StateView : Control
-        {
-            private string _glyph = "";
-            private string _title = "";
-            private string _message = "";
+        private sealed class SurfaceCard : WorkbenchCard { }
 
-            public StateView()
+        [DesignerCategory("Code")]
+        private sealed class SegmentedFilter : Control
+        {
+            private readonly List<(string Key, int? Count)> _items = new();
+            private int _selected = 0;
+            private int _hover = -1;
+
+            public event EventHandler<string>? SelectionChanged;
+
+            public SegmentedFilter((string Key, int? Count)[] items)
             {
+                _items.AddRange(items);
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
                 BackColor = UiKit.T.Surface;
+                Cursor = Cursors.Hand;
+                Font = UiKit.T.SmallStrong;
             }
 
-            public void Show(string glyph, string title, string message)
+            public int PreferredWidth
             {
-                _glyph = glyph; _title = title; _message = message;
-                Visible = true; BringToFront(); Invalidate();
+                get
+                {
+                    int total = 16;
+                    foreach (var item in _items)
+                    {
+                        string text = item.Count.HasValue ? $"{item.Key} ({item.Count})" : item.Key;
+                        var sz = TextRenderer.MeasureText(text, Font);
+                        total += Math.Max(104, sz.Width + 28);
+                    }
+                    return Math.Max(330, total);
+                }
+            }
+
+            public void UpdateCounts(Dictionary<string, int?> counts)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (counts.TryGetValue(_items[i].Key, out var c))
+                        _items[i] = (_items[i].Key, c);
+                }
+                Invalidate();
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
                 UiKit.Quality(g);
-                using (var b = new SolidBrush(UiKit.T.Surface))
-                    g.FillRectangle(b, ClientRectangle);
+                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 8, UiKit.T.LineSoft);
 
-                int cy = Height / 2 - 40;
-                var circle = new Rectangle(Width / 2 - 26, cy, 52, 52);
-                UiKit.FillRounded(g, circle, 26, UiKit.T.LineSoft);
-                UiKit.Text(g, _glyph, UiKit.T.GlyphLarge, UiKit.T.InkFaint, circle,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
 
-                UiKit.Text(g, _title, UiKit.T.Section, UiKit.T.Ink,
-                    new Rectangle(0, circle.Bottom + UiKit.T.S4, Width, 24),
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var seg = new Rectangle(2 + i * segW, 2, segW, Height - 4);
+                    bool active = i == _selected;
+                    if (active)
+                    {
+                        UiKit.FillRounded(g, seg, 6, UiKit.T.Surface);
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 6);
+                        g.DrawPath(pen, path);
+                    }
 
-                int msgW = Math.Min(420, Width - UiKit.T.S6 * 2);
-                UiKit.Text(g, _message, UiKit.T.Body, UiKit.T.InkMuted,
-                    new Rectangle((Width - msgW) / 2, circle.Bottom + UiKit.T.S4 + 28, msgW, 60),
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.WordBreak);
+                    string text = _items[i].Count.HasValue
+                        ? $"{_items[i].Key} ({_items[i].Count.GetValueOrDefault()})"
+                        : _items[i].Key;
+
+                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.InkMuted : UiKit.T.InkFaint);
+                    UiKit.Text(g, text, UiKit.T.SmallStrong, fg, seg,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx != _hover) { _hover = idx; Invalidate(); }
+                base.OnMouseMove(e);
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                _hover = -1; Invalidate(); base.OnMouseLeave(e);
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx >= 0 && idx < _items.Count && idx != _selected)
+                {
+                    _selected = idx;
+                    Invalidate();
+                    SelectionChanged?.Invoke(this, _items[_selected].Key);
+                }
+                base.OnMouseClick(e);
             }
         }
 
+        [DesignerCategory("Code")]
         private sealed class QuietMenuRenderer : ToolStripProfessionalRenderer
         {
             public QuietMenuRenderer() : base(new Colors()) { RoundedEdges = false; }
-
             protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
             {
                 var r = new Rectangle(4, 0, e.Item.Width - 8, e.Item.Height);
                 if (e.Item.Selected) UiKit.FillRounded(e.Graphics, r, 6, UiKit.T.RowHover);
             }
-
             protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
             {
                 using var pen = new Pen(UiKit.T.LineSoft, 1);
                 int y = e.Item.Height / 2;
                 e.Graphics.DrawLine(pen, 8, y, e.Item.Width - 8, y);
             }
-
             private sealed class Colors : ProfessionalColorTable
             {
                 public override Color ToolStripDropDownBackground => UiKit.T.Surface;
                 public override Color MenuBorder => UiKit.T.Line;
-                public override Color MenuItemBorder => Color.Transparent;
+                public override Color MenuItemBorder => UiKit.T.Surface;
                 public override Color ImageMarginGradientBegin => UiKit.T.Surface;
                 public override Color ImageMarginGradientMiddle => UiKit.T.Surface;
                 public override Color ImageMarginGradientEnd => UiKit.T.Surface;

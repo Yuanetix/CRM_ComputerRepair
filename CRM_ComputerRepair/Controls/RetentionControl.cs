@@ -56,11 +56,11 @@ namespace CRM.winforms.Controls
         private Panel pnlAccessDenied = null!;
 
         // ═══════════ TAB 1: SEGMENTS & OPPORTUNITIES ═══════════
-        private StatTile tileTotal = null!;
-        private StatTile tileLoyal = null!;
-        private StatTile tileReturning = null!;
-        private StatTile tileAtRisk = null!;
-        private StatTile tileInactive = null!;
+        private RetentionKpiCard tileTotal = null!;
+        private RetentionKpiCard tileLoyal = null!;
+        private RetentionKpiCard tileReturning = null!;
+        private RetentionKpiCard tileAtRisk = null!;
+        private RetentionKpiCard tileInactive = null!;
 
         private SurfaceCard cardSegments = null!;
         private Label lblSegmentsTitle = null!;
@@ -102,20 +102,42 @@ namespace CRM.winforms.Controls
 
         // ═══════════ TAB 4: MANUAL EMAIL ═══════════
         private SurfaceCard cardManualCompose = null!;
+        private Label lblManualHeading = null!;
+        private Label lblManualDesc = null!;
+        private Label lblCustTitle = null!;
         private ComboBox cmbManualCustomer = null!;
+        private Panel pnlCustDetailsBox = null!;
         private Label lblManualCustDetails = null!;
         private Panel pnlCooldownAlert = null!;
         private Label lblCooldownAlert = null!;
         private CheckBox chkOverrideCooldown = null!;
 
+        private Label lblTplTitle = null!;
+        private Label lblDiscTitle = null!;
+        private Label lblValidTitle = null!;
+        private Label lblCodeTitle = null!;
         private ComboBox cmbManualTemplate = null!;
+        private Label lblSubjTitle = null!;
         private TextBox txtManualSubject = null!;
         private NumericUpDown numManualDiscount = null!;
         private NumericUpDown numManualValidity = null!;
         private TextBox txtManualPromoCode = null!;
+        private Label lblBodyTitle = null!;
+        private Label lblBodyTokens = null!;
         private TextBox txtManualBody = null!;
+
+        // Right Live Preview Card
+        private SurfaceCard cardManualPreview = null!;
+        private Label lblPreviewHeading = null!;
+        private Label lblPreviewDesc = null!;
+        private Panel pnlPreviewEnvelope = null!;
+        private Label lblPreviewFrom = null!;
+        private Label lblPreviewTo = null!;
+        private Label lblPreviewSubject = null!;
+        private Label lblPreviewDate = null!;
+        private Panel pnlPreviewSheet = null!;
         private TextBox txtManualPreview = null!;
-        private Button btnManualSend = null!;
+        private SaasButton btnManualSend = null!;
 
         // ═══════════ TAB 5: SETTINGS & TEMPLATES ═══════════
         private SurfaceCard cardSettingsRules = null!;
@@ -180,26 +202,28 @@ namespace CRM.winforms.Controls
             // ── Header Title & Actions ──
             lblTitle = new Label
             {
-                Text = "Customer Retention & Email Campaigns",
+                Text = "Customer Retention",
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = AppTheme.Background,
+                UseMnemonic = false
             };
 
             lblSubtitle = new Label
             {
-                Text = "Dynamic segment calculations, administrative approval governance, anti-fatigue cooldown, and live SMTP delivery.",
-                Font = UiKit.T.Subtitle,
+                Text = "Dynamic segment calculations, administrative approval governance, and live campaigns.",
+                Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = AppTheme.Background,
+                UseMnemonic = false
             };
 
             btnRefresh = new FlatButton("Refresh", "\uE72C");
             btnRefresh.Click += async (s, e) => await ReloadAsync();
 
-            btnNewRequest = new FlatButton("+ New Retention Request", "\uE710");
+            btnNewRequest = new FlatButton("New Retention Request", "\uE710");
             btnNewRequest.Click += (s, e) => OpenNewRequestDialog();
 
             Controls.Add(lblTitle);
@@ -275,20 +299,26 @@ namespace CRM.winforms.Controls
             pnlTabSegments = new Panel { Dock = DockStyle.Fill, BackColor = AppTheme.Background, AutoScroll = true };
 
             // Metric Tiles Strip
-            tileTotal = new StatTile { Label = "Active Opportunities", Number = "0", Icon = "\uE716" };
-            tileTotal.SetColors(Color.White, AppTheme.Primary);
+            tileTotal = new RetentionKpiCard();
+            tileTotal.Set("Active Opportunities", "0", "All recommendations", AppTheme.Primary);
 
-            tileLoyal = new StatTile { Label = "Loyal (≥3 repairs)", Number = "0", Icon = "\uE735" };
-            tileLoyal.SetColors(Color.White, Color.FromArgb(79, 70, 229));
+            tileLoyal = new RetentionKpiCard();
+            tileLoyal.Set("Loyal", "0", "≥ 3 repairs", Color.FromArgb(79, 70, 229));
 
-            tileReturning = new StatTile { Label = "Returning (2 repairs)", Number = "0", Icon = "\uE777" };
-            tileReturning.SetColors(Color.White, Color.FromArgb(14, 116, 144));
+            tileReturning = new RetentionKpiCard();
+            tileReturning.Set("Returning", "0", "2 repairs", Color.FromArgb(14, 116, 144));
 
-            tileAtRisk = new StatTile { Label = "At Risk (91–180d)", Number = "0", Icon = "\uE7BA" };
-            tileAtRisk.SetColors(Color.White, Color.FromArgb(194, 65, 12));
+            tileAtRisk = new RetentionKpiCard();
+            tileAtRisk.Set("At-Risk", "0", "91–180d inactive", Color.FromArgb(194, 65, 12));
 
-            tileInactive = new StatTile { Label = "Inactive (>180d)", Number = "0", Icon = "\uE74C" };
-            tileInactive.SetColors(Color.White, Color.FromArgb(107, 114, 128));
+            tileInactive = new RetentionKpiCard();
+            tileInactive.Set("Inactive", "0", "> 180d inactive", Color.FromArgb(107, 114, 128));
+
+            tileTotal.ContentChanged += (s, e) => LayoutSegmentsTab();
+            tileLoyal.ContentChanged += (s, e) => LayoutSegmentsTab();
+            tileReturning.ContentChanged += (s, e) => LayoutSegmentsTab();
+            tileAtRisk.ContentChanged += (s, e) => LayoutSegmentsTab();
+            tileInactive.ContentChanged += (s, e) => LayoutSegmentsTab();
 
             pnlTabSegments.Controls.Add(tileTotal);
             pnlTabSegments.Controls.Add(tileLoyal);
@@ -305,7 +335,8 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Section,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
 
             lblSegmentsCount = new Label
@@ -314,11 +345,12 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkFaint,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
 
             // Category Filter Pills
-            pnlSegmentPills = new Panel { BackColor = Color.Transparent };
+            pnlSegmentPills = new Panel { BackColor = UiKit.T.Surface };
             foreach (var cat in new[] { "All", "Loyal", "Returning", "New", "AtRisk", "Inactive" })
             {
                 string display = cat switch
@@ -338,7 +370,7 @@ namespace CRM.winforms.Controls
             }
             _segmentPills[0].IsActive = true;
 
-            searchSegments = new SearchBox { PlaceholderText = "Search customer name, contact or trigger basis..." };
+            searchSegments = new SearchBox { PlaceholderText = "Search customer, trigger, segment..." };
             searchSegments.Inner.TextChanged += (s, e) => ApplySegmentsFilter();
 
             dgvSegments = new DataGridView();
@@ -374,7 +406,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "CustomerName",
                 HeaderText = "Customer",
-                Width = 160,
+                Width = 190,
                 ReadOnly = true,
                 DefaultCellStyle = { Font = UiKit.T.BodyStrong }
             });
@@ -391,7 +423,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "Action",
                 HeaderText = "Recommended Action",
-                Width = 180,
+                Width = 240,
                 ReadOnly = true
             });
 
@@ -409,7 +441,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "TotalSpent",
                 HeaderText = "Total Spend",
-                Width = 110,
+                Width = 135,
                 ReadOnly = true,
                 DefaultCellStyle = { Format = "₱#,##0.00", Alignment = DataGridViewContentAlignment.MiddleRight }
             });
@@ -429,7 +461,7 @@ namespace CRM.winforms.Controls
                 HeaderText = "Action",
                 Text = "Create Request",
                 UseColumnTextForButtonValue = true,
-                Width = 120,
+                Width = 145,
                 FlatStyle = FlatStyle.Flat
             };
             btnCol.DefaultCellStyle.ForeColor = AppTheme.Primary;
@@ -438,7 +470,7 @@ namespace CRM.winforms.Controls
 
         private void DgvSegments_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
-            if (e.RowIndex < 0) return;
+            if (e.RowIndex < 0 || e.Graphics == null) return;
 
             // Segment badge column
             if (dgvSegments.Columns[e.ColumnIndex].DataPropertyName == "SegmentName")
@@ -491,7 +523,8 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Section,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
 
             lblApprovalsCount = new Label
@@ -500,11 +533,12 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkFaint,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
 
             // Status Filter Pills
-            pnlApprovalPills = new Panel { BackColor = Color.Transparent };
+            pnlApprovalPills = new Panel { BackColor = UiKit.T.Surface };
             foreach (var status in new[] { "All", "Pending", "Approved", "Rejected" })
             {
                 var pill = new TabButton(status, status);
@@ -524,7 +558,7 @@ namespace CRM.winforms.Controls
             {
                 Format = DateTimePickerFormat.Short,
                 Value = DateTime.Today.AddDays(-60),
-                Width = 100,
+                Width = 130,
                 Font = UiKit.T.Body
             };
             dtpApprovalFrom.ValueChanged += (s, e) => ApplyApprovalsFilter();
@@ -533,7 +567,7 @@ namespace CRM.winforms.Controls
             {
                 Format = DateTimePickerFormat.Short,
                 Value = DateTime.Today,
-                Width = 100,
+                Width = 130,
                 Font = UiKit.T.Body
             };
             dtpApprovalTo.ValueChanged += (s, e) => ApplyApprovalsFilter();
@@ -545,7 +579,7 @@ namespace CRM.winforms.Controls
                 AutoSize = true,
                 Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface
             };
             chkApprovalAllDates.CheckedChanged += (s, e) =>
             {
@@ -556,7 +590,7 @@ namespace CRM.winforms.Controls
             dtpApprovalFrom.Enabled = false;
             dtpApprovalTo.Enabled = false;
 
-            searchApprovals = new SearchBox { PlaceholderText = "Search customer, reason, submitter or remarks..." };
+            searchApprovals = new SearchBox { PlaceholderText = "Search customer, reason, submitter..." };
             searchApprovals.Inner.TextChanged += (s, e) => ApplyApprovalsFilter();
 
             dgvApprovals = new DataGridView();
@@ -595,7 +629,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "CustomerName",
                 HeaderText = "Customer",
-                Width = 160,
+                Width = 190,
                 ReadOnly = true,
                 DefaultCellStyle = { Font = UiKit.T.BodyStrong }
             });
@@ -639,7 +673,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "SubmittedByName",
                 HeaderText = "Submitted By",
-                Width = 130,
+                Width = 140,
                 ReadOnly = true,
                 DefaultCellStyle = { ForeColor = UiKit.T.InkMuted }
             });
@@ -648,7 +682,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "SubmittedAt",
                 HeaderText = "Submitted Date",
-                Width = 120,
+                Width = 130,
                 ReadOnly = true,
                 DefaultCellStyle = { Format = "MMM d, yyyy", Alignment = DataGridViewContentAlignment.MiddleCenter }
             });
@@ -659,7 +693,7 @@ namespace CRM.winforms.Controls
                 HeaderText = "Action",
                 Text = "Review / View",
                 UseColumnTextForButtonValue = true,
-                Width = 115,
+                Width = 135,
                 FlatStyle = FlatStyle.Flat
             };
             btnCol.DefaultCellStyle.ForeColor = AppTheme.Primary;
@@ -668,7 +702,7 @@ namespace CRM.winforms.Controls
 
         private void DgvApprovals_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
-            if (e.RowIndex < 0) return;
+            if (e.RowIndex < 0 || e.Graphics == null) return;
 
             // Status Badge Column
             if (dgvApprovals.Columns[e.ColumnIndex].DataPropertyName == "StatusText")
@@ -717,7 +751,8 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Section,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
 
             lblCampaignsCount = new Label
@@ -726,10 +761,11 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkFaint,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
 
-            pnlCampaignPills = new Panel { BackColor = Color.Transparent };
+            pnlCampaignPills = new Panel { BackColor = UiKit.T.Surface };
             foreach (var status in new[] { "All", "Pending", "Sent", "Simulated", "Failed" })
             {
                 var pill = new TabButton(status, status);
@@ -748,7 +784,7 @@ namespace CRM.winforms.Controls
             {
                 Format = DateTimePickerFormat.Short,
                 Value = DateTime.Today.AddDays(-60),
-                Width = 100,
+                Width = 130,
                 Font = UiKit.T.Body
             };
             dtpCampaignFrom.ValueChanged += (s, e) => ApplyCampaignsFilter();
@@ -757,7 +793,7 @@ namespace CRM.winforms.Controls
             {
                 Format = DateTimePickerFormat.Short,
                 Value = DateTime.Today,
-                Width = 100,
+                Width = 130,
                 Font = UiKit.T.Body
             };
             dtpCampaignTo.ValueChanged += (s, e) => ApplyCampaignsFilter();
@@ -769,7 +805,7 @@ namespace CRM.winforms.Controls
                 AutoSize = true,
                 Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
-                BackColor = Color.Transparent
+                BackColor = UiKit.T.Surface
             };
             chkCampaignAllDates.CheckedChanged += (s, e) =>
             {
@@ -780,7 +816,7 @@ namespace CRM.winforms.Controls
             dtpCampaignFrom.Enabled = false;
             dtpCampaignTo.Enabled = false;
 
-            searchCampaigns = new SearchBox { PlaceholderText = "Search recipient, subject, promo code..." };
+            searchCampaigns = new SearchBox { PlaceholderText = "Search recipient, subject, code..." };
             searchCampaigns.Inner.TextChanged += (s, e) => ApplyCampaignsFilter();
 
             dgvCampaigns = new DataGridView();
@@ -819,7 +855,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "RecipientName",
                 HeaderText = "Recipient",
-                Width = 150,
+                Width = 190,
                 ReadOnly = true,
                 DefaultCellStyle = { Font = UiKit.T.BodyStrong }
             });
@@ -828,7 +864,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "RecipientEmail",
                 HeaderText = "Email Address",
-                Width = 170,
+                Width = 180,
                 ReadOnly = true,
                 DefaultCellStyle = { ForeColor = UiKit.T.InkMuted }
             });
@@ -837,7 +873,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "SegmentName",
                 HeaderText = "Segment",
-                Width = 100,
+                Width = 110,
                 ReadOnly = true
             });
 
@@ -871,7 +907,7 @@ namespace CRM.winforms.Controls
             {
                 DataPropertyName = "CreatedAt",
                 HeaderText = "Created",
-                Width = 110,
+                Width = 130,
                 ReadOnly = true,
                 DefaultCellStyle = { Format = "MMM d, yyyy", Alignment = DataGridViewContentAlignment.MiddleCenter }
             });
@@ -882,7 +918,7 @@ namespace CRM.winforms.Controls
                 HeaderText = "Action",
                 Text = "Dispatch Now",
                 UseColumnTextForButtonValue = true,
-                Width = 130,
+                Width = 145,
                 FlatStyle = FlatStyle.Flat
             };
             btnCol.DefaultCellStyle.ForeColor = AppTheme.Primary;
@@ -891,7 +927,7 @@ namespace CRM.winforms.Controls
 
         private void DgvCampaigns_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
-            if (e.RowIndex < 0) return;
+            if (e.RowIndex < 0 || e.Graphics == null) return;
 
             // Delivery Status Badge Column
             if (dgvCampaigns.Columns[e.ColumnIndex].DataPropertyName == "DeliveryStatus")
@@ -978,7 +1014,7 @@ namespace CRM.winforms.Controls
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
                 BackColor = Color.White,
-                Font = new Font("Consolas", 9.5F),
+                Font = AppFonts.Mono(9.5F),
                 Text = c.FormattedBody
             };
 
@@ -1006,110 +1042,136 @@ namespace CRM.winforms.Controls
         {
             pnlTabManual = new Panel { Dock = DockStyle.Fill, BackColor = AppTheme.Background, AutoScroll = true };
 
+            // ── Left: Compose Card ──
             cardManualCompose = new SurfaceCard();
 
-            var lblHeading = new Label
+            lblManualHeading = new Label
             {
                 Text = "Direct Retention Email Outreach",
                 Font = UiKit.T.Section,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                Location = new Point(UiKit.T.S5, UiKit.T.S5)
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
-            cardManualCompose.Controls.Add(lblHeading);
+            cardManualCompose.Controls.Add(lblManualHeading);
 
-            var lblDesc = new Label
+            lblManualDesc = new Label
             {
-                Text = "Select a customer to evaluate dynamic segment metrics and anti-fatigue cooldown eligibility.",
+                Text = "Compose personalized retention offers with dynamic customer tokens and anti-fatigue cooldown governance.",
                 Font = UiKit.T.Subtitle,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                Location = new Point(UiKit.T.S5, lblHeading.Bottom + 4)
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
             };
-            cardManualCompose.Controls.Add(lblDesc);
+            cardManualCompose.Controls.Add(lblManualDesc);
 
-            int y = lblDesc.Bottom + 24;
-
-            // ── Customer Selector ──
-            var lblCust = new Label { Text = "Customer *", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(UiKit.T.S5, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblCust);
-            y += 22;
+            // Recipient Customer
+            lblCustTitle = new Label
+            {
+                Text = "Recipient Customer *",
+                Font = UiKit.T.SmallStrong,
+                ForeColor = UiKit.T.Ink,
+                AutoSize = true,
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
+            };
+            cardManualCompose.Controls.Add(lblCustTitle);
 
             cmbManualCustomer = new ComboBox
             {
-                Location = new Point(UiKit.T.S5, y),
-                Size = new Size(420, 32),
-                DropDownStyle = ComboBoxStyle.DropDownList,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.ListItems,
+                DropDownWidth = 520,
                 Font = UiKit.T.Body
             };
             cmbManualCustomer.SelectedIndexChanged += (s, e) => OnManualCustomerSelected();
+            cmbManualCustomer.Leave += (s, e) =>
+            {
+                if (cmbManualCustomer.SelectedIndex <= 0 && !string.IsNullOrWhiteSpace(cmbManualCustomer.Text))
+                {
+                    int idx = cmbManualCustomer.FindStringExact(cmbManualCustomer.Text.Trim());
+                    if (idx < 0) idx = cmbManualCustomer.FindString(cmbManualCustomer.Text.Trim());
+                    if (idx >= 0) cmbManualCustomer.SelectedIndex = idx;
+                }
+            };
+            cmbManualCustomer.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    if (cmbManualCustomer.SelectedIndex <= 0 && !string.IsNullOrWhiteSpace(cmbManualCustomer.Text))
+                    {
+                        int idx = cmbManualCustomer.FindStringExact(cmbManualCustomer.Text.Trim());
+                        if (idx < 0) idx = cmbManualCustomer.FindString(cmbManualCustomer.Text.Trim());
+                        if (idx >= 0) cmbManualCustomer.SelectedIndex = idx;
+                    }
+                }
+            };
             cardManualCompose.Controls.Add(cmbManualCustomer);
 
+            // Customer details snapshot box
+            pnlCustDetailsBox = new Panel
+            {
+                BackColor = Color.FromArgb(248, 250, 252)
+            };
             lblManualCustDetails = new Label
             {
-                Location = new Point(cmbManualCustomer.Right + 20, y - 4),
-                Size = new Size(500, 40),
                 Font = UiKit.T.Small,
-                ForeColor = UiKit.T.InkMuted,
-                Text = "Select a customer to view history & segment."
+                ForeColor = UiKit.T.Ink,
+                BackColor = Color.FromArgb(248, 250, 252),
+                Text = "Select a customer to view dynamic segment metrics, transaction history, and contact information.",
+                UseMnemonic = false
             };
-            cardManualCompose.Controls.Add(lblManualCustDetails);
-            y += 52;
+            pnlCustDetailsBox.Controls.Add(lblManualCustDetails);
+            cardManualCompose.Controls.Add(pnlCustDetailsBox);
 
-            // ── Anti-fatigue Alert Box ──
+            // Anti-Fatigue Warning Banner
             pnlCooldownAlert = new Panel
             {
-                Location = new Point(UiKit.T.S5, y),
-                Size = new Size(880, 56),
-                BackColor = Color.FromArgb(254, 243, 199)
+                BackColor = Color.FromArgb(209, 250, 229)
             };
-
             lblCooldownAlert = new Label
             {
-                Text = "Anti-Fatigue Cooldown Status",
-                Font = UiKit.T.BodyStrong,
-                ForeColor = Color.FromArgb(146, 64, 14),
-                Location = new Point(14, 8),
-                Size = new Size(580, 40)
+                Text = "Eligible for outreach. Cooldown policy satisfied.",
+                Font = UiKit.T.SmallStrong,
+                ForeColor = Color.FromArgb(6, 95, 70),
+                BackColor = Color.FromArgb(209, 250, 229),
+                UseMnemonic = false
             };
             pnlCooldownAlert.Controls.Add(lblCooldownAlert);
 
             chkOverrideCooldown = new CheckBox
             {
-                Text = "Override 14-day anti-fatigue rule",
+                Text = "Override cooldown",
                 Font = UiKit.T.SmallStrong,
                 ForeColor = Color.FromArgb(146, 64, 14),
-                Location = new Point(600, 14),
-                Size = new Size(260, 24),
-                Visible = false
+                BackColor = Color.FromArgb(254, 243, 199),
+                Visible = false,
+                UseMnemonic = false
             };
-            chkOverrideCooldown.CheckedChanged += (s, e) =>
-            {
-                UpdateManualSendButtonState();
-            };
+            chkOverrideCooldown.CheckedChanged += (s, e) => UpdateManualSendButtonState();
             pnlCooldownAlert.Controls.Add(chkOverrideCooldown);
             cardManualCompose.Controls.Add(pnlCooldownAlert);
-            y += 68;
 
-            // ── Template selection ──
-            var lblTpl = new Label { Text = "Campaign Template", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(UiKit.T.S5, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblTpl);
+            // Campaign Offer Configuration Row
+            lblTplTitle = new Label { Text = "Campaign Template", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, AutoSize = true, BackColor = UiKit.T.Surface, UseMnemonic = false };
+            lblDiscTitle = new Label { Text = "Discount %", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, AutoSize = true, BackColor = UiKit.T.Surface, UseMnemonic = false };
+            lblValidTitle = new Label { Text = "Validity (Days)", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, AutoSize = true, BackColor = UiKit.T.Surface, UseMnemonic = false };
+            lblCodeTitle = new Label { Text = "Promo Code", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, AutoSize = true, BackColor = UiKit.T.Surface, UseMnemonic = false };
 
-            var lblDisc = new Label { Text = "Discount %", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(360, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblDisc);
-
-            var lblValid = new Label { Text = "Validity (Days)", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(480, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblValid);
-
-            var lblCode = new Label { Text = "Promo Code", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(610, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblCode);
-            y += 22;
+            cardManualCompose.Controls.Add(lblTplTitle);
+            cardManualCompose.Controls.Add(lblDiscTitle);
+            cardManualCompose.Controls.Add(lblValidTitle);
+            cardManualCompose.Controls.Add(lblCodeTitle);
 
             cmbManualTemplate = new ComboBox
             {
-                Location = new Point(UiKit.T.S5, y),
-                Size = new Size(330, 32),
-                DropDownStyle = ComboBoxStyle.DropDownList,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.ListItems,
+                DropDownWidth = 360,
                 Font = UiKit.T.Body
             };
             cmbManualTemplate.SelectedIndexChanged += (s, e) => OnManualTemplateChanged();
@@ -1117,8 +1179,6 @@ namespace CRM.winforms.Controls
 
             numManualDiscount = new NumericUpDown
             {
-                Location = new Point(360, y),
-                Size = new Size(100, 30),
                 Minimum = 0,
                 Maximum = 100,
                 Value = 10,
@@ -1130,8 +1190,6 @@ namespace CRM.winforms.Controls
 
             numManualValidity = new NumericUpDown
             {
-                Location = new Point(480, y),
-                Size = new Size(110, 30),
                 Minimum = 1,
                 Maximum = 365,
                 Value = 14,
@@ -1142,81 +1200,150 @@ namespace CRM.winforms.Controls
 
             txtManualPromoCode = new TextBox
             {
-                Location = new Point(610, y),
-                Size = new Size(270, 30),
                 Font = UiKit.T.Body,
                 Text = $"FIXORY-RET-{Guid.NewGuid().ToString()[..6].ToUpper()}"
             };
             txtManualPromoCode.TextChanged += (s, e) => UpdateManualPreview();
             cardManualCompose.Controls.Add(txtManualPromoCode);
-            y += 48;
 
-            // ── Subject Line ──
-            var lblSubj = new Label { Text = "Email Subject *", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(UiKit.T.S5, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblSubj);
-            y += 22;
+            // Subject Line
+            lblSubjTitle = new Label { Text = "Email Subject *", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, AutoSize = true, BackColor = UiKit.T.Surface, UseMnemonic = false };
+            cardManualCompose.Controls.Add(lblSubjTitle);
 
             txtManualSubject = new TextBox
             {
-                Location = new Point(UiKit.T.S5, y),
-                Size = new Size(880, 30),
                 Font = UiKit.T.Body,
                 Text = "Special Care & Maintenance Offer from Fixory Computer Repair"
             };
             txtManualSubject.TextChanged += (s, e) => UpdateManualPreview();
             cardManualCompose.Controls.Add(txtManualSubject);
-            y += 46;
 
-            // ── Body & Live Preview (Side by Side) ──
-            var lblBody = new Label { Text = "Email Body Template (Tokens: {CustomerName}, {DiscountPercent}, {PromoCode}, {ValidUntil})", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(UiKit.T.S5, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblBody);
+            // Body
+            lblBodyTitle = new Label { Text = "Email Message *", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, AutoSize = true, BackColor = UiKit.T.Surface, UseMnemonic = false };
+            cardManualCompose.Controls.Add(lblBodyTitle);
 
-            var lblPrev = new Label { Text = "Live Rendered Email Preview (via SMTP)", Font = UiKit.T.SmallStrong, ForeColor = UiKit.T.Ink, Location = new Point(460, y), AutoSize = true };
-            cardManualCompose.Controls.Add(lblPrev);
-            y += 22;
+            lblBodyTokens = new Label
+            {
+                Text = "Tokens: {CustomerName}, {DiscountPercent}, {PromoCode}, {ValidUntil}",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkMuted,
+                AutoSize = true,
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
+            };
+            cardManualCompose.Controls.Add(lblBodyTokens);
 
             txtManualBody = new TextBox
             {
-                Location = new Point(UiKit.T.S5, y),
-                Size = new Size(430, 220),
                 Multiline = true,
                 ScrollBars = ScrollBars.Vertical,
-                Font = UiKit.T.Body,
+                Font = AppFonts.Regular(9.5F),
                 Text = "Dear {CustomerName},\r\n\r\nThank you for choosing Fixory for your computer repairs. As a valued client, we're pleased to offer you {DiscountPercent}% off your next hardware tune-up or diagnostic service.\r\n\r\nUse Promo Code: {PromoCode}\r\nValid until: {ValidUntil}\r\n\r\nBest regards,\r\nFixory Repair Team"
             };
             txtManualBody.TextChanged += (s, e) => UpdateManualPreview();
             cardManualCompose.Controls.Add(txtManualBody);
 
-            txtManualPreview = new TextBox
+            // Send Button
+            btnManualSend = new SaasButton("Send Retention Email via SMTP", SaasButtonVariant.Primary, "\uE715")
             {
-                Location = new Point(460, y),
-                Size = new Size(425, 220),
-                Multiline = true,
-                ReadOnly = true,
-                BackColor = Color.FromArgb(249, 250, 251),
-                ScrollBars = ScrollBars.Vertical,
-                Font = UiKit.T.Body
+                Width = 280,
+                Height = 40
             };
-            cardManualCompose.Controls.Add(txtManualPreview);
-            y += 244;
-
-            // ── Send Button ──
-            btnManualSend = new Button
-            {
-                Text = "Send Retention Email via SMTP",
-                Font = UiKit.T.BodyStrong,
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Location = new Point(UiKit.T.S5, y),
-                Size = new Size(260, 40),
-                Cursor = Cursors.Hand
-            };
-            btnManualSend.FlatAppearance.BorderSize = 0;
             btnManualSend.Click += async (s, e) => await SendManualRetentionEmailAsync();
             cardManualCompose.Controls.Add(btnManualSend);
 
             pnlTabManual.Controls.Add(cardManualCompose);
+
+            // ── Right: Live Customer Preview Card ──
+            cardManualPreview = new SurfaceCard();
+
+            lblPreviewHeading = new Label
+            {
+                Text = "Live Customer Preview",
+                Font = UiKit.T.Section,
+                ForeColor = UiKit.T.Ink,
+                AutoSize = true,
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
+            };
+            cardManualPreview.Controls.Add(lblPreviewHeading);
+
+            lblPreviewDesc = new Label
+            {
+                Text = "Simulated message as rendered in the customer's email inbox.",
+                Font = UiKit.T.Subtitle,
+                ForeColor = UiKit.T.InkMuted,
+                AutoSize = true,
+                BackColor = UiKit.T.Surface,
+                UseMnemonic = false
+            };
+            cardManualPreview.Controls.Add(lblPreviewDesc);
+
+            // Simulated envelope header frame
+            pnlPreviewEnvelope = new Panel
+            {
+                BackColor = Color.FromArgb(248, 250, 252)
+            };
+
+            lblPreviewFrom = new Label
+            {
+                Text = "From: Fixory Computer Repair <service@fixory.com>",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkMuted,
+                BackColor = Color.FromArgb(248, 250, 252),
+                UseMnemonic = false
+            };
+            lblPreviewTo = new Label
+            {
+                Text = "To: Customer <email@example.com>",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkMuted,
+                BackColor = Color.FromArgb(248, 250, 252),
+                UseMnemonic = false
+            };
+            lblPreviewSubject = new Label
+            {
+                Text = "Subject: Special Care & Maintenance Offer from Fixory Computer Repair",
+                Font = UiKit.T.BodyStrong,
+                ForeColor = UiKit.T.Ink,
+                BackColor = Color.FromArgb(248, 250, 252),
+                UseMnemonic = false
+            };
+            lblPreviewDate = new Label
+            {
+                Text = $"Date: {DateTime.Now:MMM d, yyyy  h:mm tt}",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkFaint,
+                BackColor = Color.FromArgb(248, 250, 252),
+                UseMnemonic = false
+            };
+
+            pnlPreviewEnvelope.Controls.Add(lblPreviewFrom);
+            pnlPreviewEnvelope.Controls.Add(lblPreviewTo);
+            pnlPreviewEnvelope.Controls.Add(lblPreviewSubject);
+            pnlPreviewEnvelope.Controls.Add(lblPreviewDate);
+            cardManualPreview.Controls.Add(pnlPreviewEnvelope);
+
+            // Simulated white reading canvas
+            pnlPreviewSheet = new Panel
+            {
+                BackColor = Color.White
+            };
+
+            txtManualPreview = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                BackColor = Color.White,
+                ForeColor = UiKit.T.Ink,
+                ScrollBars = ScrollBars.Vertical,
+                Font = AppFonts.Regular(10F),
+                BorderStyle = BorderStyle.None
+            };
+            pnlPreviewSheet.Controls.Add(txtManualPreview);
+            cardManualPreview.Controls.Add(pnlPreviewSheet);
+
+            pnlTabManual.Controls.Add(cardManualPreview);
             pnlTabHost.Controls.Add(pnlTabManual);
         }
 
@@ -1236,8 +1363,8 @@ namespace CRM.winforms.Controls
             decimal spent = rec?.TotalSpent ?? 0;
             int lastDays = rec?.DaysSinceLastTransaction ?? 0;
 
-            lblManualCustDetails.Text = $"Segment: {seg}  ·  Repairs: {visits}  ·  Total Spent: ₱{spent:N2}  ·  Last Repair: {lastDays}d ago\n" +
-                                        $"Contact: {cust.Email ?? "No email"} | {cust.Phone ?? "No phone"}";
+            lblManualCustDetails.Text = $"Segment: {seg}  ·  Repairs: {visits}  ·  Spent: ₱{spent:N2}  ·  Last Repair: {lastDays}d ago\n" +
+                                        $"Contact: {cust.Email ?? "No email"}  ·  Phone: {cust.Phone ?? "No phone"}";
 
             // Check Cooldown in campaigns
             var recentCampaign = _cachedCampaigns
@@ -1263,16 +1390,19 @@ namespace CRM.winforms.Controls
             {
                 int daysSince = (int)(DateTime.UtcNow - lastSent.Value).TotalDays;
                 pnlCooldownAlert.BackColor = Color.FromArgb(254, 243, 199);
+                lblCooldownAlert.BackColor = Color.FromArgb(254, 243, 199);
                 lblCooldownAlert.ForeColor = Color.FromArgb(146, 64, 14);
-                lblCooldownAlert.Text = $"Anti-Fatigue Warning: This customer received an email {daysSince} day(s) ago. Policy requires a {cooldownDays}-day gap to prevent spam.";
+                lblCooldownAlert.Text = $"Anti-Fatigue Alert: Emailed {daysSince}d ago ({cooldownDays}d cooldown required).";
+                chkOverrideCooldown.Text = $"Override {cooldownDays}-day cooldown";
                 chkOverrideCooldown.Visible = true;
                 chkOverrideCooldown.Checked = false;
             }
             else
             {
                 pnlCooldownAlert.BackColor = Color.FromArgb(209, 250, 229);
+                lblCooldownAlert.BackColor = Color.FromArgb(209, 250, 229);
                 lblCooldownAlert.ForeColor = Color.FromArgb(6, 95, 70);
-                lblCooldownAlert.Text = "Eligible for outreach. No emails sent within the anti-fatigue cooldown window.";
+                lblCooldownAlert.Text = "Eligible for outreach. Cooldown policy satisfied.";
                 chkOverrideCooldown.Visible = false;
                 chkOverrideCooldown.Checked = true;
             }
@@ -1320,17 +1450,59 @@ namespace CRM.winforms.Controls
                 ? _cachedCustomers[cmbManualCustomer.SelectedIndex].FullName
                 : "Customer";
 
+            string custEmail = cmbManualCustomer.SelectedIndex >= 0 && cmbManualCustomer.SelectedIndex < _cachedCustomers.Count
+                ? (_cachedCustomers[cmbManualCustomer.SelectedIndex].Email ?? "customer@example.com")
+                : "customer@example.com";
+
             string code = txtManualPromoCode.Text.Trim();
             string discount = $"{numManualDiscount.Value:0.#}";
+            string validDays = numManualValidity.Value.ToString();
             string validDate = DateTime.Now.AddDays((double)numManualValidity.Value).ToString("MMMM d, yyyy");
 
             string rendered = (txtManualBody.Text ?? "")
                 .Replace("{CustomerName}", custName)
+                .Replace("{{customer_name}}", custName)
                 .Replace("{DiscountPercent}", discount)
+                .Replace("{{discount_percent}}", discount)
                 .Replace("{PromoCode}", code)
-                .Replace("{ValidUntil}", validDate);
+                .Replace("{{promo_code}}", code)
+                .Replace("{ValidUntil}", validDate)
+                .Replace("{{validity_days}}", validDays)
+                .Replace("{{expiration_date}}", validDate);
 
-            txtManualPreview.Text = $"SUBJECT: {txtManualSubject.Text}\r\n\r\n" + rendered;
+            // Update preview headers
+            if (lblPreviewTo != null)
+                lblPreviewTo.Text = $"To: {custName} <{custEmail}>";
+            if (lblPreviewSubject != null)
+                lblPreviewSubject.Text = $"Subject: {txtManualSubject.Text}";
+            if (lblPreviewDate != null)
+                lblPreviewDate.Text = $"Date: {DateTime.Now:MMM d, yyyy  h:mm tt}";
+
+            // Render clean formatted message for customer preview
+            if (txtManualPreview != null)
+                txtManualPreview.Text = StripOrFormatHtml(rendered);
+        }
+
+        private static string StripOrFormatHtml(string html)
+        {
+            if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+
+            if (!html.Contains('<') && !html.Contains('>'))
+                return html;
+
+            string text = html;
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"</p\s*>", "\r\n\r\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<br\s*/?>", "\r\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<div\s*>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"</div\s*>", "\r\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<li\s*>", " • ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"</li\s*>", "\r\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<[^>]+>", string.Empty);
+            text = System.Net.WebUtility.HtmlDecode(text);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"(\r?\n){3,}", "\r\n\r\n");
+
+            return text.Trim();
         }
 
         private void UpdateManualSendButtonState()
@@ -1597,13 +1769,37 @@ namespace CRM.winforms.Controls
             {
                 Location = new Point(UiKit.T.S5, ty),
                 Size = new Size(190, 32),
-                DropDownStyle = ComboBoxStyle.DropDownList,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.ListItems,
+                DropDownWidth = 220,
                 Font = UiKit.T.Body
             };
             foreach (var seg in new[] { "New", "Returning", "Loyal", "At-Risk", "Inactive" })
                 cmbTemplateSegment.Items.Add(seg);
             cmbTemplateSegment.SelectedIndex = 2; // Loyal
             cmbTemplateSegment.SelectedIndexChanged += (s, e) => OnTemplateSegmentSelectionChanged();
+            cmbTemplateSegment.Leave += (s, e) =>
+            {
+                if (cmbTemplateSegment.SelectedIndex < 0 && !string.IsNullOrWhiteSpace(cmbTemplateSegment.Text))
+                {
+                    int idx = cmbTemplateSegment.FindStringExact(cmbTemplateSegment.Text.Trim());
+                    if (idx < 0) idx = cmbTemplateSegment.FindString(cmbTemplateSegment.Text.Trim());
+                    if (idx >= 0) cmbTemplateSegment.SelectedIndex = idx;
+                }
+            };
+            cmbTemplateSegment.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    if (cmbTemplateSegment.SelectedIndex < 0 && !string.IsNullOrWhiteSpace(cmbTemplateSegment.Text))
+                    {
+                        int idx = cmbTemplateSegment.FindStringExact(cmbTemplateSegment.Text.Trim());
+                        if (idx < 0) idx = cmbTemplateSegment.FindString(cmbTemplateSegment.Text.Trim());
+                        if (idx >= 0) cmbTemplateSegment.SelectedIndex = idx;
+                    }
+                }
+            };
             cardSettingsTemplates.Controls.Add(cmbTemplateSegment);
 
             txtTemplateName = new TextBox { Location = new Point(220, ty), Size = new Size(380, 30), Font = UiKit.T.Body, Enabled = _isAdmin };
@@ -1836,11 +2032,7 @@ namespace CRM.winforms.Controls
             LayoutCampaignsTab();
 
             // Layout Tab 4: Manual Email
-            if (cardManualCompose != null)
-            {
-                cardManualCompose.Location = new Point(0, 0);
-                cardManualCompose.Size = new Size(Math.Max(960, pnlTabHost.Width - 10), 800);
-            }
+            LayoutManualEmailTab();
 
             // Layout Tab 5: Settings
             if (pnlTabSettings != null)
@@ -1870,22 +2062,29 @@ namespace CRM.winforms.Controls
             int stripW = (pnlTabHost.Width - 32) / 5;
             stripW = Math.Max(140, stripW);
 
+            var tiles = new[] { tileTotal, tileLoyal, tileReturning, tileAtRisk, tileInactive };
+            int tileH = 116;
+            if (tiles.All(t => t != null))
+            {
+                tileH = Math.Max(116, tiles.Max(t => t.HeightFor(stripW)));
+            }
+
             tileTotal.Location = new Point(0, 0);
-            tileTotal.Size = new Size(stripW, 116);
+            tileTotal.Size = new Size(stripW, tileH);
 
             tileLoyal.Location = new Point(tileTotal.Right + 8, 0);
-            tileLoyal.Size = new Size(stripW, 116);
+            tileLoyal.Size = new Size(stripW, tileH);
 
             tileReturning.Location = new Point(tileLoyal.Right + 8, 0);
-            tileReturning.Size = new Size(stripW, 116);
+            tileReturning.Size = new Size(stripW, tileH);
 
             tileAtRisk.Location = new Point(tileReturning.Right + 8, 0);
-            tileAtRisk.Size = new Size(stripW, 116);
+            tileAtRisk.Size = new Size(stripW, tileH);
 
             tileInactive.Location = new Point(tileAtRisk.Right + 8, 0);
-            tileInactive.Size = new Size(stripW, 116);
+            tileInactive.Size = new Size(stripW, tileH);
 
-            int cardTop = 128;
+            int cardTop = tileH + 14;
             int cardH = Math.Max(200, pnlTabHost.Height - cardTop - 10);
             cardSegments.Location = new Point(0, cardTop);
             cardSegments.Size = new Size(pnlTabHost.Width, cardH);
@@ -1951,7 +2150,9 @@ namespace CRM.winforms.Controls
 
             // Date pickers
             int dx = pnlApprovalPills.Right + 16;
+            dtpApprovalFrom.Size = new Size(130, UiKit.T.InputHeight);
             dtpApprovalFrom.Location = new Point(dx, toolbarY + 3);
+            dtpApprovalTo.Size = new Size(130, UiKit.T.InputHeight);
             dtpApprovalTo.Location = new Point(dtpApprovalFrom.Right + 6, toolbarY + 3);
             chkApprovalAllDates.Location = new Point(dtpApprovalTo.Right + 6, toolbarY + 6);
 
@@ -1997,7 +2198,9 @@ namespace CRM.winforms.Controls
             pnlCampaignPills.Size = new Size(px, 32);
 
             int dx = pnlCampaignPills.Right + 16;
+            dtpCampaignFrom.Size = new Size(130, UiKit.T.InputHeight);
             dtpCampaignFrom.Location = new Point(dx, toolbarY + 3);
+            dtpCampaignTo.Size = new Size(130, UiKit.T.InputHeight);
             dtpCampaignTo.Location = new Point(dtpCampaignFrom.Right + 6, toolbarY + 3);
             chkCampaignAllDates.Location = new Point(dtpCampaignTo.Right + 6, toolbarY + 6);
 
@@ -2016,6 +2219,175 @@ namespace CRM.winforms.Controls
                 stateCampaigns.Location = new Point(cp, gridTop);
                 stateCampaigns.Size = new Size(gridW, gridH);
             }
+        }
+
+        private void LayoutManualEmailTab()
+        {
+            if (cardManualCompose == null || pnlTabManual == null || pnlTabHost == null) return;
+
+            int availW = pnlTabHost.ClientSize.Width;
+            int availH = pnlTabHost.ClientSize.Height;
+            if (availW <= 0 || availH <= 0) return;
+
+            bool sideBySide = availW >= 940;
+            int gap = 16;
+
+            if (sideBySide)
+            {
+                int composeW = Math.Min(620, Math.Max(480, (int)((availW - gap) * 0.54)));
+                int previewW = Math.Max(380, availW - composeW - gap);
+                int cardH = Math.Max(660, availH - 8);
+
+                cardManualCompose.Location = new Point(0, 0);
+                cardManualCompose.Size = new Size(composeW, cardH);
+
+                if (cardManualPreview != null)
+                {
+                    cardManualPreview.Location = new Point(cardManualCompose.Right + gap, 0);
+                    cardManualPreview.Size = new Size(previewW, cardH);
+                }
+            }
+            else
+            {
+                int cardW = Math.Max(460, availW - 8);
+                cardManualCompose.Location = new Point(0, 0);
+                cardManualCompose.Size = new Size(cardW, 640);
+
+                if (cardManualPreview != null)
+                {
+                    cardManualPreview.Location = new Point(0, cardManualCompose.Bottom + gap);
+                    cardManualPreview.Size = new Size(cardW, 520);
+                }
+            }
+
+            LayoutComposeCard();
+            LayoutPreviewCard();
+        }
+
+        private void LayoutComposeCard()
+        {
+            if (cardManualCompose == null) return;
+
+            const int cp = 18;
+            int cw = Math.Max(200, cardManualCompose.Width - cp * 2);
+
+            lblManualHeading.Location = new Point(cp, 16);
+            lblManualDesc.Location = new Point(cp, lblManualHeading.Bottom + 4);
+
+            int y = lblManualDesc.Bottom + 16;
+
+            // Recipient Customer
+            lblCustTitle.Location = new Point(cp, y);
+            y += 20;
+
+            cmbManualCustomer.Location = new Point(cp, y);
+            cmbManualCustomer.Size = new Size(cw, 30);
+            y += 36;
+
+            // Customer details pill box
+            pnlCustDetailsBox.Location = new Point(cp, y);
+            pnlCustDetailsBox.Size = new Size(cw, 46);
+            lblManualCustDetails.Location = new Point(10, 5);
+            lblManualCustDetails.Size = new Size(pnlCustDetailsBox.Width - 20, 36);
+            y += pnlCustDetailsBox.Height + 10;
+
+            // Anti-Fatigue Warning
+            pnlCooldownAlert.Location = new Point(cp, y);
+            pnlCooldownAlert.Size = new Size(cw, 44);
+            int chkW = Math.Min(200, Math.Max(160, (int)(pnlCooldownAlert.Width * 0.36)));
+            chkOverrideCooldown.Size = new Size(chkW, 24);
+            chkOverrideCooldown.Location = new Point(pnlCooldownAlert.Width - chkW - 10, 10);
+            lblCooldownAlert.Location = new Point(10, 6);
+            lblCooldownAlert.Size = new Size(Math.Max(80, chkOverrideCooldown.Left - 16), 32);
+            y += pnlCooldownAlert.Height + 12;
+
+            // Campaign Template & Offer Settings Row
+            int discW = 75;
+            int validW = 90;
+            int codeW = Math.Max(110, (int)(cw * 0.28));
+            int tplW = Math.Max(120, cw - discW - validW - codeW - 36);
+
+            lblTplTitle.Location = new Point(cp, y);
+            lblDiscTitle.Location = new Point(cp + tplW + 12, y);
+            lblValidTitle.Location = new Point(lblDiscTitle.Left + discW + 12, y);
+            lblCodeTitle.Location = new Point(lblValidTitle.Left + validW + 12, y);
+            y += 20;
+
+            cmbManualTemplate.Location = new Point(cp, y);
+            cmbManualTemplate.Size = new Size(tplW, 30);
+
+            numManualDiscount.Location = new Point(lblDiscTitle.Left, y);
+            numManualDiscount.Size = new Size(discW, 30);
+
+            numManualValidity.Location = new Point(lblValidTitle.Left, y);
+            numManualValidity.Size = new Size(validW, 30);
+
+            txtManualPromoCode.Location = new Point(lblCodeTitle.Left, y);
+            txtManualPromoCode.Size = new Size(codeW, 30);
+            y += 40;
+
+            // Subject Line
+            lblSubjTitle.Location = new Point(cp, y);
+            y += 20;
+
+            txtManualSubject.Location = new Point(cp, y);
+            txtManualSubject.Size = new Size(cw, 30);
+            y += 40;
+
+            // Email Message Body
+            lblBodyTitle.Location = new Point(cp, y);
+            lblBodyTokens.Location = new Point(lblBodyTitle.Right + 12, y + 1);
+            y += 20;
+
+            int bottomReserve = 56;
+            int bodyH = Math.Max(90, cardManualCompose.Height - y - bottomReserve - 14);
+            txtManualBody.Location = new Point(cp, y);
+            txtManualBody.Size = new Size(cw, bodyH);
+            y += bodyH + 14;
+
+            // Send Button
+            btnManualSend.Location = new Point(cp, y);
+            btnManualSend.Size = new Size(Math.Min(cw, 280), 38);
+        }
+
+        private void LayoutPreviewCard()
+        {
+            if (cardManualPreview == null) return;
+
+            const int pp = 18;
+            int pw = Math.Max(200, cardManualPreview.Width - pp * 2);
+
+            lblPreviewHeading.Location = new Point(pp, 16);
+            lblPreviewDesc.Location = new Point(pp, lblPreviewHeading.Bottom + 4);
+
+            int y = lblPreviewDesc.Bottom + 16;
+
+            // Email envelope header frame
+            pnlPreviewEnvelope.Location = new Point(pp, y);
+            pnlPreviewEnvelope.Size = new Size(pw, 100);
+
+            int envW = pnlPreviewEnvelope.Width - 20;
+            lblPreviewFrom.Location = new Point(10, 8);
+            lblPreviewFrom.Size = new Size(envW, 18);
+
+            lblPreviewTo.Location = new Point(10, 28);
+            lblPreviewTo.Size = new Size(envW, 18);
+
+            lblPreviewSubject.Location = new Point(10, 50);
+            lblPreviewSubject.Size = new Size(envW, 20);
+
+            lblPreviewDate.Location = new Point(10, 74);
+            lblPreviewDate.Size = new Size(envW, 18);
+
+            y += pnlPreviewEnvelope.Height + 12;
+
+            // Email body reader canvas
+            int bodyH = Math.Max(120, cardManualPreview.Height - y - pp);
+            pnlPreviewSheet.Location = new Point(pp, y);
+            pnlPreviewSheet.Size = new Size(pw, bodyH);
+
+            txtManualPreview.Location = new Point(12, 12);
+            txtManualPreview.Size = new Size(pnlPreviewSheet.Width - 24, Math.Max(40, pnlPreviewSheet.Height - 24));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -2363,7 +2735,7 @@ namespace CRM.winforms.Controls
             g.MultiSelect = false;
             g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            g.ScrollBars = ScrollBars.Vertical;
+            g.ScrollBars = ScrollBars.Both;
             g.RowTemplate.Height = UiKit.T.RowHeight;
             g.ColumnHeadersHeight = UiKit.T.HeaderHeight;
             g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
@@ -2380,8 +2752,8 @@ namespace CRM.winforms.Controls
             g.DefaultCellStyle.Font = UiKit.T.Body;
             g.DefaultCellStyle.SelectionBackColor = UiKit.Wash(AppTheme.Primary);
             g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
-            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
-            g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 6, UiKit.T.S3, 6);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
             g.RowsDefaultCellStyle.BackColor = UiKit.T.Surface;
         }
 
@@ -2444,6 +2816,129 @@ namespace CRM.winforms.Controls
                 var rect = new Rectangle(pillX, pillY, pillW, pillH);
                 UiKit.FillRounded(g, rect, pillH / 2, bg);
                 UiKit.Text(g, text, UiKit.T.SmallStrong, fg, rect, UiKit.Center);
+            }
+        }
+
+        /// <summary>
+        /// Retention KPI Card — Clean, minimal card matching Dashboard and Reports styling.
+        /// Dynamically measures fonts to prevent top/bottom clipping, with ample bottom padding.
+        /// </summary>
+        [DesignerCategory("Code")]
+        private sealed class RetentionKpiCard : Control
+        {
+            private const int Pad = 18;
+
+            private static readonly Font[] NumFonts =
+            {
+                AppFonts.Strong(22F),
+                AppFonts.Strong(18F),
+                AppFonts.Strong(15F),
+                AppFonts.Strong(13F),
+                AppFonts.Strong(11F)
+            };
+
+            private string _label = "";
+            private string _number = "0";
+            private string _sub = "";
+            private Color _accent = AppTheme.Primary;
+            private bool _hover;
+
+            public event EventHandler? ContentChanged;
+
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public string Number
+            {
+                get => _number;
+                set
+                {
+                    if (_number == value) return;
+                    _number = value ?? "0";
+                    Invalidate();
+                    ContentChanged?.Invoke(this, EventArgs.Empty);
+                }
+            }
+
+            public RetentionKpiCard()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+            }
+
+            public void Set(string label, string number, string sub, Color accent)
+            {
+                _label = label;
+                _number = number;
+                _sub = sub;
+                _accent = accent;
+                Invalidate();
+                ContentChanged?.Invoke(this, EventArgs.Empty);
+            }
+
+            public int HeightFor(int width) => Math.Max(116, Measure(width).Total);
+
+            private (Font NumFont, int TopH, int NumH, int CapH, int Total) Measure(int width)
+            {
+                int inner = Math.Max(20, width - Pad * 2);
+                int topH = Math.Max(16, UiKit.T.SmallStrong.Height);
+
+                Font numFont = NumFonts[^1];
+                foreach (var f in NumFonts)
+                {
+                    var size = TextRenderer.MeasureText(_number, f, new Size(int.MaxValue, int.MaxValue),
+                        TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+                    if (size.Width <= inner) { numFont = f; break; }
+                }
+
+                int numH = Math.Max(numFont.Height + 2, TextRenderer.MeasureText(_number, numFont, new Size(inner, int.MaxValue),
+                    TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Height + 2);
+
+                int capH = string.IsNullOrEmpty(_sub) ? 0 : Math.Max(UiKit.T.Small.Height + 2,
+                    TextRenderer.MeasureText(_sub, UiKit.T.Small, new Size(inner, int.MaxValue),
+                        TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Height + 2);
+
+                int total = Pad + topH + 8 + numH + (capH > 0 ? 4 + capH : 0) + Pad;
+                return (numFont, topH, numH, capH, total);
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var bg = new SolidBrush(AppTheme.Background))
+                    g.FillRectangle(bg, ClientRectangle);
+
+                var r = new Rectangle(0, 0, Width - 1, Height - 1);
+                UiKit.Card(g, r, 10, UiKit.T.Surface, _hover ? _accent : UiKit.T.Line);
+
+                var m = Measure(Width);
+                int inner = Math.Max(20, Width - Pad * 2);
+
+                // 1. Accent Dot + Label
+                UiKit.Dot(g, Pad + 3, Pad + m.TopH / 2f, 6, _accent);
+                var lblRect = new Rectangle(Pad + 12, Pad, inner - 12, m.TopH);
+                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted, lblRect,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+
+                // 2. Large Number (Rendered with Top alignment so top is NEVER clipped)
+                int numTop = Pad + m.TopH + 8;
+                var numRect = new Rectangle(Pad, numTop, inner, m.NumH);
+                UiKit.Text(g, _number, m.NumFont, UiKit.T.Ink, numRect,
+                    TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+
+                // 3. Subtitle (Rendered with Top alignment so bottom is NEVER clipped)
+                if (!string.IsNullOrEmpty(_sub) && m.CapH > 0)
+                {
+                    int capTop = numTop + m.NumH + 4;
+                    var subRect = new Rectangle(Pad, capTop, inner, m.CapH);
+                    UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkFaint, subRect,
+                        TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                }
             }
         }
 

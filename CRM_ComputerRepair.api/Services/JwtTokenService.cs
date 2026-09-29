@@ -20,7 +20,7 @@ public class JwtTokenService
         _configuration = configuration;
     }
 
-    public string CreateToken(User user, IList<string> roles)
+    public string CreateToken(User user, IList<string> roles, int companyId = 1)
     {
         var jwtSection = _configuration.GetSection("Jwt");
         var key = jwtSection["Key"]
@@ -37,7 +37,7 @@ public class JwtTokenService
             new(JwtRegisteredClaimNames.UniqueName, user.UserName ?? string.Empty),
             new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
             new("FullName", $"{user.FirstName} {user.LastName}".Trim()),
-            new("CompanyId", "1")
+            new("CompanyId", companyId.ToString())
         };
 
         foreach (var role in roles.Distinct())

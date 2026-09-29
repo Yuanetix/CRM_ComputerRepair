@@ -32,6 +32,12 @@ public class TenantCrmDbContext : DbContext
     public DbSet<RetentionEmailTemplate> RetentionEmailTemplates => Set<RetentionEmailTemplate>();
     public DbSet<RetentionSettings> RetentionSettings => Set<RetentionSettings>();
 
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+    }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -50,6 +56,20 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.PartsCost).HasPrecision(18, 2);
             entity.Property(x => x.LaborCost).HasPrecision(18, 2);
             entity.HasIndex(x => x.RequestNumber).IsUnique();
+
+            entity.HasOne(x => x.Customer)
+                .WithMany(c => c.RepairRequests)
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(x => x.Device)
+                .WithMany(d => d.RepairRequests)
+                .HasForeignKey(x => x.DeviceId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => x.RequestDate);
         });
 
         // ═══════════ Customer ═══════════
@@ -61,6 +81,18 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.Email).HasMaxLength(200);
             entity.Property(x => x.Phone).HasMaxLength(50);
             entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.City).HasMaxLength(100);
+            entity.Property(x => x.StateOrProvince).HasMaxLength(100);
+            entity.Property(x => x.PostalCode).HasMaxLength(20);
+            entity.Property(x => x.Country).HasMaxLength(100);
+
+            entity.Ignore(x => x.FullName);
+            entity.Ignore(x => x.FullAddress);
+
+            entity.HasIndex(x => x.Email);
+            entity.HasIndex(x => x.Phone);
+            entity.HasIndex(x => x.LastName);
+            entity.HasIndex(x => x.City);
         });
 
         // ═══════════ Device ═══════════
@@ -76,6 +108,13 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.WarrantyStatus).HasMaxLength(50);
             entity.Property(x => x.Status).HasMaxLength(50);
             entity.Property(x => x.PurchasePrice).HasPrecision(18, 2);
+
+            entity.HasOne(x => x.Customer)
+                .WithMany(c => c.Devices)
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(x => x.CustomerId);
         });
 
         // ═══════════ CustomerInteraction (Inquiry / Complaint / Feedback) ═══════════
@@ -98,6 +137,9 @@ public class TenantCrmDbContext : DbContext
                 .WithMany(r => r.CustomerInteractions)
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.RepairRequestId);
         });
 
         // ═══════════ FollowUp (NEW) ═══════════
@@ -120,6 +162,10 @@ public class TenantCrmDbContext : DbContext
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.RepairRequestId);
+            entity.HasIndex(x => x.Status);
         });
 
         // ═══════════ RepairStatusHistory ═══════════
@@ -127,6 +173,13 @@ public class TenantCrmDbContext : DbContext
         {
             entity.HasKey(x => x.RepairStatusHistoryId);
             entity.Property(x => x.Notes).HasMaxLength(500);
+
+            entity.HasOne(x => x.RepairRequest)
+                .WithMany()
+                .HasForeignKey(x => x.RepairRequestId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => x.RepairRequestId);
         });
 
         // ═══════════ Payment ═══════════
@@ -136,6 +189,14 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.Amount).HasPrecision(18, 2);
             entity.Property(x => x.PaymentMethod).HasMaxLength(50);
             entity.Property(x => x.ReferenceNumber).HasMaxLength(100);
+
+            entity.HasOne(x => x.RepairRequest)
+                .WithMany()
+                .HasForeignKey(x => x.RepairRequestId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.RepairRequestId);
+            entity.HasIndex(x => x.PaymentDate);
         });
 
         // ═══════════ Supplier (Lab 5) ═══════════
@@ -144,12 +205,20 @@ public class TenantCrmDbContext : DbContext
             entity.HasKey(x => x.SupplierId);
             entity.Property(x => x.SupplierCode).HasMaxLength(50).IsRequired();
             entity.Property(x => x.SupplierName).HasMaxLength(200).IsRequired();
-            entity.Property(x => x.ContactPerson).HasMaxLength(100);
+            entity.Property(x => x.ContactFirstName).HasMaxLength(100);
+            entity.Property(x => x.ContactLastName).HasMaxLength(100);
             entity.Property(x => x.ContactNumber).HasMaxLength(50);
             entity.Property(x => x.EmailAddress).HasMaxLength(200);
             entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.City).HasMaxLength(100);
+            entity.Property(x => x.StateOrProvince).HasMaxLength(100);
+            entity.Property(x => x.PostalCode).HasMaxLength(20);
+            entity.Property(x => x.Country).HasMaxLength(100);
             entity.Property(x => x.Notes).HasMaxLength(1000);
             entity.HasIndex(x => x.SupplierCode).IsUnique();
+
+            entity.Ignore(x => x.ContactPerson);
+            entity.Ignore(x => x.FullAddress);
         });
 
         // ═══════════ Part (Lab 5) ═══════════
@@ -169,6 +238,8 @@ public class TenantCrmDbContext : DbContext
                 .WithMany(s => s.Parts)
                 .HasForeignKey(x => x.SupplierId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.SupplierId);
         });
 
         // ═══════════ RepairPart (Lab 5) ═══════════
@@ -187,6 +258,9 @@ public class TenantCrmDbContext : DbContext
                 .WithMany(p => p.RepairParts)
                 .HasForeignKey(x => x.PartId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.RepairRequestId);
+            entity.HasIndex(x => x.PartId);
         });
 
         // ═══════════ RetentionRequest ═══════════
@@ -199,16 +273,24 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.ReasonCategory).HasMaxLength(150).IsRequired();
             entity.Property(x => x.ReasonNote).HasMaxLength(2000);
             entity.Property(x => x.SubmittedByUserId).HasMaxLength(450).IsRequired();
-            entity.Property(x => x.SubmittedByName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.SubmittedByFirstName).HasMaxLength(100);
+            entity.Property(x => x.SubmittedByLastName).HasMaxLength(100);
             entity.Property(x => x.ReviewedByUserId).HasMaxLength(450);
-            entity.Property(x => x.ReviewedByName).HasMaxLength(200);
+            entity.Property(x => x.ReviewedByFirstName).HasMaxLength(100);
+            entity.Property(x => x.ReviewedByLastName).HasMaxLength(100);
             entity.Property(x => x.ReviewRemarks).HasMaxLength(2000);
             entity.Property(x => x.RejectionReason).HasMaxLength(2000);
+
+            entity.Ignore(x => x.SubmittedByName);
+            entity.Ignore(x => x.ReviewedByName);
 
             entity.HasOne(x => x.Customer)
                 .WithMany()
                 .HasForeignKey(x => x.CustomerId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.Status);
         });
 
         // ═══════════ RetentionEmailLog ═══════════
@@ -216,7 +298,8 @@ public class TenantCrmDbContext : DbContext
         {
             entity.HasKey(x => x.RetentionEmailLogId);
             entity.Property(x => x.RecipientEmail).HasMaxLength(200).IsRequired();
-            entity.Property(x => x.RecipientName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.RecipientFirstName).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.RecipientLastName).HasMaxLength(100).IsRequired();
             entity.Property(x => x.Subject).HasMaxLength(300).IsRequired();
             entity.Property(x => x.FormattedBody).IsRequired();
             entity.Property(x => x.DiscountPercent).HasPrecision(5, 2);
@@ -224,6 +307,8 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.DispatchedByUserId).HasMaxLength(450);
             entity.Property(x => x.DeliveryStatus).HasMaxLength(50).IsRequired();
             entity.Property(x => x.DeliveryError).HasMaxLength(2000);
+
+            entity.Ignore(x => x.RecipientName);
 
             entity.HasOne(x => x.Customer)
                 .WithMany()
@@ -234,6 +319,10 @@ public class TenantCrmDbContext : DbContext
                 .WithMany(r => r.EmailLogs)
                 .HasForeignKey(x => x.RetentionRequestId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.RetentionRequestId);
+            entity.HasIndex(x => x.CreatedAt);
         });
 
         // ═══════════ RetentionEmailTemplate ═══════════

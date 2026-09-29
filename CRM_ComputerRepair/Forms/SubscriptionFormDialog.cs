@@ -3,7 +3,6 @@ using CRM.winforms.Forms;
 using System;
 using System.ComponentModel;
 using System.Drawing;
-using System.Net.Mime;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -16,28 +15,22 @@ namespace CRM.winforms
         private readonly SubscriptionDto? _editing;
         private readonly bool _isEditMode;
 
-        private Label lblSubtitle = null!;
-
-        private Label lblName = null!;
-        private Label lblPrice = null!;
-        private Label lblMaxUsers = null!;
-        private Label lblMaxDevices = null!;
-        private Label lblBilling = null!;
-        private Label lblStart = null!;
-        private Label lblEnd = null!;
-
         private TextField inpName = null!;
         private NumericUpDown numPrice = null!;
+        private ComboBox cmbDurationPreset = null!;
+        private NumericUpDown numDurationMonths = null!;
         private NumericUpDown numMaxUsers = null!;
         private NumericUpDown numMaxDevices = null!;
+        private CheckBox chkMultiBranch = null!;
+        private TextField inpDescription = null!;
         private ComboBox cmbBilling = null!;
-        private DateTimePicker dtpStart = null!;
-        private DateTimePicker dtpEnd = null!;
+        private CheckBox chkIsActive = null!;
 
-        private Label lblErrorName = null!;
+        private Label lblError = null!;
+        private SaasButton btnSave = null!;
+        private SaasButton btnCancel = null!;
 
-        private Button btnSave = null!;
-        private Button btnCancel = null!;
+        public SubscriptionDto? ResultPlan { get; private set; }
 
         public SubscriptionFormDialog(SubscriptionDto? existing)
         {
@@ -45,9 +38,10 @@ namespace CRM.winforms
             _isEditMode = existing != null;
 
             BuildCard(
-                _isEditMode ? "Edit Subscription" : "Add Subscription",
-                width: 560,
-                height: _isEditMode ? 700 : 680);
+                _isEditMode ? "Edit Plan" : "New Subscription Plan",
+                subtitle: null,
+                width: 640,
+                height: 620);
 
             BuildContent();
         }
@@ -58,295 +52,235 @@ namespace CRM.winforms
             int w = ContentWidth;
             int y = ContentTopY;
 
-            lblSubtitle = new Label
+            // Plan Name
+            ModalKit.MakeLabel(pnlBody, "Plan Name *", x, y);
+            y += 20;
+            inpName = ModalKit.MakeField(pnlBody, x, y, w, "Plan name");
+            if (_isEditMode) inpName.Text = _editing!.SubscriptionName;
+            y += 46;
+
+            int gap = 16;
+            int halfW = (w - gap) / 2;
+
+            // Price (PHP) + Billing Cycle
+            ModalKit.MakeLabel(pnlBody, "Price (PHP ₱) *", x, y);
+            ModalKit.MakeLabel(pnlBody, "Billing Cycle", x + halfW + gap, y);
+            y += 20;
+
+            numPrice = MakeNumeric(pnlBody, x, y, halfW, 0, 1000000, _isEditMode ? _editing!.PricePerMonth : 999m, decimalPlaces: 2);
+            cmbBilling = MakeCombo(pnlBody, x + halfW + gap, y, halfW, new[] { "Monthly", "Quarterly", "Yearly" }, 0);
+            if (_isEditMode && !string.IsNullOrWhiteSpace(_editing!.BillingCycle))
             {
-                Text = _isEditMode
-                    ? "Update this subscription plan."
-                    : "Create a new subscription plan for a company.",
-                Font = AppTheme.FontSubtitle,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = false,
+                int bIdx = cmbBilling.FindStringExact(_editing.BillingCycle);
+                if (bIdx >= 0) cmbBilling.SelectedIndex = bIdx;
+            }
+            y += 46;
+
+            // Duration Preset + Duration in Months
+            ModalKit.MakeLabel(pnlBody, "Duration Preset", x, y);
+            ModalKit.MakeLabel(pnlBody, "Duration (Months) *", x + halfW + gap, y);
+            y += 20;
+
+            cmbDurationPreset = MakeCombo(pnlBody, x, y, halfW, new[]
+            {
+                "1 Month",
+                "3 Months (Quarterly)",
+                "6 Months (Half-Year)",
+                "12 Months (1 Year / Annual)",
+                "24 Months (2 Years)",
+                "Custom Months"
+            }, 0);
+
+            numDurationMonths = MakeNumeric(pnlBody, x + halfW + gap, y, halfW, 1, 120, _isEditMode ? Math.Max(1, _editing!.DurationMonths) : 1);
+
+            cmbDurationPreset.SelectedIndexChanged += (s, e) =>
+            {
+                switch (cmbDurationPreset.SelectedIndex)
+                {
+                    case 0: numDurationMonths.Value = 1; break;
+                    case 1: numDurationMonths.Value = 3; break;
+                    case 2: numDurationMonths.Value = 6; break;
+                    case 3: numDurationMonths.Value = 12; break;
+                    case 4: numDurationMonths.Value = 24; break;
+                }
+            };
+
+            if (_isEditMode)
+            {
+                int d = Math.Max(1, _editing!.DurationMonths);
+                if (d == 1) cmbDurationPreset.SelectedIndex = 0;
+                else if (d == 3) cmbDurationPreset.SelectedIndex = 1;
+                else if (d == 6) cmbDurationPreset.SelectedIndex = 2;
+                else if (d == 12) cmbDurationPreset.SelectedIndex = 3;
+                else if (d == 24) cmbDurationPreset.SelectedIndex = 4;
+                else cmbDurationPreset.SelectedIndex = 5;
+            }
+            y += 46;
+
+            // Max Users + Max Devices
+            ModalKit.MakeLabel(pnlBody, "Max Users *", x, y);
+            ModalKit.MakeLabel(pnlBody, "Max Devices *", x + halfW + gap, y);
+            y += 20;
+
+            numMaxUsers = MakeNumeric(pnlBody, x, y, halfW, 1, 500, _isEditMode ? Math.Max(1, _editing!.MaxUsers) : 5);
+            numMaxDevices = MakeNumeric(pnlBody, x + halfW + gap, y, halfW, 1, 10000, _isEditMode ? Math.Max(1, _editing!.MaxDevices) : 100);
+            y += 46;
+
+            // Multi-branching toggle
+            chkMultiBranch = new CheckBox
+            {
+                Text = "Enable multi-branch management",
+                Font = AppTheme.FontMedium,
+                ForeColor = AppTheme.TextPrimary,
+                Checked = _isEditMode && _editing!.EnableMultiBranching,
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                Location = new Point(x, y)
+            };
+            pnlBody.Controls.Add(chkMultiBranch);
+            y += 34;
+
+            // Description / Features
+            ModalKit.MakeLabel(pnlBody, "Description", x, y);
+            y += 20;
+            inpDescription = ModalKit.MakeField(pnlBody, x, y, w, "Optional plan description");
+            if (_isEditMode) inpDescription.Text = _editing!.Description ?? "";
+            y += 46;
+
+            // Active plan status
+            chkIsActive = new CheckBox
+            {
+                Text = "Plan is active and available for subscription",
+                Font = AppTheme.FontMedium,
+                ForeColor = AppTheme.TextPrimary,
+                Checked = !_isEditMode || _editing!.IsActive,
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                Location = new Point(x, y)
+            };
+            pnlBody.Controls.Add(chkIsActive);
+            y += 34;
+
+            // Error label
+            lblError = new Label
+            {
+                Text = "",
+                Font = AppTheme.FontSmall,
+                ForeColor = AppTheme.Danger,
+                AutoSize = true,
+                MaximumSize = new Size(w, 0),
                 BackColor = Color.Transparent,
                 Location = new Point(x, y),
-                Size = new Size(w, 20)
+                Visible = false
             };
-            pnlCard.Controls.Add(lblSubtitle);
+            pnlBody.Controls.Add(lblError);
             y += 32;
 
-            // Name
-            lblName = MakeLabel("Subscription name *", x, y);
-            y += 20;
-            inpName = MakeField(x, y, w, "e.g. Business Plan");
-            y += 38 + 4;
-            lblErrorName = MakeErrorLabel(x, y);
-            y += 20;
-
-            // Price + Billing cycle
-            int halfW = (w - 12) / 2;
-
-            lblPrice = MakeLabel("Price per month (₱)", x, y);
-            lblBilling = MakeLabel("Billing cycle", x + halfW + 12, y);
-            y += 20;
-
-            numPrice = MakeNumeric(x, y, halfW, 0, 1000000, 999, decimalPlaces: 2);
-            cmbBilling = MakeCombo(x + halfW + 12, y, halfW,
-                new[] { "Monthly", "Quarterly", "Yearly" }, 0);
-            y += 38 + 14;
-
-            // Max users + Max devices
-            lblMaxUsers = MakeLabel("Max users", x, y);
-            lblMaxDevices = MakeLabel("Max devices", x + halfW + 12, y);
-            y += 20;
-
-            numMaxUsers = MakeNumeric(x, y, halfW, 1, 100000, 10);
-            numMaxDevices = MakeNumeric(x + halfW + 12, y, halfW, 1, 100000, 10);
-            y += 38 + 14;
-
-            // Start / End
-            lblStart = MakeLabel("Start date *", x, y);
-            lblEnd = MakeLabel("End date *", x + halfW + 12, y);
-            y += 20;
-
-            dtpStart = MakeDate(x, y, halfW);
-            dtpEnd = MakeDate(x + halfW + 12, y, halfW);
-            y += 38 + 20;
-
             // Buttons
-            int btnY = pnlCard.Height - ShadowPad - 60;
-            int rightEdge = ContentRightX;
-            int saveW = 110;
-            int cancelW = 100;
-            int saveX = rightEdge - saveW;
-            int cancelX = saveX - cancelW - 10;
+            btnCancel = new SaasButton("Cancel", SaasButtonVariant.Secondary);
+            btnCancel.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
 
-            btnCancel = MakeSecondaryButton("Cancel");
-            btnCancel.Size = new Size(cancelW, 40);
-            btnCancel.Location = new Point(cancelX, btnY);
-            btnCancel.Click += (s, e) =>
-            {
-                DialogResult = DialogResult.Cancel;
-                Close();
-            };
-
-            btnSave = MakePrimaryButton(_isEditMode ? "Update" : "Save");
-            btnSave.Size = new Size(saveW, 40);
-            btnSave.Location = new Point(saveX, btnY);
+            btnSave = new SaasButton(_isEditMode ? "Save Plan" : "Create Plan", SaasButtonVariant.Primary);
             btnSave.Click += async (s, e) => await SaveAsync();
 
-            // Prefill
-            if (_editing != null)
+            LayoutFooter(btnSave, btnCancel, saveW: 130, cancelW: 100);
+        }
+
+        private static NumericUpDown MakeNumeric(Control parent, int x, int y, int width, decimal min, decimal max, decimal value, int decimalPlaces = 0)
+        {
+            var num = new NumericUpDown
             {
-                inpName.Text = _editing.SubscriptionName ?? "";
-                numPrice.Value = Math.Max(0, Math.Min(1000000, _editing.PricePerMonth));
-                numMaxUsers.Value = Math.Max(1, Math.Min(100000, _editing.MaxUsers));
-                numMaxDevices.Value = Math.Max(1, Math.Min(100000, _editing.MaxDevices));
+                Font = AppTheme.FontInput,
+                Location = new Point(x, y),
+                Size = new Size(width, 36),
+                Minimum = min,
+                Maximum = max,
+                Value = Math.Min(max, Math.Max(min, value)),
+                DecimalPlaces = decimalPlaces,
+                ThousandsSeparator = true
+            };
+            parent.Controls.Add(num);
+            return num;
+        }
 
-                var cycle = _editing.BillingCycle ?? "Monthly";
-                var idx = Array.IndexOf(new[] { "Monthly", "Quarterly", "Yearly" }, cycle);
-                cmbBilling.SelectedIndex = idx >= 0 ? idx : 0;
-
-                dtpStart.Value = _editing.StartDate;
-                dtpEnd.Value = _editing.EndDate;
-            }
-            else
+        private static ComboBox MakeCombo(Control parent, int x, int y, int width, string[] items, int selectedIndex)
+        {
+            var cmb = new ComboBox
             {
-                dtpStart.Value = DateTime.Today;
-                dtpEnd.Value = DateTime.Today.AddYears(1);
-            }
-
-            Shown += (s, e) => inpName.Focus();
+                Font = AppTheme.FontInput,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(x, y),
+                Size = new Size(width, 36),
+                BackColor = AppTheme.Surface,
+                ForeColor = AppTheme.TextPrimary,
+                FlatStyle = FlatStyle.Flat
+            };
+            cmb.Items.AddRange(items);
+            if (selectedIndex >= 0 && selectedIndex < items.Length) cmb.SelectedIndex = selectedIndex;
+            ModalKit.AdjustDropDownWidth(cmb);
+            parent.Controls.Add(cmb);
+            return cmb;
         }
 
         private async Task SaveAsync()
         {
-            if (!ValidateInputs()) return;
+            lblError.Visible = false;
+
+            if (string.IsNullOrWhiteSpace(inpName.Text))
+            {
+                lblError.Text = "• Plan name is required.";
+                lblError.Visible = true;
+                inpName.Focus();
+                return;
+            }
+
+            int months = (int)numDurationMonths.Value;
+            string durationText = cmbDurationPreset.SelectedIndex < 5
+                ? cmbDurationPreset.Text.Split('(')[0].Trim()
+                : $"{months} Month(s)";
+
+            var dto = new SubscriptionDto
+            {
+                SubscriptionId = _editing?.SubscriptionId ?? 0,
+                SubscriptionName = inpName.Text.Trim(),
+                PricePerMonth = numPrice.Value,
+                DurationMonths = months,
+                Duration = durationText,
+                MaxUsers = (int)numMaxUsers.Value,
+                MaxDevices = (int)numMaxDevices.Value,
+                EnableMultiBranching = chkMultiBranch.Checked,
+                Description = inpDescription.Text.Trim(),
+                BillingCycle = cmbBilling.Text,
+                IsActive = chkIsActive.Checked,
+                IsArchived = _editing?.IsArchived ?? false,
+                StartDate = _editing?.StartDate ?? DateTime.UtcNow,
+                EndDate = _editing?.EndDate ?? DateTime.UtcNow.AddMonths(months)
+            };
+
+            btnSave.Enabled = false;
+            btnSave.Text = "Saving...";
 
             try
             {
-                var dto = new SubscriptionDto
+                if (_isEditMode)
                 {
-                    SubscriptionName = inpName.Text.Trim(),
-                    PricePerMonth = numPrice.Value,
-                    MaxUsers = (int)numMaxUsers.Value,
-                    MaxDevices = (int)numMaxDevices.Value,
-                    BillingCycle = cmbBilling.SelectedItem?.ToString() ?? "Monthly",
-                    StartDate = dtpStart.Value,
-                    EndDate = dtpEnd.Value,
-                    IsActive = _editing?.IsActive ?? true
-                };
-
-                if (_isEditMode && _editing != null)
-                    await _api.UpdateSubscriptionAsync(_editing.SubscriptionId, dto);
+                    ResultPlan = await _api.UpdateSubscriptionAsync(_editing!.SubscriptionId, dto);
+                }
                 else
-                    await _api.CreateSubscriptionAsync(dto);
+                {
+                    ResultPlan = await _api.CreateSubscriptionAsync(dto);
+                }
 
                 DialogResult = DialogResult.OK;
                 Close();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Save failed.\n\n{ex.Message}",
-                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                lblError.Text = "• " + ex.Message;
+                lblError.Visible = true;
+                btnSave.Enabled = true;
+                btnSave.Text = _isEditMode ? "Save Plan" : "Create Plan";
             }
-        }
-
-        private bool ValidateInputs()
-        {
-            lblErrorName.Visible = false;
-            inpName.HasError = false;
-
-            if (string.IsNullOrWhiteSpace(inpName.Text))
-            {
-                inpName.HasError = true;
-                lblErrorName.Text = "Subscription name is required.";
-                lblErrorName.Visible = true;
-                inpName.Focus();
-                return false;
-            }
-
-            if (dtpEnd.Value <= dtpStart.Value)
-            {
-                MessageBox.Show("End date must be after start date.",
-                    "Invalid dates", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
-            }
-
-            return true;
-        }
-
-        // ─── Factories ───
-
-        private Label MakeLabel(string text, int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y)
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
-
-        private TextField MakeField(int x, int y, int width, string placeholder)
-        {
-            var tf = new TextField
-            {
-                PlaceholderText = placeholder,
-                Location = new Point(x, y),
-                Size = new Size(width, 38)
-            };
-            pnlCard.Controls.Add(tf);
-            return tf;
-        }
-
-        private NumericUpDown MakeNumeric(int x, int y, int width, decimal min, decimal max, decimal initial, int decimalPlaces = 0)
-        {
-            var n = new NumericUpDown
-            {
-                Font = new Font("Segoe UI", 9.5F),
-                Location = new Point(x, y),
-                Size = new Size(width, 30),
-                Minimum = min,
-                Maximum = max,
-                Value = initial,
-                DecimalPlaces = decimalPlaces,
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                BorderStyle = BorderStyle.FixedSingle
-            };
-            pnlCard.Controls.Add(n);
-            return n;
-        }
-
-        private ComboBox MakeCombo(int x, int y, int width, string[] items, int selectedIndex)
-        {
-            var cmb = new ComboBox
-            {
-                Font = new Font("Segoe UI", 9.5F),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(x, y),
-                Size = new Size(width, 30),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat
-            };
-            cmb.Items.AddRange(items);
-            if (selectedIndex >= 0 && selectedIndex < items.Length)
-                cmb.SelectedIndex = selectedIndex;
-            pnlCard.Controls.Add(cmb);
-            return cmb;
-        }
-
-        private DateTimePicker MakeDate(int x, int y, int width)
-        {
-            var dtp = new DateTimePicker
-            {
-                Font = new Font("Segoe UI", 9.5F),
-                Format = DateTimePickerFormat.Short,
-                Location = new Point(x, y),
-                Size = new Size(width, 30)
-            };
-            pnlCard.Controls.Add(dtp);
-            return dtp;
-        }
-
-        private Label MakeErrorLabel(int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8F),
-                ForeColor = AppTheme.Danger,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Visible = false
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
-
-        private Button MakePrimaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
-
-        private Button MakeSecondaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
         }
     }
 }

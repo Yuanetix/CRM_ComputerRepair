@@ -194,7 +194,15 @@ namespace CRM.winforms.Controls
         private void AddTile(Action onClick, string tooltip)
         {
             var tile = new KpiTile { Tag = onClick };
-            tile.Click += (s, e) => ((Action)tile.Tag!).Invoke();
+            tile.Click += (s, e) =>
+            {
+                try { ((Action)tile.Tag!).Invoke(); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Couldn't open drill-down.\n\n{ex.Message}",
+                        "Drill-down", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
             tile.ContentChanged += (s, e) => LayoutUi();     // re-measure when text arrives
             _tip.SetToolTip(tile, tooltip);
             _tiles.Add(tile);
@@ -229,7 +237,7 @@ namespace CRM.winforms.Controls
                 var details = await _api.GetAnalyticsDetailsAsync("customers");
                 if (details == null) return null;
                 details.Rows = details.Rows
-                    .Where(r => r.TryGetValue("status", out var s) && s?.ToString() == "Active")
+                    .Where(r => r.TryGetValue("status", out var s) && AsString(s) == "Active")
                     .ToList();
                 details.Title = $"Active customers — {details.Rows.Count} records";
                 return details;
@@ -247,10 +255,36 @@ namespace CRM.winforms.Controls
                 return details;
             });
 
+        /// <summary>Unwraps System.Text.Json JsonElement values (Dictionary values
+        /// deserialize as JsonElement) to a plain string for filtering.</summary>
+        private static string? AsString(object? value)
+        {
+            if (value is null) return null;
+            if (value is System.Text.Json.JsonElement je)
+            {
+                return je.ValueKind switch
+                {
+                    System.Text.Json.JsonValueKind.String => je.GetString(),
+                    System.Text.Json.JsonValueKind.Number => je.GetRawText(),
+                    System.Text.Json.JsonValueKind.True => "True",
+                    System.Text.Json.JsonValueKind.False => "False",
+                    System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined => null,
+                    _ => je.GetRawText(),
+                };
+            }
+            return value.ToString();
+        }
+
         private static int ToInt(object? value)
         {
-            if (value is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
-                return je.TryGetInt32(out var i) ? i : 0;
+            if (value is System.Text.Json.JsonElement je)
+            {
+                if (je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    return je.TryGetInt32(out var i) ? i : 0;
+                if (je.ValueKind == System.Text.Json.JsonValueKind.String &&
+                    int.TryParse(je.GetString(), out var s)) return s;
+                return 0;
+            }
             try { return Convert.ToInt32(value ?? 0); }
             catch { return 0; }
         }
@@ -386,8 +420,16 @@ namespace CRM.winforms.Controls
 
         private void OpenDrillDown(string title, Func<Task<AnalyticsDetailsDto?>> loader)
         {
-            using var dlg = new DrillDownDialog(title, loader);
-            dlg.ShowModal(this.FindForm());
+            try
+            {
+                using var dlg = new DrillDownDialog(title, loader);
+                dlg.ShowModal(this.FindForm());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Couldn't open drill-down.\n\n{ex.Message}",
+                    "Drill-down", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         // ═══════════ LAYOUT (responsive + scrollable) ═══════════
@@ -646,11 +688,11 @@ namespace CRM.winforms.Controls
             // The number uses the largest font that fits the tile width.
             private static readonly Font[] NumFonts =
             {
-                new("Segoe UI Semibold", 26F),
-                new("Segoe UI Semibold", 22F),
-                new("Segoe UI Semibold", 18F),
-                new("Segoe UI Semibold", 15F),
-                new("Segoe UI Semibold", 12F)
+                AppFonts.Strong(26F),
+                AppFonts.Strong(22F),
+                AppFonts.Strong(18F),
+                AppFonts.Strong(15F),
+                AppFonts.Strong(12F)
             };
 
             private string _label = "";
@@ -805,7 +847,7 @@ namespace CRM.winforms.Controls
         [DesignerCategory("Code")]
         private sealed class ChartCard : Control
         {
-            private static readonly Font HeadlineFont = new("Segoe UI Semibold", 19F);
+            private static readonly Font HeadlineFont = AppFonts.Strong(19F);
 
             private readonly string _title;
             private readonly ChartKind _kind;

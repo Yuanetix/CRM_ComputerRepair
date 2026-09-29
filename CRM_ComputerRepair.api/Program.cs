@@ -13,7 +13,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ─── DbContexts ───
 builder.Services.AddDbContext<MasterCrmDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("MasterCrm")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("MasterCrm"),
+        sql => sql.EnableRetryOnFailure()));
 
 // ─── Data protection (required by Identity token providers) ───
 builder.Services.AddDataProtection();

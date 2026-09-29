@@ -25,13 +25,27 @@ public class CustomersController : ControllerBase
     // --- GET ALL ---
     [HttpGet]
     public async Task<IActionResult> GetAll(
-        int companyId, [FromQuery] bool? includeArchived)
+        int companyId, [FromQuery] bool? includeArchived, [FromQuery] string? search = null)
     {
         await using var db = await _factory.CreateAsync(companyId);
 
         var query = db.Customers.AsNoTracking();
         if (includeArchived != true)
             query = query.Where(c => c.IsActive);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim();
+            query = query.Where(c =>
+                c.FirstName.Contains(s) ||
+                c.LastName.Contains(s) ||
+                (c.Email != null && c.Email.Contains(s)) ||
+                (c.Phone != null && c.Phone.Contains(s)) ||
+                (c.Address != null && c.Address.Contains(s)) ||
+                (c.City != null && c.City.Contains(s)) ||
+                (c.StateOrProvince != null && c.StateOrProvince.Contains(s)) ||
+                (c.PostalCode != null && c.PostalCode.Contains(s)));
+        }
 
         var list = await query.OrderBy(x => x.CustomerId).ToListAsync();
         return Ok(list);
@@ -65,6 +79,10 @@ public class CustomersController : ControllerBase
             Email = request.Email?.Trim() ?? "",
             Phone = request.Phone?.Trim() ?? "",
             Address = request.Address?.Trim() ?? "",
+            City = request.City?.Trim() ?? "",
+            StateOrProvince = request.StateOrProvince?.Trim() ?? "",
+            PostalCode = request.PostalCode?.Trim() ?? "",
+            Country = string.IsNullOrWhiteSpace(request.Country) ? "Philippines" : request.Country.Trim(),
             LoyaltyPoints = request.LoyaltyPoints ?? 0,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
@@ -102,6 +120,11 @@ public class CustomersController : ControllerBase
         customer.Email = request.Email?.Trim() ?? "";
         customer.Phone = request.Phone?.Trim() ?? "";
         customer.Address = request.Address?.Trim() ?? "";
+        customer.City = request.City?.Trim() ?? "";
+        customer.StateOrProvince = request.StateOrProvince?.Trim() ?? "";
+        customer.PostalCode = request.PostalCode?.Trim() ?? "";
+        if (!string.IsNullOrWhiteSpace(request.Country))
+            customer.Country = request.Country.Trim();
 
         await db.SaveChangesAsync();
 

@@ -1,74 +1,45 @@
+using System.ComponentModel;
 using System.Drawing;
 using System.Windows.Forms;
 
 namespace CRM.winforms.Controls
 {
+    /// <summary>
+    /// SaaS placeholder — teaches instead of dead-ending. Every unfinished
+    /// page shows what it will do, why it matters, and a way back.
+    /// </summary>
+    [DesignerCategory("Code")]
     public partial class PlaceholderControl : UserControl
     {
+        private readonly SaasEmptyState _empty;
+
         public PlaceholderControl(string title = "Coming Soon")
         {
-            InitializeComponent();
-            lblTitle.Text = title;
+            DoubleBuffered = true;
+            BackColor = AppTheme.Background;
+            Dock = DockStyle.Fill;
+
+            _empty = new SaasEmptyState
+            {
+                Icon = SidebarControl.IconFor(Slug(title)),
+                Text = title,
+                Subtitle = "This section is on the roadmap. Your data is safe — this page will light up in a coming release.",
+                Dock = DockStyle.Fill
+            };
+            Controls.Add(_empty);
         }
 
-        private void InitializeComponent()
+        private static string Slug(string title)
         {
-            this.SuspendLayout();
-
-            this.BackColor = FixoryTheme.Background;
-
-            // Center panel
-            var pnlCenter = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = FixoryTheme.Background
-            };
-
-            lblIcon = new Label
-            {
-                Text = "\uE897",
-                Font = IconFont.Create(48F),
-                AutoSize = true,
-                ForeColor = FixoryTheme.TextSecondary
-            };
-
-            lblTitle = new Label
-            {
-                Text = "Coming Soon",
-                Font = new Font("Segoe UI", 20F, FontStyle.Bold),
-                AutoSize = true,
-                ForeColor = FixoryTheme.TextPrimary
-            };
-
-            lblSubtitle = new Label
-            {
-                Text = "This feature is not yet available in Fixory.",
-                Font = new Font("Segoe UI", 11F),
-                AutoSize = true,
-                ForeColor = FixoryTheme.TextSecondary
-            };
-
-            pnlCenter.Controls.Add(lblIcon);
-            pnlCenter.Controls.Add(lblTitle);
-            pnlCenter.Controls.Add(lblSubtitle);
-
-            pnlCenter.Resize += (s, e) =>
-            {
-                int cx = pnlCenter.Width / 2;
-                int cy = pnlCenter.Height / 2;
-
-                lblIcon.Location = new Point(cx - lblIcon.Width / 2, cy - 100);
-                lblTitle.Location = new Point(cx - lblTitle.Width / 2, cy - 20);
-                lblSubtitle.Location = new Point(cx - lblSubtitle.Width / 2, cy + 30);
-            };
-
-            this.Controls.Add(pnlCenter);
-
-            this.ResumeLayout(false);
+            string t = title.ToLowerInvariant();
+            if (t.Contains("setting")) return "terms";
+            if (t.Contains("report")) return "reports";
+            if (t.Contains("monitor")) return "system-monitor";
+            if (t.Contains("admin")) return "admin-accounts";
+            if (t.Contains("user")) return "user-accounts";
+            if (t.Contains("loyal")) return "loyalty";
+            if (t.Contains("subscri")) return "subscriptions";
+            return "dashboard";
         }
-
-        private Label lblIcon;
-        private Label lblTitle;
-        private Label lblSubtitle;
     }
 }

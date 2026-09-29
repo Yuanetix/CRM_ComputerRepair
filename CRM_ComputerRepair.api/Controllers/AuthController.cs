@@ -1,8 +1,10 @@
-﻿using CRM_ComputerRepair.api.Dtos;
+using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
+using CRM_ComputerRepair.infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace CRM_ComputerRepair.api.Controllers;
 
@@ -12,11 +14,13 @@ public class AuthController : ControllerBase
 {
     private readonly UserManager<User> _users;
     private readonly JwtTokenService _jwt;
+    private readonly MasterCrmDbContext _masterDb;
 
-    public AuthController(UserManager<User> users, JwtTokenService jwt)
+    public AuthController(UserManager<User> users, JwtTokenService jwt, MasterCrmDbContext masterDb)
     {
         _users = users;
         _jwt = jwt;
+        _masterDb = masterDb;
     }
 
     [HttpPost("login")]
@@ -27,6 +31,21 @@ public class AuthController : ControllerBase
         var user = await _users.FindByNameAsync(request.Username.Trim());
         if (user is null)
             return Unauthorized(new { error = "Invalid username or password." });
+
+        int companyId = user.CompanyId.HasValue && user.CompanyId.Value > 0
+            ? user.CompanyId.Value
+            : (request.CompanyId > 0 ? request.CompanyId : 1);
+
+        // Verify company exists in master database
+        var company = await _masterDb.Companies
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId);
+
+        if (company is null)
+            return Unauthorized(new { error = $"Company ID {companyId} not found." });
+
+        if (!company.IsActive)
+            return Unauthorized(new { error = $"Company '{company.CompanyName}' ({company.CompanyCode}) is currently deactivated. Contact your system administrator." });
 
         var passwordOk = await _users.CheckPasswordAsync(user, request.Password);
         if (!passwordOk)
@@ -43,7 +62,7 @@ public class AuthController : ControllerBase
         var roles = await _users.GetRolesAsync(user);
         var role = roles.FirstOrDefault() ?? "Staff";
 
-        var token = _jwt.CreateToken(user, roles);
+        var token = _jwt.CreateToken(user, roles, companyId);
 
         return Ok(new LoginResponse
         {
@@ -52,7 +71,7 @@ public class AuthController : ControllerBase
             FullName = $"{user.FirstName} {user.LastName}".Trim(),
             Role = role,
             Email = user.Email ?? string.Empty,
-            CompanyId = 1,
+            CompanyId = companyId,
             Token = token
         });
     }

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
+using CRM_ComputerRepair.infrastructure.Data;
 using CRM_ComputerRepair.infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -22,18 +23,89 @@ public class RepairRequestsController : ControllerBase
         _audit = audit;
     }
 
+    private static async Task<RepairRequestResponseDto?> LoadResponseDtoAsync(
+        TenantCrmDbContext db,
+        int repairRequestId)
+    {
+        return await db.RepairRequests.AsNoTracking()
+            .Where(r => r.RepairRequestId == repairRequestId)
+            .Include(r => r.Customer)
+            .Select(r => new RepairRequestResponseDto
+            {
+                RepairRequestId = r.RepairRequestId,
+                RequestNumber = r.RequestNumber,
+                CustomerId = r.CustomerId,
+                CustomerName = r.Customer != null ? (r.Customer.FirstName + " " + r.Customer.LastName).Trim() : null,
+                CustomerPhone = r.Customer != null ? r.Customer.Phone : null,
+                CustomerEmail = r.Customer != null ? r.Customer.Email : null,
+                DeviceId = r.DeviceId,
+                DeviceModel = r.DeviceModel,
+                SerialNumber = r.SerialNumber,
+                IssueDescription = r.IssueDescription,
+                Status = (int)r.Status,
+                Priority = (int)r.Priority,
+                RequestDate = r.RequestDate,
+                CompletionDate = r.CompletionDate,
+                EstimatedCost = r.EstimatedCost,
+                ActualCost = r.ActualCost,
+                PartsCost = r.PartsCost,
+                LaborCost = r.LaborCost,
+                TechnicianNotes = r.TechnicianNotes,
+                AssignedToStaffId = r.AssignedToStaffId,
+                AssignedToManagerId = r.AssignedToManagerId
+            })
+            .FirstOrDefaultAsync();
+    }
+
     // --- GET ALL ---
     [HttpGet]
     public async Task<IActionResult> GetAll(
-        int companyId, [FromQuery] RepairStatus? status)
+        int companyId, [FromQuery] RepairStatus? status, [FromQuery] string? search = null)
     {
         await using var db = await _factory.CreateAsync(companyId);
 
-        var query = db.RepairRequests.AsNoTracking();
+        var query = db.RepairRequests.AsNoTracking().Include(r => r.Customer).AsQueryable();
         if (status.HasValue)
             query = query.Where(x => x.Status == status.Value);
 
-        var list = await query.OrderByDescending(x => x.RequestDate).ToListAsync();
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim();
+            query = query.Where(x =>
+                x.RequestNumber.Contains(s) ||
+                x.DeviceModel.Contains(s) ||
+                x.SerialNumber.Contains(s) ||
+                x.IssueDescription.Contains(s) ||
+                (x.Customer != null && (x.Customer.FirstName.Contains(s) || x.Customer.LastName.Contains(s) || (x.Customer.Phone != null && x.Customer.Phone.Contains(s)))));
+        }
+
+        var list = await query.OrderByDescending(x => x.RequestDate)
+            .Select(r => new RepairRequestResponseDto
+            {
+                RepairRequestId = r.RepairRequestId,
+                RequestNumber = r.RequestNumber,
+                CustomerId = r.CustomerId,
+                CustomerName = r.Customer != null ? (r.Customer.FirstName + " " + r.Customer.LastName).Trim() : null,
+                CustomerPhone = r.Customer != null ? r.Customer.Phone : null,
+                CustomerEmail = r.Customer != null ? r.Customer.Email : null,
+                DeviceId = r.DeviceId,
+                DeviceModel = r.DeviceModel,
+                SerialNumber = r.SerialNumber,
+                IssueDescription = r.IssueDescription,
+                Status = (int)r.Status,
+                Priority = (int)r.Priority,
+                RequestDate = r.RequestDate,
+                CompletionDate = r.CompletionDate,
+                EstimatedCost = r.EstimatedCost,
+                ActualCost = r.ActualCost,
+                PartsCost = r.PartsCost,
+                LaborCost = r.LaborCost,
+                TechnicianNotes = r.TechnicianNotes,
+                AssignedToStaffId = r.AssignedToStaffId,
+                AssignedToManagerId = r.AssignedToManagerId
+            })
+            .ToListAsync();
+
         return Ok(list);
     }
 
@@ -42,8 +114,7 @@ public class RepairRequestsController : ControllerBase
     public async Task<IActionResult> GetById(int companyId, int repairRequestId)
     {
         await using var db = await _factory.CreateAsync(companyId);
-        var item = await db.RepairRequests.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.RepairRequestId == repairRequestId);
+        var item = await LoadResponseDtoAsync(db, repairRequestId);
         return item is null ? NotFound() : Ok(item);
     }
 
@@ -58,7 +129,7 @@ public class RepairRequestsController : ControllerBase
 
         var rr = new RepairRequest
         {
-            RequestNumber = $"REQ-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6]}",
+            RequestNumber = $"REQ-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
             CustomerId = request.CustomerId,
             DeviceId = request.DeviceId,
             DeviceModel = request.DeviceModel.Trim(),
@@ -78,8 +149,9 @@ public class RepairRequestsController : ControllerBase
             "Create", "RepairRequest",
             rr.RepairRequestId.ToString(), rr.RequestNumber);
 
+        var responseDto = await LoadResponseDtoAsync(db, rr.RepairRequestId);
         return CreatedAtAction(nameof(GetById),
-            new { companyId, repairRequestId = rr.RepairRequestId }, rr);
+            new { companyId, repairRequestId = rr.RepairRequestId }, responseDto);
     }
 
     // --- UPDATE ---
@@ -117,6 +189,8 @@ public class RepairRequestsController : ControllerBase
 
         if (item.Status == RepairStatus.Completed && item.CompletionDate is null)
             item.CompletionDate = DateTime.UtcNow;
+        if (item.Status != RepairStatus.Completed)
+            item.CompletionDate = null;
 
         if (oldStatus != item.Status)
         {
@@ -135,7 +209,7 @@ public class RepairRequestsController : ControllerBase
         // --- Audit row ---
         var actor = changedByUserId ?? UserSessionHelper.GetUserId(HttpContext);
         var details = oldStatus != item.Status
-            ? $"{item.RequestNumber}: {oldStatus} ? {item.Status}"
+            ? $"{item.RequestNumber}: {oldStatus} -> {item.Status}"
             : $"{item.RequestNumber}: updated";
 
         await _audit.WriteAsync(
@@ -144,7 +218,118 @@ public class RepairRequestsController : ControllerBase
             item.RepairRequestId.ToString(),
             details);
 
-        return Ok(item);
+        var responseDto = await LoadResponseDtoAsync(db, item.RepairRequestId);
+        return Ok(responseDto);
+    }
+
+    // --- QUICK STATUS CHANGE ---
+    [HttpPost("{repairRequestId:int}/status")]
+    public async Task<IActionResult> ChangeStatus(
+        int companyId, int repairRequestId,
+        [FromBody] ChangeRepairStatusRequest request)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        await using var db = await _factory.CreateAsync(companyId);
+
+        var item = await db.RepairRequests
+            .FirstOrDefaultAsync(x => x.RepairRequestId == repairRequestId);
+
+        if (item is null) return NotFound();
+
+        var oldStatus = item.Status;
+        item.Status = (RepairStatus)request.Status;
+
+        if (item.Status == RepairStatus.Completed && item.CompletionDate is null)
+            item.CompletionDate = DateTime.UtcNow;
+        if (item.Status != RepairStatus.Completed)
+            item.CompletionDate = null;
+
+        if (!string.IsNullOrWhiteSpace(request.Notes))
+        {
+            item.TechnicianNotes = string.IsNullOrWhiteSpace(item.TechnicianNotes)
+                ? request.Notes.Trim()
+                : $"{item.TechnicianNotes}\n[{DateTime.UtcNow:MMM d, HH:mm}] {request.Notes.Trim()}";
+        }
+
+        if (oldStatus != item.Status)
+        {
+            db.RepairStatusHistories.Add(new RepairStatusHistory
+            {
+                RepairRequestId = item.RepairRequestId,
+                OldStatus = oldStatus,
+                NewStatus = item.Status,
+                ChangedByUserId = UserSessionHelper.GetUserId(HttpContext),
+                ChangedAt = DateTime.UtcNow
+            });
+        }
+
+        await db.SaveChangesAsync();
+
+        var actor = UserSessionHelper.GetUserId(HttpContext);
+        await _audit.WriteAsync(
+            actor,
+            "StatusChange", "RepairRequest",
+            item.RepairRequestId.ToString(),
+            $"{item.RequestNumber}: {oldStatus} -> {item.Status}");
+
+        var responseDto = await LoadResponseDtoAsync(db, item.RepairRequestId);
+        return Ok(responseDto);
+    }
+
+    // --- QUICK COMPLETE ---
+    [HttpPost("{repairRequestId:int}/quick-complete")]
+    public async Task<IActionResult> QuickComplete(
+        int companyId, int repairRequestId,
+        [FromBody] QuickCompleteRepairRequest request)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        await using var db = await _factory.CreateAsync(companyId);
+
+        var item = await db.RepairRequests
+            .FirstOrDefaultAsync(x => x.RepairRequestId == repairRequestId);
+
+        if (item is null) return NotFound();
+
+        var oldStatus = item.Status;
+        item.Status = RepairStatus.Completed;
+        item.CompletionDate = DateTime.UtcNow;
+
+        if (request.ActualCost.HasValue) item.ActualCost = request.ActualCost;
+        if (request.PartsCost.HasValue) item.PartsCost = request.PartsCost;
+        if (request.LaborCost.HasValue) item.LaborCost = request.LaborCost;
+
+        if (!string.IsNullOrWhiteSpace(request.TechnicianNotes))
+        {
+            item.TechnicianNotes = string.IsNullOrWhiteSpace(item.TechnicianNotes)
+                ? request.TechnicianNotes.Trim()
+                : $"{item.TechnicianNotes}\n[Completed {DateTime.UtcNow:MMM d, HH:mm}] {request.TechnicianNotes.Trim()}";
+        }
+
+        if (oldStatus != item.Status)
+        {
+            db.RepairStatusHistories.Add(new RepairStatusHistory
+            {
+                RepairRequestId = item.RepairRequestId,
+                OldStatus = oldStatus,
+                NewStatus = item.Status,
+                ChangedByUserId = UserSessionHelper.GetUserId(HttpContext),
+                ChangedAt = DateTime.UtcNow
+            });
+        }
+
+        await db.SaveChangesAsync();
+
+        var actor = UserSessionHelper.GetUserId(HttpContext);
+        await _audit.WriteAsync(
+            actor,
+            "QuickComplete", "RepairRequest",
+            item.RepairRequestId.ToString(),
+            $"{item.RequestNumber}: Completed with actual cost {item.ActualCost:C}");
+
+        var responseDto = await LoadResponseDtoAsync(db, item.RepairRequestId);
+        return Ok(responseDto);
     }
 
     // --- APPROVE (Manager+) ---
@@ -194,9 +379,10 @@ public class RepairRequestsController : ControllerBase
             managerUserId ?? UserSessionHelper.GetUserId(HttpContext),
             "Approve", "RepairRequest",
             item.RepairRequestId.ToString(),
-            $"{item.RequestNumber}: {oldStatus} ? {item.Status}");
+            $"{item.RequestNumber}: {oldStatus} -> {item.Status}");
 
-        return Ok(item);
+        var responseDto = await LoadResponseDtoAsync(db, item.RepairRequestId);
+        return Ok(responseDto);
     }
 
     // --- REASSIGN (Manager+) ---
@@ -241,6 +427,7 @@ public class RepairRequestsController : ControllerBase
             item.RepairRequestId.ToString(),
             $"{item.RequestNumber}: reassigned to {request.AssignedToStaffId}");
 
-        return Ok(item);
+        var responseDto = await LoadResponseDtoAsync(db, item.RepairRequestId);
+        return Ok(responseDto);
     }
 }

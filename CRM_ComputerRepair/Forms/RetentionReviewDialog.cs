@@ -26,9 +26,10 @@ namespace CRM.winforms
 
         private TextBox txtRemarks = null!;
         private TextBox txtRejectionReason = null!;
-        private Button btnApprove = null!;
-        private Button btnReject = null!;
-        private Button btnDispatch = null!;
+        private Label lblErrorReject = null!;
+        private SaasButton btnApprove = null!;
+        private SaasButton btnReject = null!;
+        private SaasButton btnDispatch = null!;
         private Label lblDispatchStatus = null!;
 
         public bool StateChanged { get; private set; }
@@ -40,8 +41,9 @@ namespace CRM.winforms
 
             BuildCard(
                 _request.Status == 0 ? "Review Retention Request" : "Retention Request Details",
+                "Administrative review, separation of duties, audit timeline, and campaign dispatch.",
                 width: 680,
-                height: 740);
+                height: 680);
 
             BuildContent();
         }
@@ -53,12 +55,7 @@ namespace CRM.winforms
             int y = ContentTopY;
 
             // ── Section 1: Customer & Segment Banner ──
-            var pnlCustomer = new Panel
-            {
-                Location = new Point(x, y),
-                Size = new Size(w, 64),
-                BackColor = AppTheme.Neutral
-            };
+            var pnlCustomer = ModalKit.MakeBanner(pnlBody, x, y, w, 78, AppTheme.Neutral);
 
             lblCustomerInfo = new Label
             {
@@ -66,17 +63,18 @@ namespace CRM.winforms
                        $"Target Segment: {_request.TargetSegmentName}   ·   Action: {_request.ActionType}   ·   Discount: {_request.ProposedDiscountPercent:0.#}%",
                 Font = AppTheme.FontSubtitle,
                 ForeColor = AppTheme.TextPrimary,
-                Location = new Point(14, 12),
-                Size = new Size(w - 28, 40)
+                BackColor = AppTheme.Neutral,
+                UseMnemonic = false,
+                Location = new Point(14, 10),
+                AutoSize = true,
+                MaximumSize = new Size(w - 28, 0)
             };
             pnlCustomer.Controls.Add(lblCustomerInfo);
-            pnlCard.Controls.Add(pnlCustomer);
-            y += 74;
+            pnlCustomer.Height = Math.Max(78, lblCustomerInfo.PreferredSize.Height + 20);
+            y += pnlCustomer.Height + 10;
 
             // ── Section 2: Proposal Details & Reason ──
-            var lblSectionProposal = MakeLabel("PROPOSAL & RETENTION REASON", x, y);
-            lblSectionProposal.Font = AppTheme.FontSection;
-            lblSectionProposal.ForeColor = AppTheme.Primary;
+            ModalKit.MakeSection(pnlBody, "Proposal & retention reason", x, y, w);
             y += 22;
 
             var txtDetails = new TextBox
@@ -85,19 +83,19 @@ namespace CRM.winforms
                 Size = new Size(w, 64),
                 Multiline = true,
                 ReadOnly = true,
-                BackColor = Color.White,
+                BackColor = AppTheme.Surface,
+                ForeColor = AppTheme.TextPrimary,
+                BorderStyle = BorderStyle.FixedSingle,
                 Font = AppTheme.FontInput,
                 Text = $"Reason Category: {_request.ReasonCategory}" +
                        (!string.IsNullOrWhiteSpace(_request.ReasonNote) ? $" ({_request.ReasonNote})" : "") + "\r\n" +
                        $"Details: {_request.RetentionDetails}"
             };
-            pnlCard.Controls.Add(txtDetails);
+            pnlBody.Controls.Add(txtDetails);
             y += 74;
 
             // ── Section 3: Approval History & Timeline ──
-            var lblSectionTimeline = MakeLabel("APPROVAL AUDIT TIMELINE", x, y);
-            lblSectionTimeline.Font = AppTheme.FontSection;
-            lblSectionTimeline.ForeColor = AppTheme.Primary;
+            ModalKit.MakeSection(pnlBody, "Approval audit timeline", x, y, w);
             y += 22;
 
             pnlTimeline = new Panel
@@ -109,7 +107,7 @@ namespace CRM.winforms
             };
 
             RenderTimeline();
-            pnlCard.Controls.Add(pnlTimeline);
+            pnlBody.Controls.Add(pnlTimeline);
             y += 90;
 
             // ── Section 4: Decision Actions (If Pending) OR Campaign Dispatch (If Approved) ──
@@ -119,11 +117,11 @@ namespace CRM.winforms
                 {
                     Location = new Point(x, y),
                     Size = new Size(w, 190),
-                    BackColor = Color.Transparent
+                    BackColor = AppTheme.Surface
                 };
 
                 BuildPendingActionsPanel(pnlActions, w);
-                pnlCard.Controls.Add(pnlActions);
+                pnlBody.Controls.Add(pnlActions);
                 y += 200;
             }
             else if (_request.Status == 1) // Approved
@@ -132,11 +130,11 @@ namespace CRM.winforms
                 {
                     Location = new Point(x, y),
                     Size = new Size(w, 190),
-                    BackColor = Color.Transparent
+                    BackColor = AppTheme.Surface
                 };
 
                 BuildApprovedCampaignPanel(pnlCampaign, w);
-                pnlCard.Controls.Add(pnlCampaign);
+                pnlBody.Controls.Add(pnlCampaign);
                 y += 200;
             }
             else // Rejected
@@ -149,14 +147,22 @@ namespace CRM.winforms
                     Location = new Point(x, y),
                     Size = new Size(w, 60)
                 };
-                pnlCard.Controls.Add(lblRej);
+                pnlBody.Controls.Add(lblRej);
                 y += 70;
             }
 
             // ── Close button ──
-            var btnCloseBottom = MakeSecondaryButton("Close", x + w - 100, y + 10, 100);
+            var btnCloseBottom = ModalKit.AddSecondary(pnlCard, "Close");
+            LayoutFooter(btnCloseBottom, null, saveW: 100);
+
             btnCloseBottom.Click += (s, e) => { DialogResult = DialogResult.OK; Close(); };
-            pnlCard.Controls.Add(btnCloseBottom);
+
+            CancelButton = btnCloseBottom;
+            Shown += (s, e) =>
+            {
+                if (_request.Status == 0 && _canReview && btnApprove != null) btnApprove.Focus();
+                else btnCloseBottom.Focus();
+            };
         }
 
         private void RenderTimeline()
@@ -236,47 +242,51 @@ namespace CRM.winforms
                 return;
             }
 
-            var lblRem = MakeLabel("Review Remarks (Optional)", 0, 0);
-            pnl.Controls.Add(lblRem);
+            ModalKit.MakeLabel(pnl, "Review Remarks (Optional)", 0, 0);
 
             txtRemarks = new TextBox
             {
                 Location = new Point(0, 20),
-                Size = new Size(w, 42),
+                Size = new Size(w, 34),
                 Multiline = true,
-                Font = AppTheme.FontInput
+                Font = AppTheme.FontInput,
+                BackColor = AppTheme.Surface,
+                ForeColor = AppTheme.TextPrimary,
+                BorderStyle = BorderStyle.FixedSingle
             };
             pnl.Controls.Add(txtRemarks);
 
-            var lblRej = MakeLabel("Reason for Rejection (Required if rejecting)", 0, 68);
-            pnl.Controls.Add(lblRej);
+            ModalKit.MakeLabel(pnl, "Reason for Rejection (Required if rejecting)", 0, 58);
 
             txtRejectionReason = new TextBox
             {
-                Location = new Point(0, 88),
-                Size = new Size(w, 42),
+                Location = new Point(0, 78),
+                Size = new Size(w, 34),
                 Multiline = true,
-                Font = AppTheme.FontInput
+                Font = AppTheme.FontInput,
+                BackColor = AppTheme.Surface,
+                ForeColor = AppTheme.TextPrimary,
+                BorderStyle = BorderStyle.FixedSingle
             };
             pnl.Controls.Add(txtRejectionReason);
 
-            btnReject = MakeSecondaryButton("Reject Request", w - 240, 142, 110);
-            btnReject.ForeColor = AppTheme.Danger;
+            lblErrorReject = ModalKit.MakeErrorLabel(pnl, 0, 114);
+            lblErrorReject.Size = new Size(w, 20);
+
+            btnReject = ModalKit.AddDangerOutline(pnl, "Reject Request");
+            btnReject.Size = new Size(120, ModalKit.BtnH);
+            btnReject.Location = new Point(w - 250, 142);
             btnReject.Click += async (s, e) => await RejectAsync();
 
-            btnApprove = MakePrimaryButton("Approve Request", w - 120, 142, 120);
+            btnApprove = ModalKit.AddPrimary(pnl, "Approve Request");
+            btnApprove.Size = new Size(120, ModalKit.BtnH);
+            btnApprove.Location = new Point(w - 120, 142);
             btnApprove.Click += async (s, e) => await ApproveAsync();
-
-            pnl.Controls.Add(btnReject);
-            pnl.Controls.Add(btnApprove);
         }
 
         private void BuildApprovedCampaignPanel(Panel pnl, int w)
         {
-            var lblSec = MakeLabel("AUTOMATED EMAIL CAMPAIGN", 0, 0);
-            lblSec.Font = AppTheme.FontSection;
-            lblSec.ForeColor = AppTheme.Success;
-            pnl.Controls.Add(lblSec);
+            ModalKit.MakeSection(pnl, "Automated email campaign", 0, 0, w);
 
             var lblDesc = new Label
             {
@@ -284,13 +294,15 @@ namespace CRM.winforms
                 Font = AppTheme.FontSubtitle,
                 ForeColor = AppTheme.TextSecondary,
                 Location = new Point(0, 24),
-                Size = new Size(w, 20)
+                AutoSize = true,
+                MaximumSize = new Size(w, 0)
             };
             pnl.Controls.Add(lblDesc);
 
-            btnDispatch = MakePrimaryButton("Dispatch Retention Email Now", 0, 52, 240);
+            btnDispatch = ModalKit.AddPrimary(pnl, "Dispatch Retention Email Now");
+            btnDispatch.Size = new Size(240, ModalKit.BtnH);
+            btnDispatch.Location = new Point(0, 52);
             btnDispatch.Click += async (s, e) => await DispatchEmailAsync();
-            pnl.Controls.Add(btnDispatch);
 
             lblDispatchStatus = new Label
             {
@@ -300,7 +312,8 @@ namespace CRM.winforms
                 Font = AppTheme.FontSubtitle,
                 ForeColor = _request.IsDispatched ? AppTheme.Success : AppTheme.TextSecondary,
                 Location = new Point(250, 58),
-                Size = new Size(w - 260, 30)
+                AutoSize = true,
+                MaximumSize = new Size(w - 260, 0)
             };
             pnl.Controls.Add(lblDispatchStatus);
             if (_request.IsDispatched) btnDispatch.Enabled = false;
@@ -313,7 +326,9 @@ namespace CRM.winforms
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
-                BackColor = Color.White,
+                BackColor = AppTheme.Surface,
+                ForeColor = AppTheme.TextPrimary,
+                BorderStyle = BorderStyle.FixedSingle,
                 Font = AppTheme.FontInput,
                 Text = $"To: {_request.CustomerEmail}\r\nSubject: {_request.ProposedDiscountPercent:0.#}% Off Your Next Fixory Computer Tune-Up or Repair\r\n\r\nDear {_request.CustomerName},\r\nThank you for choosing Fixory Computer Repair Services! Please enjoy an exclusive {_request.ProposedDiscountPercent:0.#}% discount on your next computer service.\r\nRedeem with promo code FIXORY-{_request.TargetSegmentName.ToUpperInvariant()}-... (Valid for 14 days)."
             };
@@ -358,10 +373,12 @@ namespace CRM.winforms
             var reason = txtRejectionReason?.Text?.Trim();
             if (string.IsNullOrWhiteSpace(reason))
             {
-                MessageBox.Show("Reason for rejection is mandatory.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                lblErrorReject.Text = "Reason for rejection is mandatory.";
+                lblErrorReject.Visible = true;
                 txtRejectionReason?.Focus();
                 return;
             }
+            lblErrorReject.Visible = false;
 
             btnReject.Enabled = false;
             btnReject.Text = "Rejecting...";
@@ -427,74 +444,9 @@ namespace CRM.winforms
             }
         }
 
-        private Label MakeLabel(string text, int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y)
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private Button MakePrimaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
 
-        private Button MakeSecondaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
 
-        private Button MakePrimaryButton(string text, int x, int y, int width)
-        {
-            var b = MakePrimaryButton(text);
-            b.Location = new Point(x, y);
-            b.Size = new Size(width, 36);
-            return b;
-        }
 
-        private Button MakeSecondaryButton(string text, int x, int y, int width)
-        {
-            var b = MakeSecondaryButton(text);
-            b.Location = new Point(x, y);
-            b.Size = new Size(width, 36);
-            return b;
-        }
     }
 }

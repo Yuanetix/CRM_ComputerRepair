@@ -1,5 +1,4 @@
 using CRM.winforms.Forms;
-using CRM.winforms;
 using System;
 using System.ComponentModel;
 using System.Drawing;
@@ -21,7 +20,6 @@ namespace CRM.winforms
         private readonly string? _category;
         private readonly string? _basis;
 
-        private Label lblSubtitle = null!;
         private Label lblBasis = null!;
         private Label lblSubject = null!;
         private Label lblNotes = null!;
@@ -34,8 +32,8 @@ namespace CRM.winforms
         private Label lblErrorSubject = null!;
         private Label lblErrorNotes = null!;
 
-        private Button btnSave = null!;
-        private Button btnCancel = null!;
+        private SaasButton btnSave = null!;
+        private SaasButton btnCancel = null!;
 
         public RetentionContactDialog(int customerId, string customerName,
             string? category = null, string? basis = null)
@@ -45,7 +43,12 @@ namespace CRM.winforms
             _category = category;
             _basis = basis;
 
-            BuildCard("Log Retention Outreach", width: 560, height: 560);
+            BuildCard(
+                "Log Retention Outreach",
+                $"Record outreach call or message for {_customerName}.",
+                width: 560,
+                height: 520);
+
             BuildContent();
 
             Shown += (s, e) => inpSubject.Focus();
@@ -57,64 +60,55 @@ namespace CRM.winforms
             int w = ContentWidth;
             int y = ContentTopY;
 
-            lblSubtitle = new Label
-            {
-                Text = $"Log a retention outreach for {_customerName}.",
-                Font = AppTheme.FontSubtitle,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(w, 20)
-            };
-            pnlCard.Controls.Add(lblSubtitle);
-
-            y += 26;
-
             // ── Basis banner (why this customer was identified) ──
             if (!string.IsNullOrWhiteSpace(_basis))
             {
                 lblBasis = new Label
                 {
                     Text = $"Basis: {_basis}",
-                    Font = new Font("Segoe UI", 8.5F),
+                    Font = AppFonts.Regular(8.5F),
                     ForeColor = AppTheme.TextSecondary,
                     BackColor = AppTheme.Neutral,
-                    AutoSize = false,
-                    Location = new Point(x, y),
-                    Size = new Size(w, 44),
-                    TextAlign = ContentAlignment.MiddleLeft,
-                    Padding = new Padding(8, 0, 8, 0)
+                    UseMnemonic = false,
+                    AutoSize = true,
+                    MaximumSize = new Size(w - 24, 0),
+                    Padding = new Padding(12, 6, 12, 6)
                 };
-                pnlCard.Controls.Add(lblBasis);
-                y += 52;
+
+                int basisH = Math.Max(50, lblBasis.PreferredSize.Height + 16);
+                var pnlBasis = ModalKit.MakeBanner(pnlBody, x, y, w, basisH, AppTheme.Neutral);
+                lblBasis.Dock = DockStyle.Fill;
+                pnlBasis.Controls.Add(lblBasis);
+                y += basisH + 12;
             }
 
             // ── Subject * ──
-            lblSubject = MakeLabel("Subject *", x, y);
+            lblSubject = ModalKit.MakeLabel(pnlBody, "Subject *", x, y);
             y += 20;
-            inpSubject = MakeField(x, y, w,
+            inpSubject = ModalKit.MakeField(pnlBody, x, y, w,
                 string.IsNullOrWhiteSpace(_category) ? "e.g. Win-back call" : $"{_category}: ",
                 prefill: _category is null ? null : $"{_category} outreach");
+            inpSubject.Height = 36;
             y += 38 + 4;
-            lblErrorSubject = MakeErrorLabel(x, y);
+            lblErrorSubject = ModalKit.MakeErrorLabel(pnlBody, x, y);
             y += 20;
 
             // ── Notes * ──
-            lblNotes = MakeLabel("Notes *", x, y);
+            lblNotes = ModalKit.MakeLabel(pnlBody, "Notes *", x, y);
             y += 20;
-            inpNotes = MakeField(x, y, w, "What did you discuss?", multiline: true);
+            inpNotes = ModalKit.MakeField(pnlBody, x, y, w, "What did you discuss?", multiline: true);
+            inpNotes.Height = 74;
             y += 74 + 4;
-            lblErrorNotes = MakeErrorLabel(x, y);
+            lblErrorNotes = ModalKit.MakeErrorLabel(pnlBody, x, y);
             y += 20;
 
             // ── Follow-up days ──
-            lblFollowUp = MakeLabel("Schedule follow-up in (days) — 0 to skip", x, y);
+            lblFollowUp = ModalKit.MakeLabel(pnlBody, "Schedule follow-up in (days) — 0 to skip", x, y);
             y += 20;
 
             numFollowUpDays = new NumericUpDown
             {
-                Font = new Font("Segoe UI", 9.5F),
+                Font = AppTheme.FontInput,
                 Location = new Point(x, y),
                 Size = new Size(w, 30),
                 Minimum = 0,
@@ -124,31 +118,24 @@ namespace CRM.winforms
                 ForeColor = AppTheme.TextPrimary,
                 BorderStyle = BorderStyle.FixedSingle
             };
-            pnlCard.Controls.Add(numFollowUpDays);
+            pnlBody.Controls.Add(numFollowUpDays);
 
             y += 38 + 20;
 
             // ── Buttons ──
-            int btnY = pnlCard.Height - ShadowPad - 60;
-            int rightEdge = ContentRightX;
-            int saveW = 140;
-            int cancelW = 100;
-            int saveX = rightEdge - saveW;
-            int cancelX = saveX - cancelW - 10;
-
-            btnCancel = MakeSecondaryButton("Cancel");
-            btnCancel.Size = new Size(cancelW, 40);
-            btnCancel.Location = new Point(cancelX, btnY);
+            btnCancel = ModalKit.AddSecondary(pnlCard, "Cancel");
             btnCancel.Click += (s, e) =>
             {
                 DialogResult = DialogResult.Cancel;
                 Close();
             };
 
-            btnSave = MakePrimaryButton("Log outreach");
-            btnSave.Size = new Size(saveW, 40);
-            btnSave.Location = new Point(saveX, btnY);
+            btnSave = ModalKit.AddPrimary(pnlCard, "Log outreach");
             btnSave.Click += async (s, e) => await SaveAsync();
+            LayoutFooter(btnSave, btnCancel, saveW: 140);
+
+            AcceptButton = btnSave;
+            CancelButton = btnCancel;
         }
 
         private async Task SaveAsync()
@@ -226,89 +213,9 @@ namespace CRM.winforms
             err.Visible = false;
         }
 
-        private Label MakeLabel(string text, int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y)
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private TextField MakeField(int x, int y, int width, string placeholder,
-                                    bool multiline = false, string? prefill = null)
-        {
-            var tf = new TextField
-            {
-                PlaceholderText = placeholder,
-                Text = prefill ?? "",
-                Location = new Point(x, y),
-                Size = new Size(width, multiline ? 68 : 38)
-            };
-            if (multiline) tf.Multiline = true;
-            pnlCard.Controls.Add(tf);
-            return tf;
-        }
 
-        private Label MakeErrorLabel(int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8F),
-                ForeColor = AppTheme.Danger,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Visible = false
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private Button MakePrimaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
 
-        private Button MakeSecondaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
     }
 }

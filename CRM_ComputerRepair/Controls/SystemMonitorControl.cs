@@ -240,7 +240,7 @@ namespace CRM.winforms
             g.MultiSelect = false;
             g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            g.ScrollBars = ScrollBars.Vertical;
+            g.ScrollBars = ScrollBars.Both;
             g.RowTemplate.Height = UiKit.T.RowHeight;
             g.ColumnHeadersHeight = UiKit.T.HeaderHeight;
             g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
@@ -257,7 +257,8 @@ namespace CRM.winforms
             g.DefaultCellStyle.Font = UiKit.T.Body;
             g.DefaultCellStyle.SelectionBackColor = UiKit.Wash(AppTheme.Primary);
             g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
-            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
+            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 6, UiKit.T.S3, 6);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         }
 
         private void ConfigureColumns()
@@ -267,8 +268,9 @@ namespace CRM.winforms
                 "AuditLogId", "UserId", "Entity", "EntityId", "Timestamp"
             })
             {
-                if (dgv.Columns[hidden] != null)
-                    dgv.Columns[hidden].Visible = false;
+                var hCol = dgv.Columns[hidden];
+                if (hCol != null)
+                    hCol.Visible = false;
             }
 
             void Setup(string name, string header, int width, int idx, bool fill = false)
@@ -289,8 +291,9 @@ namespace CRM.winforms
             Setup("EntityDisplay", "Entity", 170, 3);
             Setup("Details", "Details", 0, 4, fill: true);
 
-            if (dgv.Columns["Action"] != null)
-                dgv.Columns["Action"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
+            var cAction = dgv.Columns["Action"];
+            if (cAction != null)
+                cAction.DefaultCellStyle.Font = UiKit.T.BodyStrong;
         }
 
         private void Dgv_CellMouseEnter(object? sender, DataGridViewCellEventArgs e)

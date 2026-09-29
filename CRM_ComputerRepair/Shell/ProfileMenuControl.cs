@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -30,12 +30,10 @@ namespace CRM.winforms
 
             _items = new List<ProfileMenuItem>
             {
-                new ProfileMenuItem("profile",  IconFont.Profile,  "Profile"),
-                new ProfileMenuItem("settings", IconFont.Settings, "Settings"),
-                new ProfileMenuItem("-", "", ""),   // separator
-                new ProfileMenuItem("signout",  IconFont.SignOut,  "Sign out", isDanger: true),
+                new ProfileMenuItem("profile", IconFont.Profile, "Profile"),
             };
 
+            Width = 160;
             Height = ItemPadding * 2 + ItemHeight * _items.Count;
 
             MouseMove += OnMouseMoveHandler;

@@ -3,68 +3,61 @@
 namespace CRM.winforms
 {
     /// <summary>
-    /// Fixory design system — clean, mostly-white, minimal color.
-    /// HCI: high contrast, visible inputs, blue only for primary action.
+    /// Legacy shim — kept only so older screens compile.
+    /// New code must use <see cref="AppTheme"/> + <see cref="UiKit"/>.
+    /// SaaS consolidation: one token source, no competing neutrals.
     /// </summary>
     public static class FixoryTheme
     {
-        // ═══════════ ACCENT (used sparingly) ═══════════
-        public static readonly Color Primary = Color.FromArgb(46, 102, 224);   // MutedBlue
-        public static readonly Color PrimaryHover = Color.FromArgb(33, 89, 212);    // RoyalBlue
-        public static readonly Color PrimaryLight = Color.FromArgb(59, 115, 237);   // CloudBlue
-        public static readonly Color PrimarySoft = Color.FromArgb(239, 246, 255);  // Pale Blue (active bg)
-        public static readonly Color PrimaryTint = Color.FromArgb(219, 234, 254);  // Light tint
+        public static Color Primary => AppTheme.Primary;
+        public static Color PrimaryHover => AppTheme.PrimaryHover;
+        public static Color PrimaryLight => AppTheme.PrimaryGradientA;
+        public static Color PrimarySoft => AppTheme.PrimarySoft;
+        public static Color PrimaryTint => AppTheme.PrimarySoft;
 
-        // ═══════════ SURFACES (all white) ═══════════
-        public static readonly Color Background = Color.FromArgb(247, 248, 250);  // Very Light Gray (page)
-        public static readonly Color Surface = Color.FromArgb(255, 255, 255);  // White (cards, sidebar, topbar)
-        public static readonly Color SurfaceHover = Color.FromArgb(243, 244, 246);  // Light gray hover
-        public static readonly Color InputBg = Color.FromArgb(255, 255, 255);  // White input bg
+        public static Color Background => AppTheme.Background;
+        public static Color Surface => AppTheme.Surface;
+        public static Color SurfaceHover => AppTheme.SurfaceHover;
+        public static Color InputBg => AppTheme.InputBg;
 
-        // ═══════════ BORDERS ═══════════
-        public static readonly Color Border = Color.FromArgb(229, 231, 235);  // Light Gray
-        public static readonly Color BorderStrong = Color.FromArgb(209, 213, 219);  // Medium Gray (input border)
-        public static readonly Color BorderFocus = Color.FromArgb(46, 102, 224);   // Blue focus
+        public static Color Border => AppTheme.Border;
+        public static Color BorderStrong => AppTheme.BorderStrong;
+        public static Color BorderFocus => AppTheme.BorderFocus;
 
-        // ═══════════ SIDEBAR (white) ═══════════
-        public static readonly Color SidebarBg = Color.FromArgb(255, 255, 255);  // White
-        public static readonly Color SidebarText = Color.FromArgb(31, 41, 55);     // Slate Dark
-        public static readonly Color SidebarMuted = Color.FromArgb(156, 163, 175);  // Slate Light (brand)
-        public static readonly Color SidebarHover = Color.FromArgb(243, 244, 246);  // Light gray hover
-        public static readonly Color SidebarActiveBg = Color.FromArgb(239, 246, 255);  // Pale Blue
-        public static readonly Color SidebarActiveTx = Color.FromArgb(46, 102, 224);   // Blue text
+        public static Color SidebarBg => AppTheme.SidebarBg;
+        public static Color SidebarText => AppTheme.SidebarText;
+        public static Color SidebarMuted => AppTheme.TextMuted;
+        public static Color SidebarHover => AppTheme.SurfaceHover;
+        public static Color SidebarActiveBg => AppTheme.SidebarActiveBg;
+        public static Color SidebarActiveTx => AppTheme.SidebarActiveTx;
 
-        // ═══════════ TEXT ═══════════
-        public static readonly Color TextPrimary = Color.FromArgb(17, 24, 39);     // Slate Dark (near black)
-        public static readonly Color TextSecondary = Color.FromArgb(107, 114, 128);  // Slate Medium
-        public static readonly Color TextMuted = Color.FromArgb(156, 163, 175);  // Slate Light
+        public static Color TextPrimary => AppTheme.TextPrimary;
+        public static Color TextSecondary => AppTheme.TextSecondary;
+        public static Color TextMuted => AppTheme.TextMuted;
 
-        // ═══════════ STATUS ═══════════
-        public static readonly Color Success = Color.FromArgb(16, 185, 129);   // Emerald
-        public static readonly Color Warning = Color.FromArgb(245, 158, 11);   // Amber
-        public static readonly Color Danger = Color.FromArgb(239, 68, 68);    // Red
-        public static readonly Color DangerSoft = Color.FromArgb(254, 242, 242);  // Light red (error bg)
-        public static readonly Color Neutral = Color.FromArgb(243, 244, 246);  // Slate 100
+        public static Color Success => AppTheme.Success;
+        public static Color Warning => AppTheme.Warning;
+        public static Color Danger => AppTheme.Danger;
+        public static Color DangerSoft => AppTheme.DangerSoft;
+        public static Color Neutral => AppTheme.Neutral;
 
-        // ═══════════ FONTS ═══════════
-        public static readonly Font FontTitle = new Font("Segoe UI", 16F, FontStyle.Bold);
-        public static readonly Font FontSubtitle = new Font("Segoe UI", 10F, FontStyle.Regular);
-        public static readonly Font FontLabel = new Font("Segoe UI", 8.5F, FontStyle.Bold);
-        public static readonly Font FontInput = new Font("Segoe UI", 10F, FontStyle.Regular);
-        public static readonly Font FontButton = new Font("Segoe UI", 9.5F, FontStyle.Bold);
-        public static readonly Font FontBody = new Font("Segoe UI", 9F, FontStyle.Regular);
-        public static readonly Font FontStatus = new Font("Segoe UI", 8.5F, FontStyle.Regular);
-        public static readonly Font FontSidebar = new Font("Segoe UI", 10F, FontStyle.Regular);
-        public static readonly Font FontSidebarBrand = new Font("Segoe UI", 8F, FontStyle.Bold);
-        public static readonly Font FontError = new Font("Segoe UI", 8F, FontStyle.Regular);
+        public static Font FontTitle => AppTheme.FontTitle;
+        public static Font FontSubtitle => AppTheme.FontSubtitle;
+        public static Font FontLabel => AppTheme.FontLabel;
+        public static Font FontInput => AppTheme.FontInput;
+        public static Font FontButton => AppTheme.FontButton;
+        public static Font FontBody => AppTheme.FontBody;
+        public static Font FontStatus => AppTheme.FontStatus;
+        public static Font FontSidebar => AppTheme.FontSidebar;
+        public static Font FontSidebarBrand => AppTheme.FontBrand;
+        public static Font FontError => AppTheme.FontError;
 
-        // ═══════════ SIZES ═══════════
-        public const int Radius = 8;
-        public const int CardPadding = 20;
-        public const int InputHeight = 36;
-        public const int ButtonHeight = 40;
-        public const int GapSmall = 8;
-        public const int GapMedium = 16;
-        public const int GapLarge = 24;
+        public const int Radius = AppTheme.RadiusSmall;
+        public const int CardPadding = AppTheme.CardPadding;
+        public const int InputHeight = AppTheme.InputHeight;
+        public const int ButtonHeight = AppTheme.ButtonHeight;
+        public const int GapSmall = AppTheme.GapTiny;
+        public const int GapMedium = AppTheme.GapMedium;
+        public const int GapLarge = AppTheme.GapLarge;
     }
 }

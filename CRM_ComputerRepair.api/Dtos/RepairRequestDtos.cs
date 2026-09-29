@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace CRM_ComputerRepair.api.Dtos;
 
@@ -95,4 +95,53 @@ public class ReassignRepairRequestRequest
 
     [MaxLength(2000)]
     public string? Notes { get; set; }
+}
+
+public class ChangeRepairStatusRequest
+{
+    [Range(0, 5, ErrorMessage = "Status must be 0 (Pending) to 5 (Reassigned).")]
+    public int Status { get; set; }
+
+    [MaxLength(2000)]
+    public string? Notes { get; set; }
+}
+
+public class QuickCompleteRepairRequest
+{
+    [Range(0, double.MaxValue)]
+    public decimal? ActualCost { get; set; }
+
+    [Range(0, double.MaxValue)]
+    public decimal? PartsCost { get; set; }
+
+    [Range(0, double.MaxValue)]
+    public decimal? LaborCost { get; set; }
+
+    [MaxLength(2000)]
+    public string? TechnicianNotes { get; set; }
+}
+
+public class RepairRequestResponseDto
+{
+    public int RepairRequestId { get; set; }
+    public string RequestNumber { get; set; } = string.Empty;
+    public int CustomerId { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerPhone { get; set; }
+    public string? CustomerEmail { get; set; }
+    public int? DeviceId { get; set; }
+    public string DeviceModel { get; set; } = string.Empty;
+    public string SerialNumber { get; set; } = string.Empty;
+    public string IssueDescription { get; set; } = string.Empty;
+    public int Status { get; set; }
+    public int Priority { get; set; }
+    public DateTime RequestDate { get; set; }
+    public DateTime? CompletionDate { get; set; }
+    public decimal? EstimatedCost { get; set; }
+    public decimal? ActualCost { get; set; }
+    public decimal? PartsCost { get; set; }
+    public decimal? LaborCost { get; set; }
+    public string? TechnicianNotes { get; set; }
+    public string? AssignedToStaffId { get; set; }
+    public string? AssignedToManagerId { get; set; }
 }

@@ -36,10 +36,19 @@ public class SuppliersController : ControllerBase
         {
             SupplierCode = request.SupplierCode.Trim(),
             SupplierName = request.SupplierName.Trim(),
-            ContactPerson = request.ContactPerson?.Trim(),
+            ContactFirstName = !string.IsNullOrWhiteSpace(request.ContactFirstName)
+                ? request.ContactFirstName.Trim()
+                : (request.ContactPerson?.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()),
+            ContactLastName = !string.IsNullOrWhiteSpace(request.ContactLastName)
+                ? request.ContactLastName.Trim()
+                : (request.ContactPerson?.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries).Skip(1).FirstOrDefault()),
             ContactNumber = request.ContactNumber?.Trim(),
             EmailAddress = request.EmailAddress?.Trim(),
             Address = request.Address?.Trim(),
+            City = request.City?.Trim(),
+            StateOrProvince = request.StateOrProvince?.Trim(),
+            PostalCode = request.PostalCode?.Trim(),
+            Country = string.IsNullOrWhiteSpace(request.Country) ? "Philippines" : request.Country.Trim(),
             Notes = request.Notes?.Trim(),
             IsActive = true,
             CreatedAt = DateTime.UtcNow

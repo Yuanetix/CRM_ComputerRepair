@@ -1,16 +1,18 @@
 using CRM.winforms.Forms;
-using CRM.winforms;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace CRM.winforms
 {
     /// <summary>
-    /// Modal dialog for Add / Edit on an Interaction.
-    /// Type is chosen on the form: Inquiry / Complaint / Feedback.
+    /// Modal dialog for Add / Edit on an Interaction (Question, Concern, Review).
+    /// Provides computer repair industry standard templates, customer selection,
+    /// dynamic linked repair orders, priority/status management, and resolution tracking.
     /// </summary>
     [DesignerCategory("Code")]
     public class InteractionFormDialog : ModalForm
@@ -22,55 +24,196 @@ namespace CRM.winforms
         private readonly bool _isEditMode;
         private readonly InteractionTypeFilter? _presetType;
 
+        private List<CustomerDto> _customers = new();
+        private List<RepairRequestDto> _repairs = new();
+        private bool _isInitializing = true;
+
         // ═══════════ CONTROLS ═══════════
 
-        private Label lblSubtitle = null!;
+        // Presets
+        private Label lblPresets = null!;
+        private FlowLayoutPanel pnlPresets = null!;
 
+        // Customer & Repair
+        private Label lblCustomer = null!;
+        private Label lblRepair = null!;
+        private ComboBox cmbCustomer = null!;
+        private ComboBox cmbRepair = null!;
+        private Label lblCustomerContact = null!;
+
+        // Type & Priority
         private Label lblType = null!;
+        private Label lblPriority = null!;
+        private ComboBox cmbType = null!;
+        private ComboBox cmbPriority = null!;
+
+        // Subject & Notes
         private Label lblSubject = null!;
         private Label lblNotes = null!;
-        private Label lblPriority = null!;
-        private Label lblStatus = null!;
-        private Label lblResolution = null!;
-
-        private ComboBox cmbType = null!;
         private TextField inpSubject = null!;
         private TextField inpNotes = null!;
-        private ComboBox cmbPriority = null!;
+
+        // Status & Resolution
+        private Label lblStatus = null!;
         private ComboBox cmbStatus = null!;
+        private Label lblResolution = null!;
         private TextField inpResolution = null!;
 
+        // Error labels
         private Label lblErrorSubject = null!;
         private Label lblErrorNotes = null!;
         private Label lblErrorResolution = null!;
 
-        private Button btnSave = null!;
-        private Button btnCancel = null!;
-        private Button btnArchive = null!;
+        // Buttons
+        private SaasButton btnSave = null!;
+        private SaasButton btnCancel = null!;
+        private SaasButton btnArchive = null!;
 
         // ═══════════ CONSTRUCTOR ═══════════
 
         public InteractionFormDialog(
             InteractionDto? existing = null,
-            InteractionTypeFilter? presetType = null)
+            InteractionTypeFilter? presetType = null,
+            List<CustomerDto>? cachedCustomers = null,
+            List<RepairRequestDto>? cachedRepairs = null)
         {
             _editing = existing;
-            _isEditMode = existing != null;
+            _isEditMode = existing != null && existing.CustomerInteractionId > 0;
             _presetType = presetType;
 
+            if (cachedCustomers != null) _customers = new List<CustomerDto>(cachedCustomers);
+            if (cachedRepairs != null) _repairs = new List<RepairRequestDto>(cachedRepairs);
+
             BuildCard(
-                _isEditMode ? "Edit Interaction" : "Add Interaction",
-                width: 560,
-                height: _isEditMode ? 760 : 740);
+                _isEditMode ? "Edit Interaction" : "Log Customer Interaction",
+                _isEditMode
+                    ? "Update the interaction details and resolution notes below."
+                    : "Log a customer question, concern, or feedback review. Fields marked * are required.",
+                width: 660,
+                height: 720);
 
             BuildContent();
+
+            this.Load += async (s, e) => await InitializeDataAsync();
         }
 
-        // ═══════════ TYPE LABELS ═══════════
+        // ═══════════ DATA INITIALIZATION ═══════════
 
-        private static readonly string[] TypeNames = { "Question", "Concern", "Review" };
+        private async Task InitializeDataAsync()
+        {
+            try
+            {
+                if (_customers.Count == 0 || _repairs.Count == 0)
+                {
+                    var custTask = _customers.Count == 0 ? _api.GetCustomersAsync() : Task.FromResult(_customers);
+                    var repTask = _repairs.Count == 0 ? _api.GetRepairRequestsAsync() : Task.FromResult(_repairs);
+                    await Task.WhenAll(custTask, repTask);
 
-        // ═══════════ CONTENT ═══════════
+                    _customers = await custTask ?? new List<CustomerDto>();
+                    _repairs = await repTask ?? new List<RepairRequestDto>();
+                }
+
+                PopulateCustomers();
+                ApplyPrefill();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to load customer information:\n{ex.Message}", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _isInitializing = false;
+            }
+        }
+
+        private void PopulateCustomers()
+        {
+            cmbCustomer.Items.Clear();
+            cmbCustomer.Items.Add("— Walk-in / Unlinked Customer —");
+
+            foreach (var c in _customers.OrderBy(x => x.FullName))
+            {
+                string contact = !string.IsNullOrWhiteSpace(c.Phone) ? c.Phone : (!string.IsNullOrWhiteSpace(c.Email) ? c.Email : "No contact");
+                cmbCustomer.Items.Add($"{c.FullName} ({contact})");
+            }
+
+            if (cmbCustomer.Items.Count > 0)
+                cmbCustomer.SelectedIndex = 0;
+
+            ModalKit.AdjustDropDownWidth(cmbCustomer);
+        }
+
+        private void PopulateRepairsForCustomer(int? customerId)
+        {
+            cmbRepair.Items.Clear();
+            cmbRepair.Items.Add("None — General Support / Inquiry");
+
+            if (customerId.HasValue && customerId.Value > 0)
+            {
+                var matchingRepairs = _repairs
+                    .Where(r => r.CustomerId == customerId.Value)
+                    .OrderByDescending(r => r.RepairRequestId)
+                    .ToList();
+
+                foreach (var r in matchingRepairs)
+                {
+                    string status = r.StatusText;
+                    string device = string.IsNullOrWhiteSpace(r.DeviceModel) ? "PC / Device" : r.DeviceModel;
+                    cmbRepair.Items.Add($"{r.RequestNumber} · {device} ({status})");
+                }
+            }
+
+            cmbRepair.SelectedIndex = 0;
+            ModalKit.AdjustDropDownWidth(cmbRepair);
+        }
+
+        private void ApplyPrefill()
+        {
+            if (_editing != null)
+            {
+                // Customer selection
+                if (_editing.CustomerId.HasValue)
+                {
+                    int custIdx = _customers.FindIndex(c => c.CustomerId == _editing.CustomerId.Value);
+                    if (custIdx >= 0)
+                        cmbCustomer.SelectedIndex = custIdx + 1; // +1 for "Walk-in"
+                }
+
+                // Type
+                cmbType.SelectedIndex = Clamp(_editing.InteractionType, 0, 2);
+
+                // Priority & Status
+                cmbPriority.SelectedIndex = Clamp(_editing.Priority, 0, 2);
+                cmbStatus.SelectedIndex = Clamp(_editing.Status, 0, 2);
+
+                // Subject & Notes
+                inpSubject.Text = _editing.Subject ?? "";
+                inpNotes.Text = _editing.Notes ?? "";
+                inpResolution.Text = _editing.Resolution ?? "";
+
+                // Repair selection
+                if (_editing.RepairRequestId.HasValue)
+                {
+                    int? custId = _editing.CustomerId;
+                    var matching = _repairs
+                        .Where(r => !custId.HasValue || r.CustomerId == custId.Value)
+                        .OrderByDescending(r => r.RepairRequestId)
+                        .ToList();
+
+                    int repIdx = matching.FindIndex(r => r.RepairRequestId == _editing.RepairRequestId.Value);
+                    if (repIdx >= 0)
+                        cmbRepair.SelectedIndex = repIdx + 1;
+                }
+            }
+            else if (_presetType.HasValue)
+            {
+                cmbType.SelectedIndex = (int)_presetType.Value;
+            }
+
+            UpdateResolutionState();
+        }
+
+        // ═══════════ CONTENT BUILD ═══════════
 
         private void BuildContent()
         {
@@ -78,121 +221,161 @@ namespace CRM.winforms
             int w = ContentWidth;
             int y = ContentTopY;
 
-            // ── Subtitle ──
-            lblSubtitle = new Label
+            // ── Quick Presets (Only in Add mode) ──
+            if (!_isEditMode)
             {
-                Text = _isEditMode
-                    ? "Update the interaction information below."
-                    : "Enter the interaction information below. Fields marked * are required.",
-                Font = AppTheme.FontSubtitle,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(w, 20)
-            };
-            pnlCard.Controls.Add(lblSubtitle);
+                lblPresets = ModalKit.MakeLabel(pnlBody, "Quick Presets (Computer Repair Standard):", x, y);
+                y += 18;
 
-            y += 32;
+                pnlPresets = new FlowLayoutPanel
+                {
+                    Location = new Point(x, y),
+                    Width = w,
+                    AutoSize = true,
+                    AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                    BackColor = Color.Transparent,
+                    WrapContents = true,
+                    Margin = Padding.Empty,
+                    Padding = Padding.Empty
+                };
 
-            // ── Type * ──
-            lblType = MakeLabel("Type *", x, y);
+                AddPresetChip("Turnaround Inquiry", 0, "Turnaround Time & Status Inquiry",
+                    "Customer inquired regarding the estimated completion time and current diagnostic progress for their repair.");
+
+                AddPresetChip("Quote Approval", 0, "Hardware Estimate / Quote Approval Inquiry",
+                    "Customer reached out regarding the cost estimate for parts and labor. Reviewing repair authorization.");
+
+                AddPresetChip("Post-Repair Concern", 1, "Post-Repair Hardware Concern",
+                    "Customer called regarding hardware behavior after recent pickup. Documented symptoms for technician evaluation.");
+
+                AddPresetChip("Customer Review", 2, "Customer Satisfaction & Praise",
+                    "Customer expressed high satisfaction with repair turnaround time, communication, and system performance.");
+
+                pnlBody.Controls.Add(pnlPresets);
+                y += Math.Max(32, pnlPresets.PreferredSize.Height) + 8;
+            }
+
+            // ── Customer & Linked Repair (Side-by-side) ──
+            int halfW = (w - 14) / 2;
+
+            lblCustomer = ModalKit.MakeLabel(pnlBody, "Customer", x, y);
+            lblRepair = ModalKit.MakeLabel(pnlBody, "Linked Repair Order", x + halfW + 14, y);
             y += 20;
-            cmbType = MakeCombo(x, y, w, TypeNames, 0);
-            y += 38 + 14;
+
+            cmbCustomer = MakeCombo(pnlBody, x, y, halfW, new[] { "Loading customers..." }, 0);
+            cmbRepair = MakeCombo(pnlBody, x + halfW + 14, y, halfW, new[] { "None — General Support / Inquiry" }, 0);
+            y += 34;
+
+            lblCustomerContact = new Label
+            {
+                Text = "Walk-in inquiry or select a customer above",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkMuted,
+                AutoSize = true,
+                MaximumSize = new Size(w, 0),
+                Location = new Point(x + 2, y)
+            };
+            pnlBody.Controls.Add(lblCustomerContact);
+            y += 22;
+
+            cmbCustomer.SelectedIndexChanged += (s, e) =>
+            {
+                if (_isInitializing) return;
+
+                if (cmbCustomer.SelectedIndex > 0 && cmbCustomer.SelectedIndex - 1 < _customers.Count)
+                {
+                    var cust = _customers.OrderBy(c => c.FullName).ToList()[cmbCustomer.SelectedIndex - 1];
+                    string contact = !string.IsNullOrWhiteSpace(cust.Phone) ? cust.Phone : (!string.IsNullOrWhiteSpace(cust.Email) ? cust.Email : "No contact saved");
+                    lblCustomerContact.Text = $"Selected: {cust.FullName}  ·  {contact}  ·  Points: {cust.LoyaltyPoints ?? 0}";
+                    lblCustomerContact.ForeColor = AppTheme.Primary;
+                    PopulateRepairsForCustomer(cust.CustomerId);
+                }
+                else
+                {
+                    lblCustomerContact.Text = "Walk-in inquiry or unlinked customer";
+                    lblCustomerContact.ForeColor = UiKit.T.InkMuted;
+                    PopulateRepairsForCustomer(null);
+                }
+            };
+
+            // ── Type & Priority (Side-by-side) ──
+            lblType = ModalKit.MakeLabel(pnlBody, "Interaction Type *", x, y);
+            lblPriority = ModalKit.MakeLabel(pnlBody, "Priority", x + halfW + 14, y);
+            y += 20;
+
+            cmbType = MakeCombo(pnlBody, x, y, halfW, new[] { "Question (Inquiry)", "Concern (Complaint)", "Review (Feedback)" }, 0);
+            cmbPriority = MakeCombo(pnlBody, x + halfW + 14, y, halfW, new[] { "Low", "Medium", "High" }, 1);
+            y += 34 + 10;
 
             // ── Subject * ──
-            lblSubject = MakeLabel("Subject *", x, y);
+            lblSubject = ModalKit.MakeLabel(pnlBody, "Subject *", x, y);
             y += 20;
-            inpSubject = MakeField(x, y, w, "Short summary");
-            y += 38 + 4;
-            lblErrorSubject = MakeErrorLabel(x, y);
-            y += 20;
+            inpSubject = ModalKit.MakeField(pnlBody, x, y, w, "Brief summary of customer inquiry, concern, or feedback...");
+            inpSubject.Height = 36;
+            y += 38;
+            lblErrorSubject = ModalKit.MakeErrorLabel(pnlBody, x, y);
+            y += 18;
 
             // ── Notes (multiline) * ──
-            lblNotes = MakeLabel("Notes *", x, y);
+            lblNotes = ModalKit.MakeLabel(pnlBody, "Discussion Notes & Conversation Details *", x, y);
             y += 20;
-            inpNotes = MakeField(x, y, w, "Describe the details...", multiline: true);
-            y += 74 + 4;
-            lblErrorNotes = MakeErrorLabel(x, y);
+            inpNotes = ModalKit.MakeField(pnlBody, x, y, w, "Detail the conversation, symptoms described, or feedback provided...", multiline: true);
+            inpNotes.Height = 74;
+            y += 76;
+            lblErrorNotes = ModalKit.MakeErrorLabel(pnlBody, x, y);
+            y += 18;
+
+            // ── Status & Resolution ──
+            lblStatus = ModalKit.MakeLabel(pnlBody, "Status", x, y);
             y += 20;
+            cmbStatus = MakeCombo(pnlBody, x, y, 160, new[] { "Open", "In Progress", "Closed" }, 0);
+            cmbStatus.SelectedIndexChanged += (s, e) => UpdateResolutionState();
+            y += 34 + 10;
 
-            // ── Priority + Status (side by side) ──
-            int halfW = (w - 12) / 2;
-
-            lblPriority = MakeLabel("Priority", x, y);
-            lblStatus = MakeLabel("Status", x + halfW + 12, y);
+            lblResolution = ModalKit.MakeLabel(pnlBody, "Resolution Details (Required when Status is Closed)", x, y);
             y += 20;
-
-            cmbPriority = MakeCombo(x, y, halfW,
-                new[] { "Low", "Medium", "High" }, 1);
-            cmbStatus = MakeCombo(x + halfW + 12, y, halfW,
-                new[] { "Open", "In Progress", "Closed" }, 0);
-
-            y += 38 + 14;
-
-            // ── Resolution (multiline) ──
-            lblResolution = MakeLabel("Resolution (required when Closed)", x, y);
-            y += 20;
-            inpResolution = MakeField(x, y, w, "How was it resolved?", multiline: true);
-            y += 74 + 4;
-            lblErrorResolution = MakeErrorLabel(x, y);
-            y += 20;
+            inpResolution = ModalKit.MakeField(pnlBody, x, y, w, "Explain how the issue or inquiry was resolved...", multiline: true);
+            inpResolution.Height = 68;
+            y += 70;
+            lblErrorResolution = ModalKit.MakeErrorLabel(pnlBody, x, y);
 
             // ── Buttons ──
-            int btnY = pnlCard.Height - ShadowPad - 60;
-            int rightEdge = ContentRightX;
-
-            int saveW = 110;
-            int cancelW = 100;
-
-            int saveX = rightEdge - saveW;
-            int cancelX = saveX - cancelW - 10;
-
-            btnCancel = MakeSecondaryButton("Cancel");
-            btnCancel.Size = new Size(cancelW, 40);
-            btnCancel.Location = new Point(cancelX, btnY);
+            btnCancel = new SaasButton("Cancel", SaasButtonVariant.Secondary);
             btnCancel.Click += (s, e) =>
             {
                 DialogResult = DialogResult.Cancel;
                 Close();
             };
 
-            btnSave = MakePrimaryButton(_isEditMode ? "Update" : "Save");
-            btnSave.Size = new Size(saveW, 40);
-            btnSave.Location = new Point(saveX, btnY);
+            btnSave = new SaasButton(_isEditMode ? "Update" : "Save Interaction", SaasButtonVariant.Primary);
             btnSave.Click += async (s, e) => await SaveAsync();
 
+            SaasButton? archive = null;
             if (_isEditMode)
             {
-                btnArchive = MakeDangerOutlineButton("Archive");
-                btnArchive.Size = new Size(110, 40);
-                btnArchive.Location = new Point(x, btnY);
+                btnArchive = new SaasButton("Archive", SaasButtonVariant.DangerOutline);
                 btnArchive.Click += async (s, e) => await ArchiveAsync();
+                archive = btnArchive;
             }
+            LayoutFooter(btnSave, btnCancel, archive, saveW: 140);
 
-            // ── Prefill ──
-            if (_editing != null)
-            {
-                // Type locked in edit mode
-                cmbType.SelectedIndex = Clamp(_editing.InteractionType, 0, 2);
-                cmbType.Enabled = false;
-
-                inpSubject.Text = _editing.Subject ?? "";
-                inpNotes.Text = _editing.Notes ?? "";
-                cmbPriority.SelectedIndex = Clamp(_editing.Priority, 0, 2);
-                cmbStatus.SelectedIndex = Clamp(_editing.Status, 0, 2);
-                inpResolution.Text = _editing.Resolution ?? "";
-            }
-            else if (_presetType.HasValue)
-            {
-                cmbType.SelectedIndex = (int)_presetType.Value;
-            }
-
-            cmbStatus.SelectedIndexChanged += (s, e) => UpdateResolutionState();
-            UpdateResolutionState();
+            AcceptButton = btnSave;
+            CancelButton = btnCancel;
 
             Shown += (s, e) => inpSubject.Focus();
+        }
+
+        private void AddPresetChip(string title, int typeIdx, string subject, string notes)
+        {
+            var btn = ModalKit.MakeFlowChip(pnlPresets, title);
+            btn.Click += (s, e) =>
+            {
+                cmbType.SelectedIndex = typeIdx;
+                inpSubject.Text = subject;
+                inpNotes.Text = notes;
+                inpNotes.Focus();
+                inpNotes.InnerTextBox.SelectionStart = inpNotes.Text.Length;
+            };
         }
 
         private static int Clamp(int value, int min, int max)
@@ -206,7 +389,6 @@ namespace CRM.winforms
 
             if (!isClosed)
             {
-                inpResolution.Text = "";
                 ClearError(inpResolution, lblErrorResolution);
             }
         }
@@ -217,10 +399,35 @@ namespace CRM.winforms
         {
             if (!ValidateInputs()) return;
 
+            int? selectedCustomerId = null;
+            if (cmbCustomer.SelectedIndex > 0 && cmbCustomer.SelectedIndex - 1 < _customers.Count)
+            {
+                selectedCustomerId = _customers.OrderBy(c => c.FullName).ToList()[cmbCustomer.SelectedIndex - 1].CustomerId;
+            }
+
+            int? selectedRepairId = null;
+            if (cmbRepair.SelectedIndex > 0)
+            {
+                var matchingRepairs = _repairs
+                    .Where(r => !selectedCustomerId.HasValue || r.CustomerId == selectedCustomerId.Value)
+                    .OrderByDescending(r => r.RepairRequestId)
+                    .ToList();
+
+                if (cmbRepair.SelectedIndex - 1 < matchingRepairs.Count)
+                {
+                    selectedRepairId = matchingRepairs[cmbRepair.SelectedIndex - 1].RepairRequestId;
+                }
+            }
+
+            btnSave.Enabled = false;
+            btnSave.Text = "Saving...";
+
             try
             {
                 var dto = new InteractionDto
                 {
+                    CustomerId = selectedCustomerId,
+                    RepairRequestId = selectedRepairId,
                     InteractionType = cmbType.SelectedIndex,
                     Subject = inpSubject.Text.Trim(),
                     Notes = inpNotes.Text.Trim(),
@@ -251,6 +458,8 @@ namespace CRM.winforms
                     "Error",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
+                btnSave.Enabled = true;
+                btnSave.Text = _isEditMode ? "Update" : "Save Interaction";
             }
         }
 
@@ -296,7 +505,7 @@ namespace CRM.winforms
 
             if (cmbType.SelectedIndex < 0)
             {
-                MessageBox.Show("Please choose a type.",
+                MessageBox.Show("Please choose an interaction type.",
                     "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 valid = false;
             }
@@ -310,7 +519,7 @@ namespace CRM.winforms
 
             if (string.IsNullOrWhiteSpace(inpNotes.Text))
             {
-                ShowError(inpNotes, lblErrorNotes, "Notes are required.");
+                ShowError(inpNotes, lblErrorNotes, "Discussion notes are required.");
                 firstInvalid ??= inpNotes;
                 valid = false;
             }
@@ -319,7 +528,7 @@ namespace CRM.winforms
                 string.IsNullOrWhiteSpace(inpResolution.Text))
             {
                 ShowError(inpResolution, lblErrorResolution,
-                    "Resolution is required when status is Closed.");
+                    "Resolution details are required when closing an interaction.");
                 firstInvalid ??= inpResolution;
                 valid = false;
             }
@@ -351,41 +560,17 @@ namespace CRM.winforms
 
         // ═══════════ CONTROL FACTORIES ═══════════
 
-        private Label MakeLabel(string text, int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y)
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private TextField MakeField(int x, int y, int width, string placeholder,
-                                    bool multiline = false)
-        {
-            var tf = new TextField
-            {
-                PlaceholderText = placeholder,
-                Location = new Point(x, y),
-                Size = new Size(width, multiline ? 68 : 38)
-            };
-            if (multiline) tf.Multiline = true;
-            pnlCard.Controls.Add(tf);
-            return tf;
-        }
 
-        private ComboBox MakeCombo(int x, int y, int width, string[] items, int selectedIndex)
+        private ComboBox MakeCombo(Control parent, int x, int y, int width, string[] items, int selectedIndex)
         {
             var cmb = new ComboBox
             {
-                Font = new Font("Segoe UI", 9.5F),
-                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = AppTheme.FontInput,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.ListItems,
+                DropDownWidth = Math.Max(width, 420),
                 Location = new Point(x, y),
                 Size = new Size(width, 30),
                 BackColor = AppTheme.Surface,
@@ -395,83 +580,35 @@ namespace CRM.winforms
             cmb.Items.AddRange(items);
             if (selectedIndex >= 0 && selectedIndex < items.Length)
                 cmb.SelectedIndex = selectedIndex;
-            pnlCard.Controls.Add(cmb);
+
+            cmb.Leave += (s, e) =>
+            {
+                if (cmb.SelectedIndex <= 0 && !string.IsNullOrWhiteSpace(cmb.Text))
+                {
+                    int idx = cmb.FindStringExact(cmb.Text.Trim());
+                    if (idx < 0) idx = cmb.FindString(cmb.Text.Trim());
+                    if (idx >= 0) cmb.SelectedIndex = idx;
+                }
+            };
+            cmb.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    if (cmb.SelectedIndex <= 0 && !string.IsNullOrWhiteSpace(cmb.Text))
+                    {
+                        int idx = cmb.FindStringExact(cmb.Text.Trim());
+                        if (idx < 0) idx = cmb.FindString(cmb.Text.Trim());
+                        if (idx >= 0) cmb.SelectedIndex = idx;
+                    }
+                }
+            };
+
+            parent.Controls.Add(cmb);
             return cmb;
         }
 
-        private Label MakeErrorLabel(int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8F),
-                ForeColor = AppTheme.Danger,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Visible = false
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private Button MakePrimaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
 
-        private Button MakeSecondaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
 
-        private Button MakeDangerOutlineButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.Danger,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.Danger;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.DangerSoft;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
     }
 }

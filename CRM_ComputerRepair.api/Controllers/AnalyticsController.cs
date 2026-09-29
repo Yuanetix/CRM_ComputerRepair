@@ -376,18 +376,37 @@ public class AnalyticsController : ControllerBase
 
             case "transactions":
             {
-                var repairs = await db.RepairRequests.AsNoTracking()
+                // NOTE: string.Contains(x, StringComparison) and
+                // Status.ToString().Equals(x, StringComparison) cannot be
+                // translated to SQL — they threw on every KPI click.
+                // Build the query with translatable predicates only.
+                var query = db.RepairRequests.AsNoTracking()
                     .Where(r => !customerId.HasValue || r.CustomerId == customerId.Value)
                     .Where(r => !fromUtc.HasValue || r.RequestDate >= fromUtc.Value)
-                    .Where(r => !toUtc.HasValue || r.RequestDate <= toUtc.Value)
-                    .Where(r => string.IsNullOrWhiteSpace(service) ||
-                                r.DeviceModel.Contains(service.Trim(), StringComparison.OrdinalIgnoreCase))
-                    .Where(r => string.IsNullOrWhiteSpace(status) ||
-                                r.Status.ToString().Equals(status, StringComparison.OrdinalIgnoreCase))
-                    .ToListAsync();
+                    .Where(r => !toUtc.HasValue || r.RequestDate <= toUtc.Value);
+
+                if (!string.IsNullOrWhiteSpace(service))
+                {
+                    var term = service.Trim().ToLower();
+                    query = query.Where(r => r.DeviceModel.ToLower().Contains(term));
+                }
+
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    if (Enum.TryParse<RepairStatus>(status.Trim(), ignoreCase: true, out var statusFilter))
+                        query = query.Where(r => r.Status == statusFilter);
+                    else
+                        query = query.Where(r => false); // unknown status -> no rows
+                }
+
+                var repairs = await query.ToListAsync();
 
                 var customers = await db.Customers.AsNoTracking()
-                    .ToDictionaryAsync(c => c.CustomerId, c => $"{c.FirstName} {c.LastName}".Trim());
+                    .Select(c => new { c.CustomerId, c.FirstName, c.LastName })
+                    .ToListAsync();
+                var customerNames = customers.ToDictionary(
+                    c => c.CustomerId,
+                    c => $"{c.FirstName} {c.LastName}".Trim());
 
                 var payments = await db.Payments.AsNoTracking()
                     .Where(p => p.IsPaid && !p.IsVoid)
@@ -401,7 +420,7 @@ public class AnalyticsController : ControllerBase
                         var row = new Dictionary<string, object?>
                         {
                             ["requestNumber"] = r.RequestNumber,
-                            ["customer"] = customers.TryGetValue(r.CustomerId, out var n) ? n : "-",
+                            ["customer"] = customerNames.TryGetValue(r.CustomerId, out var n) ? n : "-",
                             ["service"] = r.DeviceModel,
                             ["requested"] = r.RequestDate,
                             ["completed"] = r.CompletionDate,
@@ -440,8 +459,12 @@ public class AnalyticsController : ControllerBase
                 var repairs = await db.RepairRequests.AsNoTracking()
                     .ToDictionaryAsync(r => r.RepairRequestId, r => r);
 
-                var customers = await db.Customers.AsNoTracking()
-                    .ToDictionaryAsync(c => c.CustomerId, c => $"{c.FirstName} {c.LastName}".Trim());
+                var customersRaw = await db.Customers.AsNoTracking()
+                    .Select(c => new { c.CustomerId, c.FirstName, c.LastName })
+                    .ToListAsync();
+                var customers = customersRaw.ToDictionary(
+                    c => c.CustomerId,
+                    c => $"{c.FirstName} {c.LastName}".Trim());
 
                 var rows = payments
                     .OrderByDescending(p => p.PaymentDate)
@@ -539,8 +562,12 @@ public class AnalyticsController : ControllerBase
                     .OrderByDescending(i => i.InteractionDate)
                     .ToListAsync();
 
-                var customers = await db.Customers.AsNoTracking()
-                    .ToDictionaryAsync(c => c.CustomerId, c => $"{c.FirstName} {c.LastName}".Trim());
+                var customersRaw = await db.Customers.AsNoTracking()
+                    .Select(c => new { c.CustomerId, c.FirstName, c.LastName })
+                    .ToListAsync();
+                var customers = customersRaw.ToDictionary(
+                    c => c.CustomerId,
+                    c => $"{c.FirstName} {c.LastName}".Trim());
 
                 var rows = new List<Dictionary<string, object?>>();
                 foreach (var i in interactions)

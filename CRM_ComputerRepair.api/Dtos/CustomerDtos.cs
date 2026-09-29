@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace CRM_ComputerRepair.api.Dtos;
 
@@ -21,6 +21,18 @@ public class CreateCustomerRequest
 
     [MaxLength(500, ErrorMessage = "Address cannot exceed 500 characters.")]
     public string? Address { get; set; }
+
+    [MaxLength(100, ErrorMessage = "City cannot exceed 100 characters.")]
+    public string? City { get; set; }
+
+    [MaxLength(100, ErrorMessage = "State/Province cannot exceed 100 characters.")]
+    public string? StateOrProvince { get; set; }
+
+    [MaxLength(20, ErrorMessage = "Postal code cannot exceed 20 characters.")]
+    public string? PostalCode { get; set; }
+
+    [MaxLength(100, ErrorMessage = "Country cannot exceed 100 characters.")]
+    public string? Country { get; set; } = "Philippines";
 
     [Range(0, int.MaxValue, ErrorMessage = "Loyalty points cannot be negative.")]
     public int? LoyaltyPoints { get; set; }
@@ -45,4 +57,16 @@ public class UpdateCustomerRequest
 
     [MaxLength(500)]
     public string? Address { get; set; }
+
+    [MaxLength(100)]
+    public string? City { get; set; }
+
+    [MaxLength(100)]
+    public string? StateOrProvince { get; set; }
+
+    [MaxLength(20)]
+    public string? PostalCode { get; set; }
+
+    [MaxLength(100)]
+    public string? Country { get; set; } = "Philippines";
 }

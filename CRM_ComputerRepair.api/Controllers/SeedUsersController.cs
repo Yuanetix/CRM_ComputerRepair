@@ -1,4 +1,5 @@
-﻿using CRM_ComputerRepair.domain.Entities;
+using CRM_ComputerRepair.api.Services;
+using CRM_ComputerRepair.domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 
@@ -69,5 +70,12 @@ public class SeedUsersController : ControllerBase
         }
 
         return Ok(new { created, skipped, message = "Seed users complete." });
+    }
+
+    [HttpPost("all")]
+    public async Task<IActionResult> SeedAll([FromServices] IServiceProvider sp, [FromServices] ILogger<Program> logger)
+    {
+        await DatabaseSeeder.SeedAsync(sp, logger);
+        return Ok(new { message = "All databases and tables seeded successfully." });
     }
 }

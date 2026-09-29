@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -6,12 +7,12 @@ using System.Windows.Forms;
 namespace CRM.winforms.Controls
 {
     /// <summary>
-    /// Stat tile — icon chip at top-left, label, then big number below.
+    /// Stat tile — modern balanced SaaS KPI card with icon chip, uppercase label, and bold value.
     /// </summary>
     [DesignerCategory("Code")]
     public class StatTile : UserControl
     {
-        private Color _iconFg;
+        private Color _iconFg = Color.Empty;
         private string _icon = "";
         private string _number = "0";
         private string _label = "";
@@ -21,7 +22,23 @@ namespace CRM.winforms.Controls
         {
             DoubleBuffered = true;
             BackColor = AppTheme.Surface;
-            Size = new Size(220, 150);   // ← taller default
+            Size = new Size(220, 92);
+        }
+
+        public StatTile(string label, string number, string icon, string delta = "") : this()
+        {
+            _label = label;
+            _number = number;
+            _icon = icon;
+            _delta = delta;
+        }
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        [Browsable(false)]
+        public string Value
+        {
+            get => _number;
+            set { _number = value; Invalidate(); }
         }
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -66,28 +83,34 @@ namespace CRM.winforms.Controls
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            UiKit.Quality(g);
 
             var rect = new Rectangle(0, 0, Width - 1, Height - 1);
 
-            using (var path = GetRoundedPath(rect, AppTheme.Radius))
-            using (var brush = new SolidBrush(BackColor))
-                g.FillPath(brush, path);
+            // Card background + clean subtle border
+            using (var path = GetRoundedPath(rect, 10))
+            {
+                using (var brush = new SolidBrush(BackColor != Color.Empty ? BackColor : AppTheme.Surface))
+                    g.FillPath(brush, path);
 
-            // ── Layout dimensions ──
-            int pad = 20;
-            int iconSize = 40;
+                using (var pen = new Pen(UiKit.T.LineSoft, 1))
+                    g.DrawPath(pen, path);
+            }
 
-            // Icon chip
-            var iconRect = new Rectangle(pad, pad, iconSize, iconSize);
+            int pad = 16;
+            int iconSize = 42;
+            int iconY = Math.Max(8, (Height - iconSize) / 2);
+            var iconRect = new Rectangle(pad, iconY, iconSize, iconSize);
 
+            Color accent = !_iconFg.IsEmpty && _iconFg != Color.Transparent ? _iconFg : AppTheme.Primary;
+
+            // Icon chip with tinted background
             using (var path = GetRoundedPath(iconRect, 10))
-            using (var brush = new SolidBrush(_iconFg))
+            using (var brush = new SolidBrush(UiKit.Wash(accent)))
                 g.FillPath(brush, path);
 
-            using (var iconFont = IconFont.Create(14F))
-            using (var iconBrush = new SolidBrush(Color.White))
+            using (var iconFont = IconFont.Create(16F))
+            using (var iconBrush = new SolidBrush(accent))
             {
                 var sf = new StringFormat
                 {
@@ -97,31 +120,37 @@ namespace CRM.winforms.Controls
                 g.DrawString(_icon, iconFont, iconBrush, iconRect, sf);
             }
 
-            // Label
-            int labelY = pad + iconSize + 14;
+            // Text block (Label + Big Number) to the right of icon
+            int textX = iconRect.Right + 14;
+            int textW = Math.Max(20, Width - textX - pad);
 
+            var lblFont = UiKit.MicroStrong;
+            var numFont = AppTheme.FontStatNumber;
+
+            int contentH = lblFont.Height + numFont.Height + 2;
+            int textY = Math.Max(6, (Height - contentH) / 2);
+
+            // Label (uppercase, clean muted)
             using (var lblBrush = new SolidBrush(AppTheme.TextSecondary))
             {
-                g.DrawString(_label, AppTheme.FontStatLabel, lblBrush,
-                    new PointF(pad, labelY));
+                var lblRect = new RectangleF(textX, textY, textW, lblFont.Height + 2);
+                g.DrawString(_label.ToUpperInvariant(), lblFont, lblBrush, lblRect);
             }
 
-            // Number
-            int numberY = labelY + 22;
-
+            // Big Number (bold, primary dark)
             using (var numBrush = new SolidBrush(AppTheme.TextPrimary))
             {
-                g.DrawString(_number, AppTheme.FontStatNumber, numBrush,
-                    new PointF(pad - 2, numberY));
+                var numRect = new RectangleF(textX - 1, textY + lblFont.Height + 2, textW, numFont.Height + 4);
+                g.DrawString(_number, numFont, numBrush, numRect);
             }
 
-            // Delta (top-right)
-            if (!string.IsNullOrEmpty(_delta))
+            // Delta badge (if short, e.g. "+12%")
+            if (!string.IsNullOrEmpty(_delta) && _delta.Length <= 8)
             {
-                using var deltaBrush = new SolidBrush(_iconFg);
+                using var deltaBrush = new SolidBrush(accent);
                 var deltaSize = g.MeasureString(_delta, AppTheme.FontStatDelta);
                 g.DrawString(_delta, AppTheme.FontStatDelta, deltaBrush,
-                    new PointF(Width - deltaSize.Width - pad, pad + 12));
+                    new PointF(Width - deltaSize.Width - pad, pad));
             }
         }
 

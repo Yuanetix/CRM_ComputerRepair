@@ -38,23 +38,60 @@ public static class DatabaseSeeder
         // ── Loyalty programs, terms, subscription ──
         var seededPrograms = await SeedLoyaltyProgramsAsync(master);
 
-        // ── Tenant database (company 1) ──
+        // ── Tenant databases (all active companies) ──
         var factory = sp.GetRequiredService<ITenantDbContextFactory>();
-        await using var tenant = await factory.CreateAsync(1);
+        var tenantDatabases = await master.CompanyDatabases
+            .Where(d => d.IsActive)
+            .ToListAsync();
 
-        logger.LogInformation("Applying tenant database migrations...");
-        await tenant.Database.MigrateAsync();
-
-        if (await tenant.Customers.AnyAsync())
+        foreach (var tdb in tenantDatabases)
         {
-            logger.LogInformation("Tenant data already present — ensuring retention defaults are seeded...");
-            await SeedRetentionDefaultsAsync(tenant);
-            return;
+            try
+            {
+                logger.LogInformation("Applying tenant database migrations for Company {CompanyId} ({DatabaseName})...", tdb.CompanyId, tdb.DatabaseName);
+                await using var tenant = await factory.CreateAsync(tdb.CompanyId);
+                await tenant.Database.MigrateAsync();
+
+                if (!await tenant.RepairRequests.AnyAsync())
+                {
+                    if (await tenant.Customers.AnyAsync())
+                    {
+                        tenant.FollowUps.RemoveRange(tenant.FollowUps);
+                        tenant.CustomerInteractions.RemoveRange(tenant.CustomerInteractions);
+                        tenant.RepairParts.RemoveRange(tenant.RepairParts);
+                        tenant.Payments.RemoveRange(tenant.Payments);
+                        tenant.RepairStatusHistories.RemoveRange(tenant.RepairStatusHistories);
+                        tenant.RepairRequests.RemoveRange(tenant.RepairRequests);
+                        tenant.Parts.RemoveRange(tenant.Parts);
+                        tenant.Suppliers.RemoveRange(tenant.Suppliers);
+                        tenant.Devices.RemoveRange(tenant.Devices);
+                        tenant.RetentionEmailLogs.RemoveRange(tenant.RetentionEmailLogs);
+                        tenant.RetentionRequests.RemoveRange(tenant.RetentionRequests);
+                        tenant.Customers.RemoveRange(tenant.Customers);
+                        await tenant.SaveChangesAsync();
+                    }
+
+                    logger.LogInformation("Seeding tenant demo data for Company {CompanyId}...", tdb.CompanyId);
+                    await SeedTenantAsync(tenant, master, seededPrograms, tdb.CompanyId);
+                }
+
+                await SeedRetentionDefaultsAsync(tenant);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed migrating or seeding tenant database for Company {CompanyId} ({DatabaseName})", tdb.CompanyId, tdb.DatabaseName);
+            }
         }
 
-        logger.LogInformation("Seeding tenant demo data (80 customers, 240 repairs, 220+ transactions)...");
-        await SeedTenantAsync(tenant, master, seededPrograms);
-        await SeedRetentionDefaultsAsync(tenant);
+        // ── Ensure loyalty memberships exist across tenant customers ──
+        try
+        {
+            await SeedMissingLoyaltyAccountsAsync(master, factory, seededPrograms, tenantDatabases, logger);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed seeding loyalty memberships into master database");
+        }
 
         logger.LogInformation("Database seeding completed successfully.");
     }
@@ -112,10 +149,28 @@ public static class DatabaseSeeder
             {
                 CompanyCode = code,
                 CompanyName = "Fixory Computer Repair Services",
+                ContactPhone = "+63 917 555 0192",
+                ContactEmail = "contact@fixoryrepairs.ph",
+                Address = "Unit 102 Gilmore Tech Center, Aurora Blvd",
+                City = "Quezon City",
+                StateOrProvince = "Metro Manila",
+                PostalCode = "1112",
+                Country = "Philippines",
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
             master.Companies.Add(company);
+            await master.SaveChangesAsync();
+        }
+        else if (string.IsNullOrWhiteSpace(company.ContactEmail))
+        {
+            company.ContactPhone = "+63 917 555 0192";
+            company.ContactEmail = "contact@fixoryrepairs.ph";
+            company.Address = "Unit 102 Gilmore Tech Center, Aurora Blvd";
+            company.City = "Quezon City";
+            company.StateOrProvince = "Metro Manila";
+            company.PostalCode = "1112";
+            company.Country = "Philippines";
             await master.SaveChangesAsync();
         }
 
@@ -154,20 +209,75 @@ public static class DatabaseSeeder
             await master.SaveChangesAsync();
         }
 
-        if (!await master.Subscriptions.AnyAsync(s =>
-                s.SubscriptionName == "Fixory Pro" && s.CompanyId == company.CompanyId))
+        // ── Seed Subscription Plans ──
+        if (!await master.Subscriptions.AnyAsync(s => s.SubscriptionName == "Starter Plan"))
         {
             master.Subscriptions.Add(new Subscription
             {
-                CompanyId = company.CompanyId,
-                SubscriptionName = "Fixory Pro",
-                PricePerMonth = 1499.00m,
-                MaxUsers = 25,
-                MaxDevices = 500,
-                StartDate = DateTime.UtcNow.AddDays(-365),
-                EndDate = DateTime.UtcNow.AddDays(365),
+                SubscriptionName = "Starter Plan",
+                PricePerMonth = 999.00m,
+                DurationMonths = 1,
+                Duration = "1 Month",
+                MaxUsers = 5,
+                MaxDevices = 100,
+                EnableMultiBranching = false,
+                Description = "Essential repair intake, customer tracking, and diagnostic ticketing for small repair shops.",
+                BillingCycle = "Monthly",
                 IsActive = true,
-                BillingCycle = "Monthly"
+                IsArchived = false,
+                StartDate = DateTime.UtcNow.AddDays(-30),
+                EndDate = DateTime.UtcNow.AddDays(365),
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+
+        if (!await master.Subscriptions.AnyAsync(s => s.SubscriptionName == "Professional Plan"))
+        {
+            var pro = new Subscription
+            {
+                SubscriptionName = "Professional Plan",
+                PricePerMonth = 2499.00m,
+                DurationMonths = 1,
+                Duration = "1 Month",
+                MaxUsers = 15,
+                MaxDevices = 500,
+                EnableMultiBranching = false,
+                Description = "Full CRM power including automated retention email campaigns, customer loyalty rewards, and PDF exports.",
+                BillingCycle = "Monthly",
+                IsActive = true,
+                IsArchived = false,
+                StartDate = DateTime.UtcNow.AddDays(-30),
+                EndDate = DateTime.UtcNow.AddDays(365),
+                CreatedAt = DateTime.UtcNow
+            };
+            master.Subscriptions.Add(pro);
+            await master.SaveChangesAsync();
+
+            if (company.SubscriptionId == null)
+            {
+                company.SubscriptionId = pro.SubscriptionId;
+                await master.SaveChangesAsync();
+            }
+        }
+
+        if (!await master.Subscriptions.AnyAsync(s => s.SubscriptionName == "Enterprise Multi-Branch"))
+        {
+            master.Subscriptions.Add(new Subscription
+            {
+                SubscriptionName = "Enterprise Multi-Branch",
+                PricePerMonth = 4999.00m,
+                DurationMonths = 12,
+                Duration = "12 Months (Annual)",
+                MaxUsers = 50,
+                MaxDevices = 2500,
+                EnableMultiBranching = true,
+                Description = "Multi-branch store synchronization, unlimited repair technicians, priority database cluster, and custom retention templates.",
+                BillingCycle = "Yearly",
+                IsActive = true,
+                IsArchived = false,
+                StartDate = DateTime.UtcNow.AddDays(-30),
+                EndDate = DateTime.UtcNow.AddDays(365),
+                CreatedAt = DateTime.UtcNow
             });
             await master.SaveChangesAsync();
         }
@@ -289,9 +399,10 @@ public static class DatabaseSeeder
     private static async Task SeedTenantAsync(
         TenantCrmDbContext tenant,
         MasterCrmDbContext master,
-        List<LoyaltyProgram> programs)
+        List<LoyaltyProgram> programs,
+        int companyId = 1)
     {
-        var rng = new Random(2026);
+        var rng = new Random(2026 + companyId);
         var now = DateTime.UtcNow;
 
         // ── Devices ──
@@ -316,7 +427,7 @@ public static class DatabaseSeeder
         {
             devices.Add(new Device
             {
-                CompanyId = 1,
+                CompanyId = companyId,
                 DeviceCode = d.Code,
                 DeviceName = d.Name,
                 DeviceType = d.Type,
@@ -366,15 +477,19 @@ public static class DatabaseSeeder
             else if (roll < 70) joined = now.AddDays(-rng.Next(180, 365));
             else joined = now.AddDays(-rng.Next(365, 700));
 
+            var cities = new[] { "Makati", "Manila", "Pasig", "Quezon City", "Taguig", "Mandaluyong" };
+            var selectedCity = cities[rng.Next(cities.Length)];
             customers.Add(new Customer
             {
                 FirstName = firstNames[i],
                 LastName = lastNames[rng.Next(lastNames.Length)],
                 Email = $"cust{i + 1:D2}@example.com",
                 Phone = $"09{rng.Next(10_000_000, 99_999_999):D8}",
-                Address =
-                    $"{rng.Next(12, 499)} {new[] { "Pearl", "Rizal", "Bonifacio", "Quezon", "Luna", "Mahogany" }[rng.Next(6)]} St., " +
-                    new[] { "Makati", "Manila", "Pasig", "Quezon City", "Taguig", "Mandaluyong" }[rng.Next(6)],
+                Address = $"{rng.Next(12, 499)} {new[] { "Pearl", "Rizal", "Bonifacio", "Quezon", "Luna", "Mahogany" }[rng.Next(6)]} St.",
+                City = selectedCity,
+                StateOrProvince = "Metro Manila",
+                PostalCode = $"{rng.Next(1000, 1800)}",
+                Country = "Philippines",
                 LoyaltyPoints = 0,
                 IsActive = true,
                 CreatedAt = joined
@@ -390,14 +505,14 @@ public static class DatabaseSeeder
 
         // ── Suppliers + parts ──
         var suppliers = new List<Supplier>();
-        var supplierDefs = new (string Code, string Name, string Person, string Num, string Mail)[]
+        var supplierDefs = new (string Code, string Name, string First, string Last, string Num, string Mail, string Street, string City, string Postal)[]
         {
-            ("SUP-01", "LaptopParts PH",   "Andres Lim",  "09171234567", "sales@laptopparts.ph"),
-            ("SUP-02", "BatteryPro Supply", "Marlon Uy",  "09182223344", "orders@batterypro.ph"),
-            ("SUP-03", "ScreenFix Distributor", "Grace Co","09175556677", "gc@screenfix.ph"),
-            ("SUP-04", "PCHub Retail",      "Ben Torres", "09178889900", "ben@pchub.ph"),
-            ("SUP-05", "SSD Mart",          "Cathy Tan",  "09173334455", "sales@ssdmart.ph"),
-            ("SUP-06", "Tech Parts Warehouse","Dino Roa", "09176667788", "dino@techparts.ph")
+            ("SUP-01", "LaptopParts PH",   "Andres", "Lim",    "09171234567", "sales@laptopparts.ph", "Unit 401 Techno Plaza", "Quezon City", "1100"),
+            ("SUP-02", "BatteryPro Supply", "Marlon", "Uy",     "09182223344", "orders@batterypro.ph", "Bldg 2 South Superhighway", "Makati", "1233"),
+            ("SUP-03", "ScreenFix Distributor", "Grace", "Co",  "09175556677", "gc@screenfix.ph", "88 Aurora Blvd", "Quezon City", "1102"),
+            ("SUP-04", "PCHub Retail",      "Ben", "Torres",   "09178889900", "ben@pchub.ph", "Gilmore IT Center", "Quezon City", "1112"),
+            ("SUP-05", "SSD Mart",          "Cathy", "Tan",    "09173334455", "sales@ssdmart.ph", "15 Shaw Blvd", "Mandaluyong", "1550"),
+            ("SUP-06", "Tech Parts Warehouse","Dino", "Roa",   "09176667788", "dino@techparts.ph", "Warehouse 5, Pasig Industrial", "Pasig", "1600")
         };
         foreach (var s in supplierDefs)
         {
@@ -405,16 +520,22 @@ public static class DatabaseSeeder
             {
                 SupplierCode = s.Code,
                 SupplierName = s.Name,
-                ContactPerson = s.Person,
+                ContactFirstName = s.First,
+                ContactLastName = s.Last,
                 ContactNumber = s.Num,
                 EmailAddress = s.Mail,
-                Address = $"{s.Code} Warehouse, Lagro, Quezon City",
+                Address = s.Street,
+                City = s.City,
+                StateOrProvince = "Metro Manila",
+                PostalCode = s.Postal,
+                Country = "Philippines",
                 Notes = "Recommended supplier",
                 IsActive = true,
                 CreatedAt = now
             });
         }
         tenant.Suppliers.AddRange(suppliers);
+        await tenant.SaveChangesAsync();
 
         var parts = new List<Part>();
         var partDefs = new (string Code, string Name, string Category, string Mfr, decimal Cost, decimal Price)[]
@@ -453,6 +574,7 @@ public static class DatabaseSeeder
             });
         }
         tenant.Parts.AddRange(parts);
+        await tenant.SaveChangesAsync();
 
         // ── Repair requests (240) over ~12 months ──
         var serviceModels = new[]
@@ -743,7 +865,7 @@ public static class DatabaseSeeder
                     _ => false
                 };
 
-                if (qualifies && rng.NextDouble() < 0.15)
+                if (qualifies && rng.NextDouble() < 0.40)
                 {
                     enrolled.Add(new CustomerLoyaltyAccount
                     {
@@ -752,7 +874,7 @@ public static class DatabaseSeeder
                         Points = Math.Max(50, cust.LoyaltyPoints ?? 0),
                         TotalSpent = spent,
                         JoinedDate = cust.CreatedAt.AddDays(rng.Next(5, 60)),
-                        IsActive = rng.NextDouble() > 0.1
+                        IsActive = rng.NextDouble() > 0.08
                     });
                 }
             }
@@ -760,10 +882,16 @@ public static class DatabaseSeeder
 
         if (enrolled.Count > 0)
         {
-            var existingAccountIds = await master.CustomerLoyaltyAccounts
-                .Select(a => a.CustomerLoyaltyAccountId)
-                .ToListAsync();
-            var newAccounts = enrolled.Where(a => !existingAccountIds.Contains(a.CustomerLoyaltyAccountId)).ToList();
+            var existingPairs = (await master.CustomerLoyaltyAccounts
+                .Select(a => new { a.CustomerId, a.LoyaltyProgramId })
+                .ToListAsync())
+                .Select(x => $"{x.CustomerId}_{x.LoyaltyProgramId}")
+                .ToHashSet();
+
+            var newAccounts = enrolled
+                .Where(a => !existingPairs.Contains($"{a.CustomerId}_{a.LoyaltyProgramId}"))
+                .ToList();
+
             if (newAccounts.Count > 0)
             {
                 master.CustomerLoyaltyAccounts.AddRange(newAccounts);
@@ -854,7 +982,7 @@ public static class DatabaseSeeder
         // ── 3. Sample Requests (if none exist) ──
         if (!await tenant.RetentionRequests.AnyAsync())
         {
-            var customers = await tenant.Customers.Take(4).ToListAsync();
+            var customers = await tenant.Customers.Take(10).ToListAsync();
             if (customers.Count >= 3)
             {
                 var req1 = new RetentionRequest
@@ -906,10 +1034,11 @@ public static class DatabaseSeeder
                     DiscountPercent = 15m,
                     PromoCode = "FIXORY-VIP-7821",
                     ValidUntil = DateTime.UtcNow.AddDays(10),
-                    IsDispatched = false,
+                    IsDispatched = true,
+                    DispatchedAt = DateTime.UtcNow.AddDays(-4),
                     IsAutomated = true,
                     CreatedAt = DateTime.UtcNow.AddDays(-4),
-                    DeliveryStatus = "Pending"
+                    DeliveryStatus = "Delivered"
                 };
 
                 var req3 = new RetentionRequest
@@ -933,10 +1062,200 @@ public static class DatabaseSeeder
                     AddedToCampaign = false
                 };
 
-                tenant.RetentionRequests.AddRange(req1, req2, req3);
-                tenant.RetentionEmailLogs.Add(log2);
+                var requests = new List<RetentionRequest> { req1, req2, req3 };
+                var logs = new List<RetentionEmailLog> { log2 };
+
+                if (customers.Count >= 6)
+                {
+                    var req4 = new RetentionRequest
+                    {
+                        CustomerId = customers[3].CustomerId,
+                        TargetSegment = RetentionSegment.Returning,
+                        ActionType = "Discount",
+                        ProposedDiscountPercent = 10m,
+                        RetentionDetails = "Regular customer due for periodic laptop thermal paste and dust cleanout service.",
+                        ReasonCategory = "Increase Customer Lifetime Value",
+                        ReasonNote = "Frequent repair history with high satisfaction rating.",
+                        Status = RetentionRequestStatus.Approved,
+                        SubmittedByUserId = "manager",
+                        SubmittedByName = "Manager User",
+                        SubmittedAt = DateTime.UtcNow.AddDays(-3),
+                        ReviewedByUserId = "admin",
+                        ReviewedByName = "Admin User",
+                        ReviewedAt = DateTime.UtcNow.AddDays(-2),
+                        ReviewRemarks = "Standard 10% preventative maintenance promotion approved.",
+                        AddedToCampaign = true,
+                        CampaignAddedAt = DateTime.UtcNow.AddDays(-2)
+                    };
+
+                    var log4 = new RetentionEmailLog
+                    {
+                        RetentionRequest = req4,
+                        CustomerId = customers[3].CustomerId,
+                        RecipientName = $"{customers[3].FirstName} {customers[3].LastName}".Trim(),
+                        RecipientEmail = customers[3].Email ?? "customer3@fixorycrm.local",
+                        Subject = "Keep Your Laptop Running Cool — 10% Off Tune-up",
+                        FormattedBody = "<p>Dear " + customers[3].FirstName + ",</p><p>Bring in your computer for a quick maintenance checkup and receive <strong>10% off</strong> using code <strong>COOL-TUNE-10</strong>.</p>",
+                        Segment = RetentionSegment.Returning,
+                        DiscountPercent = 10m,
+                        PromoCode = "COOL-TUNE-10",
+                        ValidUntil = DateTime.UtcNow.AddDays(12),
+                        IsDispatched = true,
+                        DispatchedAt = DateTime.UtcNow.AddDays(-2),
+                        IsAutomated = true,
+                        CreatedAt = DateTime.UtcNow.AddDays(-2),
+                        DeliveryStatus = "Sent"
+                    };
+
+                    var req5 = new RetentionRequest
+                    {
+                        CustomerId = customers[4].CustomerId,
+                        TargetSegment = RetentionSegment.New,
+                        ActionType = "Discount",
+                        ProposedDiscountPercent = 5m,
+                        RetentionDetails = "First-time visitor welcome discount voucher for accessory purchases or future service.",
+                        ReasonCategory = "Build Customer Loyalty",
+                        ReasonNote = "Welcome onboarding package.",
+                        Status = RetentionRequestStatus.Pending,
+                        SubmittedByUserId = "staff",
+                        SubmittedByName = "Staff User",
+                        SubmittedAt = DateTime.UtcNow.AddDays(-1),
+                        AddedToCampaign = false
+                    };
+
+                    var req6 = new RetentionRequest
+                    {
+                        CustomerId = customers[5].CustomerId,
+                        TargetSegment = RetentionSegment.Inactive,
+                        ActionType = "Discount",
+                        ProposedDiscountPercent = 15m,
+                        RetentionDetails = "Lapsed client from last quarter. Offer comprehensive diagnostic to re-engage.",
+                        ReasonCategory = "Prevent Customer Churn",
+                        ReasonNote = "High previous spend, win-back opportunity.",
+                        Status = RetentionRequestStatus.Approved,
+                        SubmittedByUserId = "manager",
+                        SubmittedByName = "Manager User",
+                        SubmittedAt = DateTime.UtcNow.AddDays(-1),
+                        ReviewedByUserId = "admin",
+                        ReviewedByName = "Admin User",
+                        ReviewedAt = DateTime.UtcNow,
+                        ReviewRemarks = "Approved for automatic dispatch.",
+                        AddedToCampaign = true,
+                        CampaignAddedAt = DateTime.UtcNow
+                    };
+
+                    var log6 = new RetentionEmailLog
+                    {
+                        RetentionRequest = req6,
+                        CustomerId = customers[5].CustomerId,
+                        RecipientName = $"{customers[5].FirstName} {customers[5].LastName}".Trim(),
+                        RecipientEmail = customers[5].Email ?? "customer5@fixorycrm.local",
+                        Subject = "We Miss You at Fixory — 15% Off Your Next Computer Repair",
+                        FormattedBody = "<p>Dear " + customers[5].FirstName + ",</p><p>We would love to see you back. Enjoy <strong>15% off</strong> with code <strong>COMEBACK-15</strong>.</p>",
+                        Segment = RetentionSegment.Inactive,
+                        DiscountPercent = 15m,
+                        PromoCode = "COMEBACK-15",
+                        ValidUntil = DateTime.UtcNow.AddDays(14),
+                        IsDispatched = false,
+                        IsAutomated = true,
+                        CreatedAt = DateTime.UtcNow,
+                        DeliveryStatus = "Pending"
+                    };
+
+                    requests.AddRange(new[] { req4, req5, req6 });
+                    logs.AddRange(new[] { log4, log6 });
+                }
+
+                tenant.RetentionRequests.AddRange(requests);
+                tenant.RetentionEmailLogs.AddRange(logs);
                 await tenant.SaveChangesAsync();
             }
+        }
+    }
+
+    private static async Task SeedMissingLoyaltyAccountsAsync(
+        MasterCrmDbContext master,
+        ITenantDbContextFactory factory,
+        List<LoyaltyProgram> programs,
+        List<CompanyDatabase> tenantDatabases,
+        ILogger logger)
+    {
+        if (programs.Count == 0) return;
+
+        var existingPairs = (await master.CustomerLoyaltyAccounts
+            .Select(a => new { a.CustomerId, a.LoyaltyProgramId })
+            .ToListAsync())
+            .Select(x => $"{x.CustomerId}_{x.LoyaltyProgramId}")
+            .ToHashSet();
+
+        var toAdd = new List<CustomerLoyaltyAccount>();
+
+        foreach (var tdb in tenantDatabases)
+        {
+            try
+            {
+                await using var tenant = await factory.CreateAsync(tdb.CompanyId);
+                var customers = await tenant.Customers.AsNoTracking().ToListAsync();
+                if (customers.Count == 0) continue;
+
+                var repairs = await tenant.RepairRequests.AsNoTracking().ToListAsync();
+                var payments = await tenant.Payments.AsNoTracking()
+                    .Where(p => p.IsPaid && !p.IsVoid)
+                    .ToListAsync();
+
+                var rng = new Random(3000 + tdb.CompanyId);
+
+                foreach (var program in programs)
+                {
+                    foreach (var cust in customers)
+                    {
+                        if (existingPairs.Contains($"{cust.CustomerId}_{program.LoyaltyProgramId}"))
+                            continue;
+
+                        var completed = repairs.Count(r =>
+                            r.CustomerId == cust.CustomerId && r.Status == RepairStatus.Completed);
+                        var spent = payments
+                            .Where(p => p.RepairRequestId != 0 &&
+                                        repairs.Any(r => r.RepairRequestId == p.RepairRequestId &&
+                                                         r.CustomerId == cust.CustomerId))
+                            .Sum(p => p.Amount);
+
+                        bool qualifies = program.ProgramName switch
+                        {
+                            "Fixory Rewards Club" => completed >= 2 && spent >= 1000,
+                            "VIP Service Club" => completed >= 4 && spent >= 5000,
+                            "Monthly Visitor Boost" => completed >= 1 && spent >= 300,
+                            _ => completed >= 1
+                        };
+
+                        if (qualifies && rng.NextDouble() < 0.40)
+                        {
+                            var account = new CustomerLoyaltyAccount
+                            {
+                                CustomerId = cust.CustomerId,
+                                LoyaltyProgramId = program.LoyaltyProgramId,
+                                Points = Math.Max(50, cust.LoyaltyPoints ?? (completed * 40)),
+                                TotalSpent = spent,
+                                JoinedDate = cust.CreatedAt.AddDays(rng.Next(5, 60)),
+                                IsActive = true
+                            };
+                            toAdd.Add(account);
+                            existingPairs.Add($"{cust.CustomerId}_{program.LoyaltyProgramId}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not seed loyalty accounts for company {CompanyId}", tdb.CompanyId);
+            }
+        }
+
+        if (toAdd.Count > 0)
+        {
+            master.CustomerLoyaltyAccounts.AddRange(toAdd);
+            await master.SaveChangesAsync();
+            logger.LogInformation("Seeded {Count} loyalty memberships into master database.", toAdd.Count);
         }
     }
 }

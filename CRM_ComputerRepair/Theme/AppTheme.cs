@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 
 namespace CRM.winforms
 {
@@ -54,6 +54,21 @@ namespace CRM.winforms
         public static readonly Color Danger           = Color.FromArgb(220, 38, 38);
         public static readonly Color DangerSoft         = Color.FromArgb(254, 242, 242);
         public static readonly Color Neutral            = Color.FromArgb(245, 246, 249);
+        public static readonly Color Info             = Color.FromArgb(37, 99, 235);
+        public static readonly Color InfoSoft         = Color.FromArgb(239, 246, 255);
+
+        // ═══════════ SAAS / HCI TOKENS ═══════════
+        // Single source for focus, overlays and non-blocking feedback.
+        // HCI rationale (Nielsen): focus must always be visible (H1), feedback
+        // must not block flow (H1/H9) — toasts over MessageBox for success/info,
+        // dialogs only for destructive / irreversible actions.
+        public static readonly Color FocusRing        = Color.FromArgb(165, 180, 252); // indigo-300, 2px outer ring
+        public static readonly Color OverlayDim       = Color.FromArgb(110, 17, 24, 39); // scrim behind modals/palette
+        public static readonly Color ToastText        = Color.FromArgb(17, 20, 32);
+        public static readonly Color ToastBorder      = Color.FromArgb(235, 236, 242);
+        public static readonly Color SearchHintBg     = Color.FromArgb(247, 247, 250);
+        public static readonly Color KbdBg            = Color.FromArgb(245, 246, 249);
+        public static readonly Color KbdBorder        = Color.FromArgb(218, 220, 228);
 
         // ═══════════ STAT TILE COLORS (soft pastel bg + matched-weight fg) ═══════════
         public static readonly Color TilePinkBg        = Color.FromArgb(255, 240, 245);
@@ -66,25 +81,35 @@ namespace CRM.winforms
         public static readonly Color TilePurpleFg             = Color.FromArgb(126, 34, 206);
 
         // ═══════════ FONTS ═══════════
-        // Size contrast carries more of the "modern" feel here than family
-        // choice — a bigger jump between title/number and body text reads
-        // as current dashboard typography (Linear, Stripe).
-        public static readonly Font FontDisplay        = new Font("Segoe UI Semibold", 22F);
-        public static readonly Font FontTitle           = new Font("Segoe UI Semibold", 17F);
-        public static readonly Font FontSection          = new Font("Segoe UI Semibold", 11.5F);
-        public static readonly Font FontSubtitle          = new Font("Segoe UI", 9.5F);
-        public static readonly Font FontLabel               = new Font("Segoe UI", 8F);
-        public static readonly Font FontInput                = new Font("Segoe UI", 9.5F);
-        public static readonly Font FontButton                 = new Font("Segoe UI Semibold", 9F);
-        public static readonly Font FontBody                    = new Font("Segoe UI", 9F);
-        public static readonly Font FontStatus                   = new Font("Segoe UI", 8F);
-        public static readonly Font FontSidebar                   = new Font("Segoe UI", 9.5F);
-        public static readonly Font FontSidebarActive               = new Font("Segoe UI Semibold", 9.5F);
-        public static readonly Font FontBrand                        = new Font("Segoe UI Semibold", 13.5F);
-        public static readonly Font FontStatNumber                     = new Font("Segoe UI Semibold", 24F);
-        public static readonly Font FontStatLabel                        = new Font("Segoe UI", 8.5F);
-        public static readonly Font FontStatDelta                          = new Font("Segoe UI Semibold", 8F);
-        public static readonly Font FontError                                = new Font("Segoe UI", 7.5F);
+        // One family (Inter via AppFonts) everywhere; hierarchy is carried
+        // by size + weight. Strong == old "Segoe UI Semibold" slots.
+        public static readonly Font FontDisplay        = AppFonts.Strong(22F);
+        public static readonly Font FontTitle           = AppFonts.Strong(17F);
+        public static readonly Font FontPageTitle       = AppFonts.Strong(15F);
+        public static readonly Font FontPageSubtitle    = AppFonts.Regular(9.5F);
+        public static readonly Font FontBreadcrumb      = AppFonts.Regular(8F);
+        public static readonly Font FontKbd             = AppFonts.Strong(7.5F);
+        public static readonly Font FontToastTitle      = AppFonts.Strong(9F);
+        public static readonly Font FontToastBody       = AppFonts.Regular(8.5F);
+        public static readonly Font FontSection          = AppFonts.Strong(11.5F);
+        public static readonly Font FontSubtitle          = AppFonts.Regular(9.5F);
+        public static readonly Font FontLabel               = AppFonts.Regular(8F);
+        public static readonly Font FontInput                = AppFonts.Regular(9.5F);
+        public static readonly Font FontButton                 = AppFonts.Strong(9F);
+        public static readonly Font FontBody                    = AppFonts.Regular(9F);
+        public static readonly Font FontMedium                  = AppFonts.Strong(10.5F);
+        public static readonly Font FontSmall                   = AppFonts.Regular(8.5F);
+        public static readonly Font FontSmallStrong             = AppFonts.Strong(8.5F);
+        public static readonly Font FontMicro                   = AppFonts.Regular(7.5F);
+        public static readonly Font FontMicroStrong             = AppFonts.Strong(7.5F);
+        public static readonly Font FontStatus                   = AppFonts.Regular(8F);
+        public static readonly Font FontSidebar                   = AppFonts.Regular(9.5F);
+        public static readonly Font FontSidebarActive               = AppFonts.Strong(9.5F);
+        public static readonly Font FontBrand                        = AppFonts.Strong(13.5F);
+        public static readonly Font FontStatNumber                     = AppFonts.Strong(24F);
+        public static readonly Font FontStatLabel                        = AppFonts.Regular(8.5F);
+        public static readonly Font FontStatDelta                          = AppFonts.Strong(8F);
+        public static readonly Font FontError                                = AppFonts.Regular(7.5F);
 
         // ═══════════ RADIUS ═══════════
         // Larger, softer corners across the board — one of the clearest

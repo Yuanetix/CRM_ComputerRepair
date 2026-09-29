@@ -1,4 +1,5 @@
 using CRM.winforms.Auth;
+using CRM.winforms.Common;
 
 namespace CRM.winforms
 {
@@ -7,6 +8,8 @@ namespace CRM.winforms
         [STAThread]
         static void Main()
         {
+            AppFonts.EnsureLoaded();
+            WindowsFontResolver.EnsureRegistered();
             ApplicationConfiguration.Initialize();
 
             // Login → main shell → (logout) → login → main shell → ...

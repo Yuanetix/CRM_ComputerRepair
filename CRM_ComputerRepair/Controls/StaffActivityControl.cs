@@ -246,7 +246,7 @@ namespace CRM.winforms
             g.MultiSelect = false;
             g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            g.ScrollBars = ScrollBars.Vertical;
+            g.ScrollBars = ScrollBars.Both;
 
             g.RowTemplate.Height = UiKit.T.RowHeight;
             g.ColumnHeadersHeight = UiKit.T.HeaderHeight;
@@ -264,7 +264,8 @@ namespace CRM.winforms
             g.DefaultCellStyle.Font = UiKit.T.Body;
             g.DefaultCellStyle.SelectionBackColor = UiKit.Wash(AppTheme.Primary);
             g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
-            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
+            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 6, UiKit.T.S3, 6);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         }
 
         private void ConfigureColumns()
@@ -277,8 +278,9 @@ namespace CRM.winforms
                 "OldStatusText", "NewStatusText"
             })
             {
-                if (dgv.Columns[hidden] != null)
-                    dgv.Columns[hidden].Visible = false;
+                var hCol = dgv.Columns[hidden];
+                if (hCol != null)
+                    hCol.Visible = false;
             }
 
             void Setup(string name, string header, int width, int displayIndex, bool fill = false)
@@ -302,11 +304,13 @@ namespace CRM.winforms
             Setup("DeviceModel", "Device", 0, 3, fill: true);
             Setup("ChangeDisplay", "Change", 220, 4);
 
-            if (dgv.Columns["ChangeDisplay"] != null)
-                dgv.Columns["ChangeDisplay"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
+            var cChange = dgv.Columns["ChangeDisplay"];
+            if (cChange != null)
+                cChange.DefaultCellStyle.Font = UiKit.T.BodyStrong;
 
-            if (dgv.Columns["RequestNumber"] != null)
-                dgv.Columns["RequestNumber"].DefaultCellStyle.Font = UiKit.T.BodyStrong;
+            var cReq = dgv.Columns["RequestNumber"];
+            if (cReq != null)
+                cReq.DefaultCellStyle.Font = UiKit.T.BodyStrong;
         }
 
         // ═══════════ NESTED UI ═══════════

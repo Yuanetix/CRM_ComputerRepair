@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -27,6 +27,34 @@ namespace CRM.winforms
         public static Color AccentHover => AppTheme.PrimaryHover;
         public static Color AccentActive => AppTheme.PrimaryActive;
         public static Color Danger => AppTheme.Danger;
+        public static Color Success => AppTheme.Success;
+        public static Color Warning => AppTheme.Warning;
+        public static Color Info => AppTheme.Info;
+
+        /// <summary>
+        /// SaaS status → (foreground, background) pair. One device per status:
+        /// soft pill, never a solid block. Used by grids, toasts and badges.
+        /// </summary>
+        public static (Color Fg, Color Bg) StatusColors(string? status)
+        {
+            var s = (status ?? "").Trim().ToLowerInvariant();
+            if (s.Contains("active") || s.Contains("complete") || s.Contains("closed")
+                || s.Contains("paid") || s.Contains("success") || s.Contains("resolve")
+                || s.Contains("low"))
+                return (AppTheme.Success, AppTheme.SuccessSoft);
+            if (s.Contains("pending") || s.Contains("open") || s.Contains("progress")
+                || s.Contains("warn") || s.Contains("idle") || s.Contains("risk")
+                || s.Contains("high") || s.Contains("due today") || s.Contains("scheduled"))
+                return (AppTheme.Warning, AppTheme.WarningSoft);
+            if (s.Contains("fail") || s.Contains("error") || s.Contains("danger")
+                || s.Contains("archived") || s.Contains("void") || s.Contains("overdue")
+                || s.Contains("urgent") || s.Contains("critical") || s.Contains("reject"))
+                return (AppTheme.Danger, AppTheme.DangerSoft);
+            if (s.Contains("info") || s.Contains("new") || s.Contains("draft")
+                || s.Contains("medium") || s.Contains("approv"))
+                return (AppTheme.Info, AppTheme.InfoSoft);
+            return (InkMuted, AppTheme.Neutral);
+        }
 
         // ═══════════ SPACE (4pt scale) ═══════════
 
@@ -44,13 +72,16 @@ namespace CRM.winforms
 
         // ═══════════ TYPE (one family, hierarchy by size + weight) ═══════════
 
-        public static readonly Font Brand = new Font("Segoe UI Semibold", 13.5F);
-        public static readonly Font Title = new Font("Segoe UI Semibold", 13F);
-        public static readonly Font Body = new Font("Segoe UI", 9.5F);
-        public static readonly Font BodyStrong = new Font("Segoe UI Semibold", 9.5F);
-        public static readonly Font Small = new Font("Segoe UI", 8.75F);
-        public static readonly Font SmallStrong = new Font("Segoe UI Semibold", 8.5F);
-        public static readonly Font Micro = new Font("Segoe UI", 8F);
+        public static readonly Font Brand = AppFonts.Strong(13.5F);
+        public static readonly Font Title = AppFonts.Strong(13F);
+        public static readonly Font Section = AppFonts.Strong(11.5F);
+        public static readonly Font Subtitle = AppFonts.Regular(9.5F);
+        public static readonly Font Body = AppFonts.Regular(9.5F);
+        public static readonly Font BodyStrong = AppFonts.Strong(9.5F);
+        public static readonly Font Small = AppFonts.Regular(8.75F);
+        public static readonly Font SmallStrong = AppFonts.Strong(8.5F);
+        public static readonly Font Micro = AppFonts.Regular(8F);
+        public static readonly Font MicroStrong = AppFonts.Strong(8F);
 
         // ═══════════ PAINT ═══════════
 
@@ -99,6 +130,38 @@ namespace CRM.winforms
             g.DrawPath(pen, p);
         }
 
+        /// <summary>
+        /// SaaS focus ring — 2px outer ring in FocusRing colour. HCI: keyboard
+        /// focus must always be visible (WCAG 2.4.7). Call after painting bg.
+        /// </summary>
+        public static void FocusRing(Graphics g, Rectangle r, int radius)
+        {
+            var ring = new Rectangle(r.X + 1, r.Y + 1, r.Width - 3, r.Height - 3);
+            StrokeRounded(g, ring, radius, AppTheme.FocusRing, 2f);
+        }
+
+        /// <summary>Soft SaaS elevation: tinted shadow + hairline. Cheap, no layered paths.</summary>
+        public static void Elevation(Graphics g, Rectangle body, int radius)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                var sh = body;
+                sh.Inflate(i * 2, i * 2);
+                sh.Offset(0, 1);
+                using var p = Rounded(sh, radius + i);
+                using var b = new SolidBrush(Color.FromArgb(8 + i * 4, 30, 41, 59));
+                g.FillPath(b, p);
+            }
+        }
+
+        /// <summary>Draws a "Ctrl K" style kbd hint.</summary>
+        public static void KbdHint(Graphics g, Rectangle r, string text)
+        {
+            FillRounded(g, r, 4, AppTheme.KbdBg);
+            StrokeRounded(g, r, 4, AppTheme.KbdBorder, 1f);
+            Text(g, text, AppTheme.FontKbd, InkMuted, r, Center);
+        }
+
         /// <summary>Flat white card with a 1px hairline. No shadow.</summary>
         public static void Card(Graphics g, Rectangle r, int radius, Color fill, Color border)
         {
@@ -130,16 +193,19 @@ namespace CRM.winforms
 
         public static void Text(Graphics g, string text, Font font, Color color,
                                 Rectangle bounds, TextFormatFlags flags)
-            => TextRenderer.DrawText(g, text, font, bounds, color, flags);
+            => TextRenderer.DrawText(g, text, font, bounds, color, flags | TextFormatFlags.NoPrefix);
 
         public static Size Measure(string text, Font font)
             => TextRenderer.MeasureText(text, font);
 
         public const TextFormatFlags Left =
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis;
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix;
+
+        public const TextFormatFlags LeftWrap =
+            TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix;
 
         public const TextFormatFlags Center =
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter;
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix;
 
         /// <summary>Glyph font, falling back to Segoe UI Symbol where MDL2 is missing.</summary>
         public static Font GlyphFont(float size)
@@ -186,18 +252,18 @@ namespace CRM.winforms
             public const int StripHeight = 86;
             public const int InputHeight = 34;
             public const int ButtonHeight = 36;
-            public const int RowHeight = 46;
-            public const int HeaderHeight = 38;
+            public const int RowHeight = 52;
+            public const int HeaderHeight = 42;
 
             // Type — one family, hierarchy carried by size and weight
-            public static readonly Font Title = new Font("Segoe UI Semibold", 16.5F);
-            public static readonly Font Subtitle = new Font("Segoe UI", 9.5F);
-            public static readonly Font Section = new Font("Segoe UI Semibold", 11F);
-            public static readonly Font Body = new Font("Segoe UI", 9.5F);
-            public static readonly Font BodyStrong = new Font("Segoe UI Semibold", 9.5F);
-            public static readonly Font Small = new Font("Segoe UI", 8.75F);
-            public static readonly Font SmallStrong = new Font("Segoe UI Semibold", 8.5F);
-            public static readonly Font Metric = new Font("Segoe UI Light", 25F);
+            public static readonly Font Title = AppFonts.Strong(16.5F);
+            public static readonly Font Subtitle = AppFonts.Regular(9.5F);
+            public static readonly Font Section = AppFonts.Strong(11F);
+            public static readonly Font Body = AppFonts.Regular(9.5F);
+            public static readonly Font BodyStrong = AppFonts.Strong(9.5F);
+            public static readonly Font Small = AppFonts.Regular(8.75F);
+            public static readonly Font SmallStrong = AppFonts.Strong(8.5F);
+            public static readonly Font Metric = AppFonts.Regular(25F);
             public static readonly Font Glyph = new Font("Segoe MDL2 Assets", 11F);
             public static readonly Font GlyphLarge = new Font("Segoe MDL2 Assets", 22F);
         }

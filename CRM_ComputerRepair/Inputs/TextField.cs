@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -21,13 +21,13 @@ namespace CRM.winforms
         {
             DoubleBuffered = true;
             BackColor = AppTheme.Surface;
-            Height = 38;
+            Height = AppTheme.InputHeight + 2;
             Padding = new Padding(12, 0, 12, 0);
 
             _inner = new TextBox
             {
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9.5F),
+                Font = AppTheme.FontInput,
                 ForeColor = AppTheme.TextPrimary,
                 BackColor = AppTheme.Surface
             };
@@ -37,18 +37,31 @@ namespace CRM.winforms
             _inner.TextChanged += (s, e) => OnTextChanged(EventArgs.Empty);
 
             Controls.Add(_inner);
+            Click += (s, e) => _inner.Focus();
+            MouseDown += (s, e) => _inner.Focus();
             Resize += (s, e) => LayoutInner();
+            EnabledChanged += (s, e) => SyncEnabled();
             LayoutInner();
+        }
+
+        private void SyncEnabled()
+        {
+            _inner.Enabled = Enabled;
+            BackColor = Enabled ? AppTheme.Surface : AppTheme.Neutral;
+            _inner.BackColor = Enabled ? AppTheme.Surface : AppTheme.Neutral;
+            _inner.ForeColor = Enabled ? AppTheme.TextPrimary : AppTheme.TextMuted;
+            Invalidate();
         }
 
         // ═══════════ PROPERTIES ═══════════
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         [Browsable(false)]
+        [System.Diagnostics.CodeAnalysis.AllowNull]
         public override string Text
         {
             get => _inner.Text;
-            set => _inner.Text = value;
+            set => _inner.Text = value ?? "";
         }
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -73,6 +86,22 @@ namespace CRM.winforms
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         [Browsable(false)]
+        public bool IsPassword
+        {
+            get => _inner.UseSystemPasswordChar;
+            set => _inner.UseSystemPasswordChar = value;
+        }
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        [Browsable(false)]
+        public bool UseSystemPasswordChar
+        {
+            get => _inner.UseSystemPasswordChar;
+            set => _inner.UseSystemPasswordChar = value;
+        }
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        [Browsable(false)]
         public bool Multiline
         {
             get => _inner.Multiline;
@@ -85,6 +114,19 @@ namespace CRM.winforms
         }
 
         public new void Focus() => _inner.Focus();
+
+        protected override void OnPaddingChanged(EventArgs e)
+        {
+            base.OnPaddingChanged(e);
+            LayoutInner();
+        }
+
+        protected override void OnFontChanged(EventArgs e)
+        {
+            base.OnFontChanged(e);
+            if (_inner != null) _inner.Font = Font;
+            LayoutInner();
+        }
 
         // ═══════════ LAYOUT ═══════════
 
@@ -107,8 +149,8 @@ namespace CRM.winforms
             }
             else
             {
-                textH = _inner.PreferredHeight;
-                textY = (Height - textH) / 2;
+                textH = Math.Max(_inner.PreferredHeight, _inner.Font.Height + 4);
+                textY = Math.Max(2, (Height - textH) / 2);
             }
 
             _inner.Location = new Point(textX, textY);
@@ -120,24 +162,31 @@ namespace CRM.winforms
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            UiKit.Quality(g);
 
             var rect = new Rectangle(0, 0, Width - 1, Height - 1);
 
-            Color bg = _hasError ? AppTheme.DangerSoft : AppTheme.Surface;
+            Color bg = _hasError ? AppTheme.DangerSoft
+                     : !Enabled ? AppTheme.Neutral
+                     : AppTheme.Surface;
 
-            using (var path = GetRoundedPath(rect, 8))
+            using (var path = UiKit.Rounded(rect, UiKit.RadiusSm))
             using (var brush = new SolidBrush(bg))
                 g.FillPath(brush, path);
 
             Color borderColor =
                 _hasError ? AppTheme.Danger :
-                _isFocused ? AppTheme.Primary :
-                Color.FromArgb(218, 220, 228);
+                _isFocused ? AppTheme.BorderFocus :
+                !Enabled ? AppTheme.Border :
+                AppTheme.BorderStrong;
 
-            using (var path = GetRoundedPath(rect, 8))
-            using (var pen = new Pen(borderColor, _isFocused ? 1.6f : 1f))
+            using (var path = UiKit.Rounded(rect, UiKit.RadiusSm))
+            using (var pen = new Pen(borderColor, _isFocused && !_hasError ? 1.6f : 1f))
                 g.DrawPath(pen, path);
+
+            // SaaS focus ring — keyboard users always see where they are (WCAG 2.4.7).
+            if (_isFocused && !_hasError && Enabled)
+                UiKit.FocusRing(g, rect, UiKit.RadiusSm);
         }
 
         private static GraphicsPath GetRoundedPath(Rectangle rect, int radius)

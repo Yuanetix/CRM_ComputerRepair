@@ -16,8 +16,6 @@ namespace CRM.winforms
         private readonly UserSummaryDto? _editing;
         private readonly bool _isEditMode;
 
-        private Label lblSubtitle = null!;
-
         private Label lblUsername = null!;
         private Label lblEmail = null!;
         private Label lblPassword = null!;
@@ -39,8 +37,8 @@ namespace CRM.winforms
         private Label lblErrorFirst = null!;
         private Label lblErrorLast = null!;
 
-        private Button btnSave = null!;
-        private Button btnCancel = null!;
+        private SaasButton btnSave = null!;
+        private SaasButton btnCancel = null!;
 
         public UserFormDialog(UserSummaryDto? existing)
         {
@@ -49,12 +47,15 @@ namespace CRM.winforms
 
             BuildCard(
                 _isEditMode ? "Edit User" : "Add User",
-                width: 560,
-                height: _isEditMode ? 660 : 720);
+                _isEditMode
+                    ? "Update this user's details, active status, or role."
+                    : "Create a new user account with an assigned system role.",
+                width: 580,
+                height: _isEditMode ? 560 : 620);
 
             BuildContent();
 
-            Shown += (s, e) => inpFirstName.Focus();
+            Shown += (s, e) => inpUsername.Focus();
         }
 
         private void BuildContent()
@@ -64,105 +65,86 @@ namespace CRM.winforms
             int y = ContentTopY;
             int halfW = (w - 12) / 2;
 
-            // ─── Subtitle ───
-            lblSubtitle = new Label
-            {
-                Text = _isEditMode
-                    ? "Update this user's details or role."
-                    : "Create a new user account with a role.",
-                Font = AppTheme.FontSubtitle,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(w, 20)
-            };
-            pnlCard.Controls.Add(lblSubtitle);
-            y += 32;
-
             // ─── Username + Email ───
-            lblUsername = MakeLabel("Username *", x, y);
-            lblEmail = MakeLabel("Email *", x + halfW + 12, y);
+            lblUsername = ModalKit.MakeLabel(pnlBody, "Username *", x, y);
+            lblEmail = ModalKit.MakeLabel(pnlBody, "Email *", x + halfW + 12, y);
             y += 20;
 
-            inpUsername = MakeField(x, y, halfW, "e.g. jdoe");
-            inpEmail = MakeField(x + halfW + 12, y, halfW, "name@example.com");
+            inpUsername = ModalKit.MakeField(pnlBody, x, y, halfW, "e.g. jdoe");
+            inpUsername.Height = 36;
+            inpEmail = ModalKit.MakeField(pnlBody, x + halfW + 12, y, halfW, "name@example.com");
+            inpEmail.Height = 36;
             y += 38 + 4;
 
-            lblErrorUsername = MakeErrorLabel(x, y);
-            lblErrorEmail = MakeErrorLabel(x + halfW + 12, y);
+            lblErrorUsername = ModalKit.MakeErrorLabel(pnlBody, x, y);
+            lblErrorEmail = ModalKit.MakeErrorLabel(pnlBody, x + halfW + 12, y);
             y += 20;
 
             // ─── Password (create mode only) ───
             if (!_isEditMode)
             {
-                lblPassword = MakeLabel("Password * (min 6 characters)", x, y);
+                lblPassword = ModalKit.MakeLabel(pnlBody, "Password * (min 6 characters)", x, y);
                 y += 20;
 
-                inpPassword = MakeField(x, y, w, "••••••");
+                inpPassword = ModalKit.MakeField(pnlBody, x, y, w, "••••••");
+                inpPassword.Height = 36;
                 inpPassword.InnerTextBox.UseSystemPasswordChar = true;
                 y += 38 + 4;
 
-                lblErrorPassword = MakeErrorLabel(x, y);
+                lblErrorPassword = ModalKit.MakeErrorLabel(pnlBody, x, y);
                 y += 20;
             }
 
             // ─── First + Last name ───
-            lblFirstName = MakeLabel("First name *", x, y);
-            lblLastName = MakeLabel("Last name *", x + halfW + 12, y);
+            lblFirstName = ModalKit.MakeLabel(pnlBody, "First name *", x, y);
+            lblLastName = ModalKit.MakeLabel(pnlBody, "Last name *", x + halfW + 12, y);
             y += 20;
 
-            inpFirstName = MakeField(x, y, halfW, "Juan");
-            inpLastName = MakeField(x + halfW + 12, y, halfW, "Dela Cruz");
+            inpFirstName = ModalKit.MakeField(pnlBody, x, y, halfW, "Juan");
+            inpFirstName.Height = 36;
+            inpLastName = ModalKit.MakeField(pnlBody, x + halfW + 12, y, halfW, "Dela Cruz");
+            inpLastName.Height = 36;
             y += 38 + 4;
 
-            lblErrorFirst = MakeErrorLabel(x, y);
-            lblErrorLast = MakeErrorLabel(x + halfW + 12, y);
+            lblErrorFirst = ModalKit.MakeErrorLabel(pnlBody, x, y);
+            lblErrorLast = ModalKit.MakeErrorLabel(pnlBody, x + halfW + 12, y);
             y += 20;
 
             // ─── Role + Active ───
-            lblRole = MakeLabel("Role *", x, y);
-            var lblActiveCaption = MakeLabel("Active", x + halfW + 12, y);
+            lblRole = ModalKit.MakeLabel(pnlBody, "Role *", x, y);
             y += 20;
 
-            cmbRole = MakeCombo(x, y, halfW,
+            cmbRole = MakeCombo(pnlBody, x, y, halfW,
                 new[] { "Super Admin", "Admin", "Manager", "Staff" }, 3);
 
             chkActive = new CheckBox
             {
-                Text = "",
-                Font = UiKit.T.Body,
+                Text = "Active account (allow login)",
+                Font = UiKit.Body,
                 ForeColor = AppTheme.TextPrimary,
                 BackColor = Color.Transparent,
-                Location = new Point(x + halfW + 12, y + 4),
-                Size = new Size(24, 24),
+                Location = new Point(x + halfW + 12, y + 8),
+                AutoSize = true,
                 Checked = true
             };
-            pnlCard.Controls.Add(chkActive);
+            pnlBody.Controls.Add(chkActive);
 
             y += 38 + 20;
 
             // ─── Buttons ───
-            int btnY = pnlCard.Height - ShadowPad - 60;
-            int rightEdge = ContentRightX;
-            int saveW = 110;
-            int cancelW = 100;
-            int saveX = rightEdge - saveW;
-            int cancelX = saveX - cancelW - 10;
-
-            btnCancel = MakeSecondaryButton("Cancel");
-            btnCancel.Size = new Size(cancelW, 40);
-            btnCancel.Location = new Point(cancelX, btnY);
+            btnCancel = ModalKit.AddSecondary(pnlCard, "Cancel");
             btnCancel.Click += (s, e) =>
             {
                 DialogResult = DialogResult.Cancel;
                 Close();
             };
 
-            btnSave = MakePrimaryButton(_isEditMode ? "Update" : "Save");
-            btnSave.Size = new Size(saveW, 40);
-            btnSave.Location = new Point(saveX, btnY);
+            btnSave = ModalKit.AddPrimary(pnlCard, _isEditMode ? "Update" : "Save");
             btnSave.Click += async (s, e) => await SaveAsync();
+            LayoutFooter(btnSave, btnCancel);
+
+            AcceptButton = btnSave;
+            CancelButton = btnCancel;
 
             // ─── Prefill (edit mode) ───
             if (_editing != null)
@@ -237,9 +219,9 @@ namespace CRM.winforms
             }
 
             if (string.IsNullOrWhiteSpace(inpEmail.Text) ||
-                !inpEmail.Text.Contains('@'))
+                !IsValidEmail(inpEmail.Text.Trim()))
             {
-                ShowError(inpEmail, lblErrorEmail, "A valid email is required.");
+                ShowError(inpEmail, lblErrorEmail, "A valid email is required (e.g. name@example.com).");
                 firstInvalid ??= inpEmail;
                 valid = false;
             }
@@ -298,107 +280,62 @@ namespace CRM.winforms
             err.Visible = false;
         }
 
+        private static bool IsValidEmail(string email)
+        {
+            if (string.IsNullOrWhiteSpace(email)) return false;
+            try
+            {
+                var addr = new System.Net.Mail.MailAddress(email);
+                return addr.Address == email && email.Contains('.') && email.IndexOf('.') > email.IndexOf('@') + 1;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         // ═══════════ CONTROL FACTORIES ═══════════
 
-        private Label MakeLabel(string text, int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y)
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private TextField MakeField(int x, int y, int width, string placeholder)
-        {
-            var tf = new TextField
-            {
-                PlaceholderText = placeholder,
-                Location = new Point(x, y),
-                Size = new Size(width, 38)
-            };
-            pnlCard.Controls.Add(tf);
-            return tf;
-        }
 
-        private ComboBox MakeCombo(int x, int y, int width, string[] items, int selectedIndex)
+        private ComboBox MakeCombo(Control parent, int x, int y, int width, string[] items, int selectedIndex)
         {
-            var cmb = new ComboBox
-            {
-                Font = new Font("Segoe UI", 9.5F),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(x, y),
-                Size = new Size(width, 30),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat
-            };
+            var cmb = ModalKit.MakeCombo(parent, x, y, width);
+            cmb.DropDownStyle = ComboBoxStyle.DropDown;
+            cmb.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+            cmb.AutoCompleteSource = AutoCompleteSource.ListItems;
+            cmb.DropDownWidth = Math.Max(width, 260);
             cmb.Items.AddRange(items);
             if (selectedIndex >= 0 && selectedIndex < items.Length)
                 cmb.SelectedIndex = selectedIndex;
-            pnlCard.Controls.Add(cmb);
+            ModalKit.AdjustDropDownWidth(cmb);
+
+            cmb.Leave += (s, e) =>
+            {
+                if (cmb.SelectedIndex < 0 && !string.IsNullOrWhiteSpace(cmb.Text))
+                {
+                    int idx = cmb.FindStringExact(cmb.Text.Trim());
+                    if (idx < 0) idx = cmb.FindString(cmb.Text.Trim());
+                    if (idx >= 0) cmb.SelectedIndex = idx;
+                }
+            };
+            cmb.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    if (cmb.SelectedIndex < 0 && !string.IsNullOrWhiteSpace(cmb.Text))
+                    {
+                        int idx = cmb.FindStringExact(cmb.Text.Trim());
+                        if (idx < 0) idx = cmb.FindString(cmb.Text.Trim());
+                        if (idx >= 0) cmb.SelectedIndex = idx;
+                    }
+                }
+            };
+
             return cmb;
         }
 
-        private Label MakeErrorLabel(int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8F),
-                ForeColor = AppTheme.Danger,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Visible = false
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private Button MakePrimaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
 
-        private Button MakeSecondaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
     }
 }

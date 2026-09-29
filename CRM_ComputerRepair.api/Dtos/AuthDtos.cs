@@ -1,9 +1,12 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace CRM_ComputerRepair.api.Dtos;
 
 public class LoginRequest
 {
+    [Range(1, int.MaxValue, ErrorMessage = "A valid Company ID is required.")]
+    public int CompanyId { get; set; } = 1;
+
     [Required(ErrorMessage = "Username is required.")]
     [MaxLength(100)]
     public string Username { get; set; } = string.Empty;

@@ -16,7 +16,6 @@ namespace CRM.winforms
         private readonly TermsDto? _editing;
         private readonly bool _isEditMode;
 
-        private Label lblSubtitle = null!;
         private Label lblTitleLbl = null!;
         private Label lblContentLbl = null!;
         private Label lblErrorTitle = null!;
@@ -25,8 +24,8 @@ namespace CRM.winforms
         private TextField inpTitle = null!;
         private RichTextBox inpContent = null!;
 
-        private Button btnSave = null!;
-        private Button btnCancel = null!;
+        private SaasButton btnSave = null!;
+        private SaasButton btnCancel = null!;
 
         public TermsFormDialog(TermsDto? existing)
         {
@@ -35,8 +34,11 @@ namespace CRM.winforms
 
             BuildCard(
                 _isEditMode ? "Edit Terms & Conditions" : "New Terms & Conditions",
+                _isEditMode
+                    ? "Edit the content and clauses of this terms version."
+                    : "Publishing a new version deactivates the previous active version.",
                 width: 720,
-                height: 720);
+                height: 640);
 
             BuildContent();
         }
@@ -47,71 +49,50 @@ namespace CRM.winforms
             int w = ContentWidth;
             int y = ContentTopY;
 
-            lblSubtitle = new Label
-            {
-                Text = _isEditMode
-                    ? "Edit the content of this terms version."
-                    : "Publishing a new version deactivates the previous active one.",
-                Font = AppTheme.FontSubtitle,
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(w, 20)
-            };
-            pnlCard.Controls.Add(lblSubtitle);
-            y += 32;
-
             // Title
-            lblTitleLbl = MakeLabel("Title *", x, y);
+            lblTitleLbl = ModalKit.MakeLabel(pnlBody, "Title *", x, y);
             y += 20;
-            inpTitle = MakeField(x, y, w, "e.g. Customer Agreement");
+            inpTitle = ModalKit.MakeField(pnlBody, x, y, w, "e.g. Customer Agreement");
+            inpTitle.Height = 36;
             y += 38 + 4;
-            lblErrorTitle = MakeErrorLabel(x, y);
+            lblErrorTitle = ModalKit.MakeErrorLabel(pnlBody, x, y);
             y += 20;
 
             // Content
-            lblContentLbl = MakeLabel("Content *", x, y);
+            lblContentLbl = ModalKit.MakeLabel(pnlBody, "Content & Legal Clauses *", x, y);
             y += 20;
 
             inpContent = new RichTextBox
             {
-                Font = new Font("Segoe UI", 10F),
+                Font = AppTheme.FontInput,
                 BorderStyle = BorderStyle.FixedSingle,
                 BackColor = AppTheme.Surface,
                 ForeColor = AppTheme.TextPrimary,
                 Location = new Point(x, y),
-                Size = new Size(w, 320),
+                Size = new Size(w, 280),
                 ScrollBars = RichTextBoxScrollBars.Vertical,
                 WordWrap = true
             };
-            pnlCard.Controls.Add(inpContent);
+            pnlBody.Controls.Add(inpContent);
 
-            y += 320 + 4;
-            lblErrorContent = MakeErrorLabel(x, y);
+            y += 280 + 4;
+            lblErrorContent = ModalKit.MakeErrorLabel(pnlBody, x, y);
             y += 20;
 
             // Buttons
-            int btnY = pnlCard.Height - ShadowPad - 60;
-            int rightEdge = ContentRightX;
-            int saveW = 140;
-            int cancelW = 100;
-            int saveX = rightEdge - saveW;
-            int cancelX = saveX - cancelW - 10;
-
-            btnCancel = MakeSecondaryButton("Cancel");
-            btnCancel.Size = new Size(cancelW, 40);
-            btnCancel.Location = new Point(cancelX, btnY);
+            btnCancel = ModalKit.AddSecondary(pnlCard, "Cancel");
             btnCancel.Click += (s, e) =>
             {
                 DialogResult = DialogResult.Cancel;
                 Close();
             };
 
-            btnSave = MakePrimaryButton(_isEditMode ? "Save changes" : "Publish");
-            btnSave.Size = new Size(saveW, 40);
-            btnSave.Location = new Point(saveX, btnY);
+            btnSave = ModalKit.AddPrimary(pnlCard, _isEditMode ? "Save changes" : "Publish");
             btnSave.Click += async (s, e) => await SaveAsync();
+            LayoutFooter(btnSave, btnCancel, saveW: 140);
+
+            AcceptButton = btnSave;
+            CancelButton = btnCancel;
 
             // Prefill
             if (_editing != null)
@@ -192,86 +173,9 @@ namespace CRM.winforms
 
         // ─── Factories ───
 
-        private Label MakeLabel(string text, int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y)
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private TextField MakeField(int x, int y, int width, string placeholder)
-        {
-            var tf = new TextField
-            {
-                PlaceholderText = placeholder,
-                Location = new Point(x, y),
-                Size = new Size(width, 38)
-            };
-            pnlCard.Controls.Add(tf);
-            return tf;
-        }
 
-        private Label MakeErrorLabel(int x, int y)
-        {
-            var lbl = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8F),
-                ForeColor = AppTheme.Danger,
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Visible = false
-            };
-            pnlCard.Controls.Add(lbl);
-            return lbl;
-        }
 
-        private Button MakePrimaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Primary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.PrimaryHover;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
 
-        private Button MakeSecondaryButton(string text)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                BackColor = AppTheme.Surface,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                UseVisualStyleBackColor = false
-            };
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.BorderColor = AppTheme.BorderStrong;
-            b.FlatAppearance.MouseOverBackColor = AppTheme.Neutral;
-            b.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(b, 8);
-            pnlCard.Controls.Add(b);
-            return b;
-        }
     }
 }
