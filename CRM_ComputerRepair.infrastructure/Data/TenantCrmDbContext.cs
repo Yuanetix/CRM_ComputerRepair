@@ -31,6 +31,108 @@ public class TenantCrmDbContext : DbContext
     public DbSet<RetentionEmailLog> RetentionEmailLogs => Set<RetentionEmailLog>();
     public DbSet<RetentionEmailTemplate> RetentionEmailTemplates => Set<RetentionEmailTemplate>();
     public DbSet<RetentionSettings> RetentionSettings => Set<RetentionSettings>();
+    public DbSet<SyncQueueItem> SyncQueue => Set<SyncQueueItem>();
+
+    public bool DisableSyncTracking { get; set; } = false;
+    public int CurrentCompanyId { get; set; } = 1;
+    public static event Action? OnLocalChangesSaved;
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        if (DisableSyncTracking)
+        {
+            return await base.SaveChangesAsync(cancellationToken);
+        }
+
+        // Capture mutations before saving
+        var pendingChanges = new List<(string EntityType, string Operation, object Entity)>();
+
+        foreach (var entry in ChangeTracker.Entries().ToList())
+        {
+            if (entry.Entity is SyncQueueItem) continue;
+
+            string op = entry.State switch
+            {
+                EntityState.Added => "Insert",
+                EntityState.Modified => "Update",
+                EntityState.Deleted => "Delete",
+                _ => ""
+            };
+
+            if (!string.IsNullOrEmpty(op))
+            {
+                pendingChanges.Add((entry.Entity.GetType().Name, op, entry.Entity));
+            }
+        }
+
+        // 1. Commit local database changes first (guarantees fast offline local storage)
+        int result = await base.SaveChangesAsync(cancellationToken);
+
+        // 2. Queue mutations for MonsterASP cloud synchronization
+        if (pendingChanges.Count > 0)
+        {
+            try
+            {
+                var serializerOpts = new System.Text.Json.JsonSerializerOptions
+                {
+                    ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles
+                };
+
+                foreach (var (entityType, op, entity) in pendingChanges)
+                {
+                    string id = GetPrimaryKey(entity);
+                    string json = System.Text.Json.JsonSerializer.Serialize(entity, serializerOpts);
+
+                    SyncQueue.Add(new SyncQueueItem
+                    {
+                        CompanyId = CurrentCompanyId,
+                        EntityType = entityType,
+                        EntityId = id,
+                        Operation = op,
+                        PayloadJson = json,
+                        CreatedAtUtc = DateTime.UtcNow,
+                        Status = "Pending"
+                    });
+                }
+
+                DisableSyncTracking = true;
+                await base.SaveChangesAsync(cancellationToken);
+                DisableSyncTracking = false;
+            }
+            catch
+            {
+                // Ensure local save is never rolled back due to sync logging
+            }
+            finally
+            {
+                DisableSyncTracking = false;
+            }
+
+            // Immediately notify cloud sync to push updates if online
+            try
+            {
+                OnLocalChangesSaved?.Invoke();
+            }
+            catch { }
+        }
+
+        return result;
+    }
+
+    private string GetPrimaryKey(object entity)
+    {
+        try
+        {
+            var pks = Entry(entity).Metadata.FindPrimaryKey()?.Properties;
+            if (pks != null && pks.Count > 0)
+            {
+                var vals = pks.Select(p => Entry(entity).Property(p.Name).CurrentValue?.ToString() ?? "");
+                return string.Join(",", vals);
+            }
+        }
+        catch { }
+        return "";
+    }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -344,6 +446,19 @@ public class TenantCrmDbContext : DbContext
             entity.Property(x => x.SmtpPassword).HasMaxLength(200);
             entity.Property(x => x.SmtpFromEmail).HasMaxLength(200);
             entity.Property(x => x.SmtpFromName).HasMaxLength(200);
+        });
+
+        // ═══════════ SyncQueueItem ═══════════
+        builder.Entity<SyncQueueItem>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.EntityType).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.EntityId).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.Operation).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.LastError).HasMaxLength(2000);
+            entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => x.CreatedAtUtc);
         });
 
         // ═══════════════════════════════════════════════════════════

@@ -23,7 +23,6 @@ namespace CRM.winforms
         // ═══════════ CONTROLS ═══════════
 
         private Label lblTitle = null!;
-        private Label lblSubtitle = null!;
         private SaasButton btnRefresh = null!;
         private SaasButton btnAdd = null!;
 
@@ -76,16 +75,6 @@ namespace CRM.winforms
                 UseMnemonic = false
             };
 
-            lblSubtitle = new Label
-            {
-                Text = "Staff accounts, role assignments, and administrative access control",
-                Font = UiKit.T.Subtitle,
-                ForeColor = UiKit.T.InkMuted,
-                AutoSize = true,
-                BackColor = AppTheme.Background,
-                UseMnemonic = false
-            };
-
             btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
             btnRefresh.Click += async (s, e) => await ReloadAsync();
             _tips.SetToolTip(btnRefresh, "Refresh user accounts (F5)");
@@ -95,7 +84,6 @@ namespace CRM.winforms
             _tips.SetToolTip(btnAdd, "Create new user account (Ctrl+N)");
 
             Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
             Controls.Add(btnRefresh);
             Controls.Add(btnAdd);
 
@@ -153,6 +141,13 @@ namespace CRM.winforms
 
             dgv = new DataGridView();
             TableKit.StyleGrid(dgv);
+            dgv.ScrollBars = ScrollBars.Both;
+            dgv.RowTemplate.Height = 52;
+            dgv.ColumnHeadersHeight = 40;
+            dgv.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            dgv.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+            dgv.ColumnHeadersDefaultCellStyle.Padding = new Padding(14, 0, 14, 0);
+            dgv.DefaultCellStyle.Padding = new Padding(14, 0, 14, 0);
             dgv.CellPainting += Dgv_CellPainting;
             dgv.CellClick += Dgv_CellClick;
             dgv.CellDoubleClick += Dgv_CellDoubleClick;
@@ -183,7 +178,7 @@ namespace CRM.winforms
         {
             base.OnPaint(e);
             UiKit.Quality(e.Graphics);
-            int y = lblSubtitle.Bottom + UiKit.T.S4;
+            int y = lblTitle.PreferredHeight + UiKit.T.S4;
             using var pen = new Pen(UiKit.T.Line, 1);
             e.Graphics.DrawLine(pen, 0, y, Width, y);
         }
@@ -260,15 +255,6 @@ namespace CRM.winforms
                 _ => "All Users"
             };
 
-            lblSubtitle.Text = status switch
-            {
-                1 => "Users with an active login status in the system",
-                2 => "Super Administrator and Administrator accounts",
-                3 => "Manager and Staff team members",
-                0 => "Deactivated accounts — restorable anytime",
-                _ => "Staff accounts, role assignments, and administrative access control"
-            };
-
             ApplyFilter();
             LayoutUi();
             Invalidate();
@@ -280,26 +266,19 @@ namespace CRM.winforms
 
             // Header
             lblTitle.Location = new Point(0, 0);
-
-            int subtitleY = lblTitle.PreferredHeight + 6;
-            lblSubtitle.Location = new Point(1, subtitleY);
-
             btnAdd.Size = new Size(btnAdd.PreferredWidth, UiKit.T.ButtonHeight);
-            btnAdd.Location = new Point(Width - btnAdd.Width, 2);
-
+            btnAdd.Location = new Point(Width - btnAdd.Width, 0);
             btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(btnAdd.Left - btnRefresh.Width - UiKit.T.S2, 2);
+            btnRefresh.Location = new Point(btnAdd.Left - btnRefresh.Width - 8, 0);
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
-
-            // Metric strip
-            int stripTop = dividerY + UiKit.T.S5;
+            // Strip positioned below title
+            int stripY = lblTitle.PreferredHeight + UiKit.T.S4;
             int stripH = Math.Max(UiKit.T.StripHeight, strip.PreferredContentHeight());
-            strip.Location = new Point(0, stripTop);
+            strip.Location = new Point(0, stripY);
             strip.Size = new Size(Width, stripH);
 
             // Workbench card
-            int cardTop = stripTop + stripH + UiKit.T.S5;
+            int cardTop = stripY + strip.Size.Height + UiKit.T.S5;
             int cardHeight = Math.Max(240, Height - cardTop);
 
             card.Location = new Point(0, cardTop);
@@ -463,16 +442,16 @@ namespace CRM.winforms
                 c.SortMode = DataGridViewColumnSortMode.Automatic;
                 c.AutoSizeMode = fill ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None;
                 if (!fill) c.Width = width;
-                else c.MinimumWidth = 190;
+                else c.MinimumWidth = 180;
                 c.DefaultCellStyle.Alignment = align;
                 if (format != null) c.DefaultCellStyle.Format = format;
                 c.DisplayIndex = idx;
             }
 
-            Setup("FullName", "Name", 220, 0);
-            Setup("UserName", "Username", 150, 1);
-            Setup("Email", "Email Address", 0, 2, fill: true);
-            Setup("RoleDisplay", "Role", 160, 3);
+            Setup("UserName", "Username", 200, 0);
+            Setup("FullName", "Name", 180, 1, fill: true);
+            Setup("Email", "Email Address", 220, 2);
+            Setup("RoleDisplay", "Role", 140, 3);
             Setup("StatusText", "Status", 120, 4);
             Setup("CreatedAt", "Created Date", 130, 5, align: DataGridViewContentAlignment.MiddleCenter, format: "MMM d, yyyy");
 

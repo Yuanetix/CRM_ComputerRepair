@@ -229,12 +229,20 @@ public class DispatchRetentionEmailRequest
     public string? CustomSubject { get; set; }
 
     public string? CustomBody { get; set; }
+
+    [MaxLength(200)]
+    [EmailAddress]
+    public string? CustomRecipientEmail { get; set; }
 }
 
 public class SendManualRetentionEmailRequest
 {
     [Required]
     public int CustomerId { get; set; }
+
+    [MaxLength(200)]
+    [EmailAddress]
+    public string? RecipientEmail { get; set; }
 
     [Required]
     public RetentionSegment Segment { get; set; }
@@ -256,6 +264,33 @@ public class SendManualRetentionEmailRequest
     public int ValidityDays { get; set; } = 14;
 
     public bool OverrideCooldown { get; set; } = false;
+}
+
+public class TestSmtpRequest
+{
+    [MaxLength(200)]
+    public string? Host { get; set; }
+
+    public int? Port { get; set; }
+
+    [MaxLength(200)]
+    public string? Username { get; set; }
+
+    [MaxLength(200)]
+    public string? Password { get; set; }
+
+    [MaxLength(200)]
+    [EmailAddress]
+    public string? FromEmail { get; set; }
+
+    [MaxLength(200)]
+    public string? FromName { get; set; }
+
+    public bool? EnableSsl { get; set; }
+
+    [MaxLength(200)]
+    [EmailAddress]
+    public string? TestRecipientEmail { get; set; }
 }
 
 // ═══════════════════════════════════════════════════════

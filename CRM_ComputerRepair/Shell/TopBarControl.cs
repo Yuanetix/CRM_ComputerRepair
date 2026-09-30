@@ -15,9 +15,11 @@ namespace CRM.winforms
         public event EventHandler? ProfileClicked;
         public event EventHandler? BellClicked;
         public event EventHandler? BrandClicked;
+        public event EventHandler? SyncClicked;
 
         private BellButton _bell = null!;
         private UserChip _chip = null!;
+        private CloudSyncPill _syncPill = null!;
         private readonly ToolTip _tips = new ToolTip { InitialDelay = 400, ReshowDelay = 150 };
         private Rectangle _brandBounds = Rectangle.Empty;
         private bool _brandHover;
@@ -42,6 +44,17 @@ namespace CRM.winforms
             set { _bell.Count = value; _bell.Invalidate(); }
         }
 
+        public void UpdateSyncStatus(bool isOnline, int pendingCount, bool isSyncing = false, string? tooltip = null)
+        {
+            if (_syncPill == null) return;
+            _syncPill.IsOnline = isOnline;
+            _syncPill.PendingCount = pendingCount;
+            _syncPill.IsSyncing = isSyncing;
+            if (!string.IsNullOrEmpty(tooltip))
+                _tips.SetToolTip(_syncPill, tooltip);
+            _syncPill.Invalidate();
+        }
+
         public TopBarControl()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
@@ -57,6 +70,10 @@ namespace CRM.winforms
 
         private void BuildUi()
         {
+            _syncPill = new CloudSyncPill();
+            _syncPill.Click += (s, e) => SyncClicked?.Invoke(this, EventArgs.Empty);
+            _tips.SetToolTip(_syncPill, "MonsterASP Cloud Database: Local & Cloud synchronization status. Click to sync now.");
+
             _bell = new BellButton { Size = new Size(36, 36) };
             _bell.Click += (s, e) => BellClicked?.Invoke(this, EventArgs.Empty);
             _tips.SetToolTip(_bell, "Notifications");
@@ -65,6 +82,7 @@ namespace CRM.winforms
             _chip.Click += (s, e) => ProfileClicked?.Invoke(this, EventArgs.Empty);
             _tips.SetToolTip(_chip, "Account Profile");
 
+            Controls.Add(_syncPill);
             Controls.Add(_bell);
             Controls.Add(_chip);
             Resize += (s, e) => LayoutUi();
@@ -74,6 +92,7 @@ namespace CRM.winforms
         {
             _chip.Location = new Point(Width - _chip.Width - UiKit.S5, (Height - _chip.Height) / 2);
             _bell.Location = new Point(_chip.Left - _bell.Width - UiKit.S4, (Height - _bell.Height) / 2);
+            _syncPill.Location = new Point(_bell.Left - _syncPill.Width - UiKit.S4, (Height - _syncPill.Height) / 2);
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -278,6 +297,89 @@ namespace CRM.winforms
                 using (var f = UiKit.GlyphFont(8F))
                     UiKit.Text(g, IconFont.ChevronDown, f, UiKit.InkFaint,
                         new Rectangle(Width - 28, 0, 24, Height), UiKit.Center);
+            }
+        }
+
+        [DesignerCategory("Code")]
+        private sealed class CloudSyncPill : Control
+        {
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public bool IsOnline { get; set; } = false;
+
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public int PendingCount { get; set; } = 0;
+
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public bool IsSyncing { get; set; } = false;
+            private bool _hover;
+
+            public CloudSyncPill()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.Surface;
+                Cursor = Cursors.Hand;
+                TabStop = true;
+                Size = new Size(160, 30);
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                Color bg, border, dotColor, textColor;
+                string label;
+
+                if (IsSyncing)
+                {
+                    bg = Color.FromArgb(239, 248, 255);
+                    border = Color.FromArgb(186, 226, 255);
+                    dotColor = Color.FromArgb(23, 92, 211);
+                    textColor = Color.FromArgb(23, 92, 211);
+                    label = "Syncing to Cloud...";
+                }
+                else if (IsOnline)
+                {
+                    bg = Color.FromArgb(236, 253, 243);
+                    border = Color.FromArgb(166, 244, 197);
+                    dotColor = Color.FromArgb(18, 183, 106);
+                    textColor = Color.FromArgb(6, 118, 71);
+                    label = PendingCount > 0 ? $"Syncing ({PendingCount})..." : "Cloud Synced";
+                }
+                else
+                {
+                    bg = Color.FromArgb(254, 246, 238);
+                    border = Color.FromArgb(253, 205, 154);
+                    dotColor = Color.FromArgb(247, 144, 9);
+                    textColor = Color.FromArgb(181, 71, 8);
+                    label = PendingCount > 0 ? $"Offline ({PendingCount} pending)" : "Offline (Local)";
+                }
+
+                if (_hover)
+                {
+                    border = dotColor;
+                }
+
+                var rect = new Rectangle(0, 0, Width, Height);
+                UiKit.FillRounded(g, rect, 15, bg);
+                UiKit.StrokeRounded(g, rect, 15, border, 1f);
+
+                // Draw dot indicator
+                using (var dotBrush = new SolidBrush(dotColor))
+                    g.FillEllipse(dotBrush, 12, (Height - 8) / 2, 8, 8);
+
+                // Text
+                var textRect = new Rectangle(26, 0, Width - 32, Height);
+                using (var textFont = new Font("Segoe UI", 8.25f, FontStyle.Bold))
+                    TextRenderer.DrawText(g, label, textFont, textRect, textColor,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
         }
     }

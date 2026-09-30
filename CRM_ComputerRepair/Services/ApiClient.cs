@@ -488,6 +488,30 @@ namespace CRM.winforms
             return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
         }
 
+        public async Task<RepairRequestDto?> ApproveRepairRequestAsync(
+            int repairRequestId, string? assignedToStaffId, decimal? estimatedCost, string? managerNotes)
+        {
+            var body = new { assignedToStaffId, estimatedCost, managerNotes };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/repair-requests/{repairRequestId}/approve", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
+        }
+
+        public async Task<RepairRequestDto?> ReassignRepairRequestAsync(
+            int repairRequestId, string assignedToStaffId, string? notes)
+        {
+            var body = new { assignedToStaffId, notes };
+            var content = ToJsonContent(body);
+            var response = await _http.PostAsync(
+                $"/tenant/{CompanyId}/repair-requests/{repairRequestId}/reassign", content);
+            await EnsureSuccess(response);
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<RepairRequestDto>(json, _jsonOptions);
+        }
+
         // ═══════════════════════════════════════════════════════
         // CUSTOMER HISTORY
         // ═══════════════════════════════════════════════════════
@@ -1081,13 +1105,47 @@ namespace CRM.winforms
             return JsonSerializer.Deserialize<List<RetentionCampaignDto>>(json, _jsonOptions) ?? new();
         }
 
-        public async Task<bool> DispatchRetentionEmailAsync(int id, string? customSubject = null, string? customBody = null)
+        public async Task<DispatchResultDto> DispatchRetentionEmailAsync(int id, string? customSubject = null, string? customBody = null, string? customRecipientEmail = null)
         {
-            var body = new { customSubject, customBody };
+            var body = new { customSubject, customBody, customRecipientEmail };
             var content = ToJsonContent(body);
             var response = await _http.PostAsync($"/tenant/{CompanyId}/retention/campaigns/{id}/dispatch", content);
-            await EnsureSuccess(response);
-            return true;
+
+            var json = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+            {
+                string msg = "SMTP Dispatch Failed";
+                try
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("message", out var m)) msg = m.GetString() ?? msg;
+                    else if (doc.RootElement.TryGetProperty("deliveryError", out var de)) msg = de.GetString() ?? msg;
+                }
+                catch { }
+                throw new InvalidOperationException(msg);
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var message = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : "Dispatched";
+                var status = doc.RootElement.TryGetProperty("deliveryStatus", out var s) ? s.GetString() ?? "Sent" : "Sent";
+                var outboxPath = doc.RootElement.TryGetProperty("outboxFilePath", out var op) ? op.GetString() : null;
+                var wasFallback = doc.RootElement.TryGetProperty("wasFallback", out var wf) && wf.GetBoolean();
+
+                return new DispatchResultDto
+                {
+                    Success = true,
+                    Message = message,
+                    DeliveryStatus = status,
+                    OutboxFilePath = outboxPath,
+                    WasFallback = wasFallback
+                };
+            }
+            catch
+            {
+                return new DispatchResultDto { Success = true, Message = "Dispatched", DeliveryStatus = "Sent" };
+            }
         }
 
         public async Task<ManualSendResultDto> SendManualRetentionEmailAsync(SendManualRetentionEmailRequestDto request)
@@ -1109,8 +1167,69 @@ namespace CRM.winforms
                 return new ManualSendResultDto { Success = false, InCooldown = true, Message = msg };
             }
 
-            await EnsureSuccess(response);
-            return new ManualSendResultDto { Success = true };
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorJson = await response.Content.ReadAsStringAsync();
+                string msg = $"SMTP Delivery Failed ({(int)response.StatusCode})";
+                try
+                {
+                    using var doc = JsonDocument.Parse(errorJson);
+                    if (doc.RootElement.TryGetProperty("message", out var m))
+                        msg = m.GetString() ?? msg;
+                    else if (doc.RootElement.TryGetProperty("deliveryError", out var de))
+                        msg = de.GetString() ?? msg;
+                }
+                catch
+                {
+                    if (!string.IsNullOrWhiteSpace(errorJson)) msg = errorJson;
+                }
+                return new ManualSendResultDto { Success = false, Message = msg };
+            }
+
+            var successJson = await response.Content.ReadAsStringAsync();
+            string succMsg = "";
+            string? outbox = null;
+            bool fallback = false;
+            string delivStatus = "Sent";
+            try
+            {
+                using var doc = JsonDocument.Parse(successJson);
+                if (doc.RootElement.TryGetProperty("message", out var m)) succMsg = m.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("outboxFilePath", out var op)) outbox = op.GetString();
+                if (doc.RootElement.TryGetProperty("wasFallback", out var wf)) fallback = wf.GetBoolean();
+                if (doc.RootElement.TryGetProperty("deliveryStatus", out var ds)) delivStatus = ds.GetString() ?? "Sent";
+            }
+            catch { }
+
+            return new ManualSendResultDto
+            {
+                Success = true,
+                Message = succMsg,
+                OutboxFilePath = outbox,
+                WasFallback = fallback,
+                DeliveryStatus = delivStatus
+            };
+        }
+
+        public async Task<(bool success, string message)> TestSmtpSettingsAsync(TestSmtpSettingsRequestDto request)
+        {
+            var content = ToJsonContent(request);
+            var response = await _http.PostAsync($"/tenant/{CompanyId}/retention/settings/test-smtp", content);
+            var json = await response.Content.ReadAsStringAsync();
+            string msg = "";
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("message", out var m))
+                    msg = m.GetString() ?? "";
+                else if (doc.RootElement.TryGetProperty("error", out var e))
+                    msg = e.GetString() ?? "";
+            }
+            catch
+            {
+                msg = json;
+            }
+            return (response.IsSuccessStatusCode, msg);
         }
 
         public async Task<List<RetentionTemplateDto>> GetRetentionTemplatesAsync()
@@ -1146,6 +1265,40 @@ namespace CRM.winforms
         }
 
         // ═══════════════════════════════════════════════════════
+        // CLOUD SYNC & OFFLINE STORAGE
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<CloudSyncStatusDto?> GetCloudSyncStatusAsync()
+        {
+            try
+            {
+                var response = await _http.GetAsync($"/api/sync/status?companyId={CompanyId}");
+                if (!response.IsSuccessStatusCode) return null;
+                var json = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize<CloudSyncStatusDto>(json, _jsonOptions);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public async Task<SyncTriggerResultDto?> TriggerCloudSyncNowAsync()
+        {
+            try
+            {
+                var response = await _http.PostAsync($"/api/sync/now?companyId={CompanyId}", null);
+                if (!response.IsSuccessStatusCode) return null;
+                var json = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize<SyncTriggerResultDto>(json, _jsonOptions);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
         // HELPERS
         // ═══════════════════════════════════════════════════════
 
@@ -1161,5 +1314,23 @@ namespace CRM.winforms
             var error = await response.Content.ReadAsStringAsync();
             throw new Exception($"API error {(int)response.StatusCode}: {error}");
         }
+    }
+
+    public class CloudSyncStatusDto
+    {
+        public bool IsCloudOnline { get; set; }
+        public int PendingCount { get; set; }
+        public int SyncedCount { get; set; }
+        public DateTime? LastSyncTimeUtc { get; set; }
+        public string CloudHost { get; set; } = string.Empty;
+        public string CloudDatabase { get; set; } = string.Empty;
+        public string? LastError { get; set; }
+        public string StatusMessage { get; set; } = string.Empty;
+    }
+
+    public class SyncTriggerResultDto
+    {
+        public int SyncedCount { get; set; }
+        public CloudSyncStatusDto? Status { get; set; }
     }
 }

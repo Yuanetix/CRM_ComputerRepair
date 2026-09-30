@@ -73,7 +73,10 @@ public class TenantDbContextFactory : ITenantDbContextFactory
             .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
             .Options;
 
-        var context = new TenantCrmDbContext(options);
+        var context = new TenantCrmDbContext(options)
+        {
+            CurrentCompanyId = companyId
+        };
 
         // Ensure database exists and schema is migrated on first access in this app domain
         if (!_initializedTenants.ContainsKey(companyId))

@@ -8,6 +8,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -16,7 +17,7 @@ namespace CRM.winforms.Controls
     /// <summary>
     /// Professional Customer Interactions Command Center for Staff.
     /// Manages customer questions, service concerns, and reviews with complete
-    /// customer & repair order linkages, SLA urgency tracking, rapid resolution logging,
+    /// customer &amp; repair order linkages, SLA urgency tracking, rapid resolution logging,
     /// seamless follow-up scheduling, and direct customer contact shortcuts.
     /// </summary>
     [DesignerCategory("Code")]
@@ -35,20 +36,23 @@ namespace CRM.winforms.Controls
         // ═══════════ CONTROLS ═══════════
 
         private Label lblTitle = null!;
-        private Label lblSubtitle = null!;
         private SaasButton btnAdd = null!;
         private SaasButton btnRefresh = null!;
 
-        private MetricStrip strip = null!;
+        // ── KPI Tiles ──
+        private KpiTile tileTotal = null!;
+        private KpiTile tileOpen = null!;
+        private KpiTile tileHigh = null!;
+        private KpiTile tileClosed = null!;
+        private readonly List<KpiTile> _tiles = new();
 
-        private SurfaceCard card = null!;
-        private Label lblGridTitle = null!;
+        // ── Workbench Card ──
+        private WorkbenchCard card = null!;
+        private WorkbenchSearch search = null!;
+        private InteractionsSegmentedFilter segments = null!;
         private Label lblCount = null!;
-        private SegmentedFilter segments = null!;
-        private SearchBox search = null!;
-
         private DataGridView dgv = null!;
-        private StateView state = null!;
+        private WorkbenchState state = null!;
         private TablePagination pager = null!;
 
         private const string ColActions = "colActions";
@@ -58,6 +62,44 @@ namespace CRM.winforms.Controls
         private readonly ToolTip _tips = new ToolTip { InitialDelay = 500, ReshowDelay = 200 };
 
         public event EventHandler<string>? ActionRequested;
+
+        // ═══════════ SHARED DRAWING HELPERS ═══════════
+
+        private const int CellPadX = 14;
+        private const TextFormatFlags Flat = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        private const TextFormatFlags CellText = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat;
+
+        private static readonly Font MonoFont = new Font("Consolas", 9F);
+        private static readonly Color[] AvatarPalette =
+        {
+            Color.FromArgb(99, 102, 241),
+            Color.FromArgb(16, 185, 129),
+            Color.FromArgb(245, 158, 11),
+            Color.FromArgb(236, 72, 153),
+            Color.FromArgb(59, 130, 246),
+            Color.FromArgb(124, 58, 237)
+        };
+
+        private static int MeasureW(string text, Font font) =>
+            TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue),
+                Flat | TextFormatFlags.SingleLine).Width;
+
+        private static float Descent(Font f)
+        {
+            var fam = f.FontFamily;
+            int asc = fam.GetCellAscent(f.Style);
+            int desc = fam.GetCellDescent(f.Style);
+            return f.Height * desc / (float)Math.Max(1, asc + desc);
+        }
+
+        private static Color AvatarColor(string? seed)
+        {
+            if (string.IsNullOrWhiteSpace(seed)) return AvatarPalette[0];
+            int h = 0;
+            foreach (char ch in seed) h = (h * 31 + ch) & 0x7FFFFFFF;
+            return AvatarPalette[h % AvatarPalette.Length];
+        }
 
         // ═══════════ CONSTRUCTOR ═══════════
 
@@ -86,99 +128,120 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
-
-            lblSubtitle = new Label
-            {
-                Text = "Client questions, repair inquiries, service concerns, and customer reviews",
-                Font = UiKit.T.Subtitle,
-                ForeColor = UiKit.T.InkMuted,
-                AutoSize = true,
-                BackColor = Color.Transparent
-            };
-
-            btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
-            btnRefresh.Click += async (s, e) => await ReloadAsync();
-            _tips.SetToolTip(btnRefresh, "Refresh list (F5)");
 
             btnAdd = new SaasButton("Log interaction", SaasButtonVariant.Primary, "\uE710");
+            btnAdd.Size = new Size(170, 36);
             btnAdd.Click += (s, e) => OpenAddDialog();
             _tips.SetToolTip(btnAdd, "Log new customer interaction (Ctrl+N)");
 
+            btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnRefresh.Size = new Size(100, 36);
+            btnRefresh.Click += async (s, e) => await ReloadAsync();
+            _tips.SetToolTip(btnRefresh, "Refresh list (F5)");
+
             Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
-            Controls.Add(btnRefresh);
             Controls.Add(btnAdd);
+            Controls.Add(btnRefresh);
 
-            // ── Metric strip (5 Interactive KPI Tiles) ──
-            strip = new MetricStrip();
-            strip.AddItem("Total", null, AppTheme.Primary);
-            strip.AddItem("Open", 0, AppTheme.Warning);
-            strip.AddItem("In progress", 1, AppTheme.Primary);
-            strip.AddItem("High priority", 99, AppTheme.Danger);
-            strip.AddItem("Closed", 2, AppTheme.Success);
+            // ── KPI Tiles ──
+            tileTotal = AddTile("TOTAL INTERACTIONS", "0", "All logged customer touchpoints", AppTheme.Primary, "\uE716");
+            tileTotal.Click += (s, e) => { _statusFilter = null; ApplySearch(); };
 
-            strip.SelectionChanged += (s, e) =>
+            tileOpen = AddTile("OPEN", "0", "Awaiting staff response", AppTheme.Warning, "\uE7BA");
+            tileOpen.Click += (s, e) => { _statusFilter = 0; ApplySearch(); };
+
+            tileHigh = AddTile("HIGH PRIORITY", "0", "Urgent, unresolved concerns", AppTheme.Danger, "\uE7BA");
+            tileHigh.Click += (s, e) => { _statusFilter = 99; ApplySearch(); };
+
+            tileClosed = AddTile("CLOSED", "0", "Resolved & archived", AppTheme.Success, "\uE73E");
+            tileClosed.Click += (s, e) => { _statusFilter = 2; ApplySearch(); };
+
+            // ── Workbench Card ──
+            card = new WorkbenchCard { BackColor = UiKit.T.Surface };
+
+            search = new WorkbenchSearch
             {
-                _statusFilter = strip.SelectedStatus;
-                ApplySearch();
+                Placeholder = "Search by customer, ticket, device, subject, notes..."
             };
-            Controls.Add(strip);
+            search.QueryChanged += (s, e) => ApplySearch();
+            _tips.SetToolTip(search, "Search (Ctrl+F, Esc to clear)");
 
-            // ── Workbench card ──
-            card = new SurfaceCard();
-
-            lblGridTitle = new Label
+            segments = new InteractionsSegmentedFilter(new (string, int?)[]
             {
-                Text = "All interactions",
-                Font = UiKit.T.Section,
-                ForeColor = UiKit.T.Ink,
-                AutoSize = true,
-                BackColor = Color.Transparent
+                ("All", null),
+                ("Questions", null),
+                ("Concerns", null),
+                ("Reviews", null)
+            });
+            segments.SelectionChanged += (s, key) =>
+            {
+                _currentFilter = key switch
+                {
+                    "Questions" => InteractionTypeFilter.Inquiry,
+                    "Concerns" => InteractionTypeFilter.Complaint,
+                    "Reviews" => InteractionTypeFilter.Feedback,
+                    _ => (InteractionTypeFilter?)null
+                };
+
+                btnAdd.Text = _currentFilter switch
+                {
+                    InteractionTypeFilter.Inquiry => "Log question",
+                    InteractionTypeFilter.Complaint => "Log concern",
+                    InteractionTypeFilter.Feedback => "Log review",
+                    _ => "Log interaction"
+                };
+                LayoutUi();
+                _ = ReloadAsync();
             };
 
             lblCount = new Label
             {
                 Text = "",
                 Font = UiKit.T.Small,
-                ForeColor = UiKit.T.InkFaint,
+                ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
-
-            segments = new SegmentedFilter(new[]
-            {
-                ("All", (InteractionTypeFilter?)null),
-                ("Questions", InteractionTypeFilter.Inquiry),
-                ("Concerns", InteractionTypeFilter.Complaint),
-                ("Reviews", InteractionTypeFilter.Feedback)
-            });
-            segments.SelectionChanged += (s, e) => SetFilter(segments.Selected);
-
-            search = new SearchBox { PlaceholderText = "Search interactions... (Ctrl+F)" };
-            search.Inner.TextChanged += (s, e) => ApplySearch();
-            _tips.SetToolTip(search, "Search (Ctrl+F, Esc to clear)");
 
             dgv = new DataGridView();
             StyleGrid(dgv);
             dgv.CellPainting += Dgv_CellPainting;
             dgv.CellClick += Dgv_CellClick;
             dgv.CellDoubleClick += Dgv_CellDoubleClick;
-            dgv.CellMouseEnter += Dgv_CellMouseEnter;
-            dgv.CellMouseLeave += Dgv_CellMouseLeave;
-            dgv.MouseLeave += (s, e) => { _hoverRow = -1; dgv.Invalidate(); };
+            dgv.CellMouseMove += (s, e) =>
+            {
+                if (e.RowIndex != _hoverRow)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = e.RowIndex;
+                    if (old >= 0 && old < dgv.RowCount) dgv.InvalidateRow(old);
+                    if (_hoverRow >= 0 && _hoverRow < dgv.RowCount) dgv.InvalidateRow(_hoverRow);
+                }
+            };
+            dgv.CellMouseLeave += (s, e) =>
+            {
+                if (_hoverRow >= 0 && _hoverRow < dgv.RowCount)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = -1;
+                    dgv.InvalidateRow(old);
+                }
+            };
             dgv.KeyDown += Dgv_KeyDown;
 
-            state = new StateView { Visible = false };
+            state = new WorkbenchState { Visible = false };
+            state.Show("\uE8BD", "No interactions logged yet",
+                "Use \u201cLog interaction\u201d to record the first customer inquiry or concern.");
 
             pager = new TablePagination();
             pager.PageChanged += (s, e) => ApplySearch(resetPage: false);
 
-            card.Controls.Add(lblGridTitle);
-            card.Controls.Add(lblCount);
-            card.Controls.Add(segments);
             card.Controls.Add(search);
+            card.Controls.Add(segments);
+            card.Controls.Add(lblCount);
             card.Controls.Add(dgv);
             card.Controls.Add(state);
             card.Controls.Add(pager);
@@ -186,18 +249,16 @@ namespace CRM.winforms.Controls
             Controls.Add(card);
 
             Resize += (s, e) => LayoutUi();
+            LayoutUi();
         }
 
-        // ═══════════ HAIRLINE UNDER HEADER ═══════════
-
-        protected override void OnPaint(PaintEventArgs e)
+        private KpiTile AddTile(string label, string number, string sub, Color accent, string glyph)
         {
-            base.OnPaint(e);
-            UiKit.Quality(e.Graphics);
-
-            int y = lblSubtitle.Bottom + UiKit.T.S4;
-            using var pen = new Pen(UiKit.T.Line, 1);
-            e.Graphics.DrawLine(pen, 0, y, Width, y);
+            var t = new KpiTile();
+            t.Set(label, number, sub, accent, glyph);
+            _tiles.Add(t);
+            Controls.Add(t);
+            return t;
         }
 
         // ═══════════ KEYBOARD SHORTCUTS ═══════════
@@ -241,114 +302,79 @@ namespace CRM.winforms.Controls
             e.Handled = true;
         }
 
-        // ═══════════ TYPE FILTER ═══════════
-
-        private void SetFilter(InteractionTypeFilter? filter)
-        {
-            _currentFilter = filter;
-
-            lblGridTitle.Text = filter switch
-            {
-                InteractionTypeFilter.Inquiry => "Client questions & turnaround inquiries",
-                InteractionTypeFilter.Complaint => "Service concerns & hardware complaints",
-                InteractionTypeFilter.Feedback => "Client reviews & satisfaction feedback",
-                _ => "All customer interactions"
-            };
-
-            lblSubtitle.Text = filter switch
-            {
-                InteractionTypeFilter.Inquiry => "Questions regarding diagnostics, estimates, and repair turnaround",
-                InteractionTypeFilter.Complaint => "Concerns regarding repairs, part delays, or warranty issues",
-                InteractionTypeFilter.Feedback => "Reviews, post-service satisfaction notes, and customer ratings",
-                _ => "Client questions, repair inquiries, service concerns, and customer reviews"
-            };
-
-            btnAdd.Text = filter switch
-            {
-                InteractionTypeFilter.Inquiry => "Log question",
-                InteractionTypeFilter.Complaint => "Log concern",
-                InteractionTypeFilter.Feedback => "Log review",
-                _ => "Log interaction"
-            };
-
-            LayoutUi();
-            Invalidate();
-
-            _ = ReloadAsync();
-        }
-
-        // ═══════════ LAYOUT (4pt grid) ═══════════
+        // ═══════════ LAYOUT (matches CompaniesControl) ═══════════
 
         private void LayoutUi()
         {
             if (Width <= 0 || Height <= 0) return;
 
+            int pad = UiKit.T.S6;
+            int contentW = Math.Max(700, Width - pad * 2);
+
             // ── Header ──
-            lblTitle.Location = new Point(0, 0);
+            lblTitle.Location = new Point(pad, pad);
 
-            int subtitleY = lblTitle.PreferredHeight + 6;
-            lblSubtitle.Location = new Point(1, subtitleY);
+            int btnY = pad;
+            btnRefresh.Location = new Point(pad + contentW - btnRefresh.Width, btnY);
+            btnAdd.Location = new Point(btnRefresh.Left - btnAdd.Width - 10, btnY);
 
-            int btnW = btnAdd.PreferredWidth;
-            btnAdd.Size = new Size(btnW, UiKit.T.ButtonHeight);
-            btnAdd.Location = new Point(Width - btnAdd.Width, 2);
+            int y = lblTitle.Bottom + 20;
 
-            int refW = btnRefresh.PreferredWidth;
-            btnRefresh.Size = new Size(refW, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(btnAdd.Left - refW - UiKit.T.S2, 2);
+            // ── KPI Tiles ──
+            int tileCols = contentW >= 1100 ? 4 : (contentW >= 760 ? 2 : 1);
+            int tileGap = 16;
+            int tileW = (contentW - (tileCols - 1) * tileGap) / tileCols;
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
-
-            // ── Metric strip ──
-            int stripTop = dividerY + UiKit.T.S5;
-            int stripH = Math.Max(UiKit.T.StripHeight, strip.PreferredContentHeight());
-            strip.Location = new Point(0, stripTop);
-            strip.Size = new Size(Width, stripH);
-
-            // ── Workbench card ──
-            int cardTop = stripTop + stripH + UiKit.T.S5;
-            int cardHeight = Math.Max(240, Height - cardTop);
-
-            card.Location = new Point(0, cardTop);
-            card.Size = new Size(Width, cardHeight);
-
-            // ── Inside card ──
-            const int cp = UiKit.T.S5;
-
-            lblGridTitle.Location = new Point(cp, cp);
-            lblCount.Location = new Point(lblGridTitle.Right + UiKit.T.S2,
-                                          lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
-
-            int toolbarY = lblGridTitle.Bottom + TableKit.ToolbarGap;
-
-            segments.Size = new Size(segments.PreferredWidth, TableKit.ToolbarH);
-            segments.Location = new Point(cp, toolbarY);
-
-            int searchW = TableKit.SearchWidth(card.Width, segments.Width);
-            search.Size = new Size(searchW, TableKit.InputH);
-            search.Location = new Point(card.Width - cp - searchW, toolbarY + (TableKit.ToolbarH - TableKit.InputH) / 2);
-
-            int gridTop = toolbarY + TableKit.ToolbarH + TableKit.ToolbarGap;
-            int gridW = card.Width - cp * 2;
-            int gridH = card.Height - gridTop - cp - TableKit.FooterH;
-
-            pager.Location = new Point(cp, gridTop + Math.Max(0, gridH));
-            pager.Size = new Size(gridW, TableKit.FooterH);
-
-            if (gridW > 100 && gridH > 60)
+            int rowMaxH = 0;
+            for (int i = 0; i < _tiles.Count; i++)
             {
-                dgv.Location = new Point(cp, gridTop);
-                dgv.Size = new Size(gridW, gridH);
-                state.Location = new Point(cp, gridTop);
-                state.Size = new Size(gridW, gridH + TableKit.FooterH);
+                int col = i % tileCols;
+                if (col == 0 && i > 0)
+                {
+                    y += rowMaxH + tileGap;
+                    rowMaxH = 0;
+                }
+
+                int tx = pad + col * (tileW + tileGap);
+                int th = _tiles[i].HeightFor(tileW);
+                _tiles[i].SetBounds(tx, y, tileW, th);
+                rowMaxH = Math.Max(rowMaxH, th);
             }
+            y += rowMaxH + 24;
+
+            // ── Workbench Card ──
+            int cardPad = UiKit.T.S6;
+            int cardH = Math.Max(320, Height - y - pad);
+            card.SetBounds(pad, y, contentW, cardH);
+
+            int innerW = contentW - cardPad * 2;
+
+            int filterW = segments.PreferredWidth;
+            int searchW = Math.Max(240, Math.Min(440, innerW - filterW - 20));
+
+            search.SetBounds(cardPad, cardPad, searchW, 38);
+            segments.SetBounds(cardPad + innerW - filterW, cardPad + 1, filterW, 36);
+
+            int gridY = search.Bottom + 14;
+            int footerH = pager.Visible ? TableKit.FooterH : 0;
+            int gridH = cardH - gridY - cardPad - 26 - footerH;
+
+            dgv.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+            state.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+
+            if (pager.Visible)
+            {
+                pager.SetBounds(cardPad, gridY + Math.Max(0, gridH), innerW, TableKit.FooterH);
+            }
+
+            lblCount.Location = new Point(cardPad, (pager.Visible ? pager.Bottom : dgv.Bottom) + 6);
         }
 
-        // ═══════════ DATA LOAD ═══════════
+        // ═══════════ DATA LOAD (logic unchanged) ═══════════
 
         public async Task ReloadAsync()
         {
-            state.ShowLoading("Loading interactions…");
+            state.Show("\uE895", "Loading interactions…", "Fetching latest customer touchpoints.");
             dgv.Visible = false;
             try
             {
@@ -381,11 +407,29 @@ namespace CRM.winforms.Controls
 
         private void UpdateStats()
         {
-            strip.SetValue(0, _all.Count);
-            strip.SetValue(1, _all.Count(x => x.Status == 0));
-            strip.SetValue(2, _all.Count(x => x.Status == 1));
-            strip.SetValue(3, _all.Count(x => x.Priority == 2 && x.Status != 2));
-            strip.SetValue(4, _all.Count(x => x.Status == 2));
+            int total = _all.Count;
+            int open = _all.Count(x => x.Status == 0);
+            int inProg = _all.Count(x => x.Status == 1);
+            int high = _all.Count(x => x.Priority == 2 && x.Status != 2);
+            int closed = _all.Count(x => x.Status == 2);
+
+            tileTotal.Set("TOTAL INTERACTIONS", total.ToString(),
+                $"{open} open · {inProg} in progress", AppTheme.Primary, "\uE716");
+            tileOpen.Set("OPEN", open.ToString(),
+                open == 0 ? "No pending items" : "Awaiting staff response", AppTheme.Warning, "\uE7BA");
+            tileHigh.Set("HIGH PRIORITY", high.ToString(),
+                high == 0 ? "No urgent concerns" : "Urgent, unresolved concerns", AppTheme.Danger, "\uE7BA");
+            tileClosed.Set("CLOSED", closed.ToString(),
+                closed == 0 ? "Nothing resolved yet" : "Resolved & archived", AppTheme.Success, "\uE73E");
+
+            // The DTO's InteractionType is an int — compare against the enum cast to int.
+            segments.UpdateCounts(new Dictionary<string, int?>
+            {
+                ["All"] = total,
+                ["Questions"] = _all.Count(x => x.InteractionType == (int)InteractionTypeFilter.Inquiry),
+                ["Concerns"] = _all.Count(x => x.InteractionType == (int)InteractionTypeFilter.Complaint),
+                ["Reviews"] = _all.Count(x => x.InteractionType == (int)InteractionTypeFilter.Feedback)
+            });
         }
 
         private void ApplySearch(bool resetPage = true)
@@ -395,21 +439,14 @@ namespace CRM.winforms.Controls
 
             IEnumerable<InteractionDto> q = _all;
 
-            // Status filter
             if (_statusFilter.HasValue)
             {
                 if (_statusFilter.Value == 99)
-                {
-                    // High priority open/in-progress
                     q = q.Where(x => x.Priority == 2 && x.Status != 2);
-                }
                 else
-                {
                     q = q.Where(x => x.Status == _statusFilter.Value);
-                }
             }
 
-            // Keyword search
             if (!string.IsNullOrEmpty(term))
             {
                 q = q.Where(x =>
@@ -433,9 +470,13 @@ namespace CRM.winforms.Controls
             ConfigureColumns();
             AddActionsColumn();
 
-            lblCount.Text = TableKit.FormatCount(view.Count, _all.Count);
+            bool hasData = view.Count > 0;
+            pager.Visible = hasData && view.Count > TableKit.PageSize;
+            LayoutUi();
 
-            if (view.Count > 0)
+            lblCount.Text = $"Showing {view.Count} of {_all.Count} interactions";
+
+            if (hasData)
             {
                 state.Clear();
                 dgv.Visible = true;
@@ -462,7 +503,45 @@ namespace CRM.winforms.Controls
 
         // ═══════════ GRID STYLE & COLUMNS ═══════════
 
-        private static void StyleGrid(DataGridView g) => TableKit.StyleGrid(g);
+        private static void StyleGrid(DataGridView g)
+        {
+            typeof(DataGridView)
+                .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(g, true);
+
+            g.AutoGenerateColumns = false;
+            g.AllowUserToAddRows = false;
+            g.AllowUserToDeleteRows = false;
+            g.AllowUserToResizeRows = false;
+            g.RowHeadersVisible = false;
+            g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            g.MultiSelect = false;
+            g.BackgroundColor = UiKit.T.Surface;
+            g.BorderStyle = BorderStyle.None;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
+            g.GridColor = UiKit.T.LineSoft;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            g.EnableHeadersVisualStyles = false;
+            g.ScrollBars = ScrollBars.Both;
+            g.RowTemplate.Height = 64;
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            g.ColumnHeadersHeight = 46;
+
+            g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+
+            g.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Font = UiKit.T.Body;
+            g.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
+            g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+        }
 
         private void ConfigureColumns()
         {
@@ -496,13 +575,13 @@ namespace CRM.winforms.Controls
                 c.DisplayIndex = displayIndex;
             }
 
-            Setup("TypeText", "Type", 125, 0);
-            Setup("CustomerDisplay", "Customer & Contact", 220, 1);
-            Setup("RepairDisplay", "Linked Repair", 200, 2);
-            Setup("Subject", "Subject & Summary", 0, 3, fill: true);
-            Setup("PriorityText", "Priority", 110, 4);
-            Setup("StatusText", "Status", 130, 5);
-            Setup("InteractionDate", "Created", 140, 6);
+            Setup("TypeText", "TYPE", 125, 0);
+            Setup("CustomerDisplay", "CUSTOMER & CONTACT", 220, 1);
+            Setup("RepairDisplay", "LINKED REPAIR", 200, 2);
+            Setup("Subject", "SUBJECT & SUMMARY", 0, 3, fill: true);
+            Setup("PriorityText", "PRIORITY", 110, 4);
+            Setup("StatusText", "STATUS", 130, 5);
+            Setup("InteractionDate", "CREATED", 140, 6);
 
             if (dgv.Columns["InteractionDate"] is { } dateCol)
             {
@@ -512,193 +591,282 @@ namespace CRM.winforms.Controls
             }
         }
 
-        private void AddActionsColumn() => TableKit.AddActionsColumn(dgv, ColActions);
+        private void AddActionsColumn()
+        {
+            if (dgv.Columns.Contains(ColActions)) return;
 
-        // ═══════════ CELL PAINTING (2-Line Rich Cells & Badges) ═══════════
+            var btnCol = new DataGridViewButtonColumn
+            {
+                Name = ColActions,
+                HeaderText = "",
+                Text = "",
+                UseColumnTextForButtonValue = true,
+                Width = 56,
+                MinimumWidth = 56,
+                FlatStyle = FlatStyle.Flat,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
+            btnCol.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            btnCol.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            btnCol.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
+            btnCol.DefaultCellStyle.Padding = new Padding(0);
+            dgv.Columns.Add(btnCol);
+        }
+
+        // ═══════════ CELL PAINTING (CompaniesControl-style) ═══════════
 
         private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
             if (e.Graphics == null) return;
-            var g = e.Graphics;
+            var gr = e.Graphics;
+            var cell = e.CellBounds;
 
-            // Header baseline rule
+            // Header
             if (e.RowIndex == -1)
             {
-                e.PaintBackground(e.CellBounds, false);
-                e.PaintContent(e.CellBounds);
-                TableKit.PaintHeaderRule(g, e.CellBounds);
+                using (var b = new SolidBrush(UiKit.T.Surface))
+                    gr.FillRectangle(b, cell);
+                using (var p = new Pen(UiKit.T.Line))
+                    gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+                UiKit.Quality(gr);
+                UiKit.Text(gr, Convert.ToString(e.Value) ?? "", UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1),
+                    CellText);
                 e.Handled = true;
                 return;
             }
 
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-
             string col = dgv.Columns[e.ColumnIndex].Name;
             bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
             bool hovered = e.RowIndex == _hoverRow;
+            bool focused = dgv.Focused;
 
-            Color bg = TableKit.RowBackground(e, selected, hovered);
+            Color rowBg = UiKit.T.Surface;
+            if (selected && focused) rowBg = UiKit.T.RowHover;
+            else if (selected && !focused) rowBg = UiKit.T.LineSoft;
+            else if (hovered) rowBg = UiKit.T.RowHover;
 
-            TableKit.PaintRowShell(g, e.CellBounds, bg);
+            using (var b = new SolidBrush(rowBg))
+                gr.FillRectangle(b, cell);
+            using (var p = new Pen(UiKit.T.LineSoft))
+                gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
 
-            bool custom = col is "TypeText" or "CustomerDisplay" or "RepairDisplay" or "Subject" or "PriorityText" or "StatusText" || col == ColActions;
+            UiKit.Quality(gr);
 
-            if (!custom)
-            {
-                e.PaintContent(e.CellBounds);
-                e.Handled = true;
-                return;
-            }
+            if (e.ColumnIndex == 0 && selected && focused)
+                UiKit.FillRounded(gr, new Rectangle(cell.Left, cell.Top + 12, 3, cell.Height - 25), 1, AppTheme.Primary);
 
-            UiKit.Quality(g);
-            var r = e.CellBounds;
-            string text = e.FormattedValue?.ToString() ?? string.Empty;
+            var r = new Rectangle(cell.Left + CellPadX, cell.Top,
+                Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1);
+            int cy = r.Top + r.Height / 2;
+            string text = Convert.ToString(e.FormattedValue) ?? string.Empty;
             var rowItem = dgv.Rows[e.RowIndex].DataBoundItem as InteractionDto;
 
-            // 1. Actions menu button
-            if (col == ColActions)
+            switch (col)
             {
-                TableKit.PaintActionCell(g, r, hovered);
-                e.Handled = true;
-                return;
+                case "TypeText":
+                    {
+                        Color accent = text switch
+                        {
+                            "Inquiry" => AppTheme.Primary,
+                            "Complaint" => AppTheme.Danger,
+                            "Feedback" => AppTheme.Success,
+                            _ => UiKit.T.InkFaint
+                        };
+                        string label = text switch
+                        {
+                            "Inquiry" => "Question",
+                            "Complaint" => "Concern",
+                            "Feedback" => "Review",
+                            _ => text
+                        };
+                        PaintDotPill(gr, r, cy, label, accent, UiKit.T.SmallStrong);
+                        break;
+                    }
+
+                case "CustomerDisplay":
+                    if (rowItem != null)
+                        PaintCustomerCell(gr, rowItem.CustomerDisplay, rowItem.ContactDisplay, r);
+                    break;
+
+                case "RepairDisplay":
+                    if (rowItem != null)
+                    {
+                        string line1 = !string.IsNullOrWhiteSpace(rowItem.RepairRequestNumber) ? rowItem.RepairRequestNumber : "General Support";
+                        string line2 = !string.IsNullOrWhiteSpace(rowItem.DeviceModel) ? rowItem.DeviceModel : "No device linked";
+                        PaintTwoLine(gr, r, line1, line2);
+                    }
+                    break;
+
+                case "Subject":
+                    if (rowItem != null)
+                    {
+                        string snippet = !string.IsNullOrWhiteSpace(rowItem.Notes)
+                            ? rowItem.Notes.Replace("\r", " ").Replace("\n", " ")
+                            : "No notes provided";
+                        PaintTwoLine(gr, r, rowItem.Subject, snippet);
+                    }
+                    break;
+
+                case "PriorityText":
+                    {
+                        if (text == "High" || text == "Medium")
+                        {
+                            Color accent = text == "High" ? AppTheme.Danger : AppTheme.Primary;
+                            PaintDotPill(gr, r, cy, text, accent, UiKit.T.SmallStrong);
+                        }
+                        else
+                        {
+                            UiKit.Text(gr, text, UiKit.T.Small, UiKit.T.InkMuted, r, CellText);
+                        }
+                        break;
+                    }
+
+                case "StatusText":
+                    {
+                        Color accent = text switch
+                        {
+                            "Open" => AppTheme.Warning,
+                            "In Progress" => AppTheme.Primary,
+                            "Closed" => AppTheme.Success,
+                            _ => UiKit.T.InkMuted
+                        };
+                        PaintDotPill(gr, r, cy, text, accent, UiKit.T.SmallStrong);
+                        break;
+                    }
+
+                case "InteractionDate":
+                    UiKit.Text(gr, text, UiKit.T.Small, UiKit.T.InkMuted, r, CellText);
+                    break;
+
+                case ColActions:
+                    {
+                        int size = 30;
+                        var btn = new Rectangle(r.Right - size, cy - size / 2, size, size);
+                        bool hot = hovered;
+
+                        UiKit.FillRounded(gr, btn, 8, hot ? UiKit.Wash(AppTheme.Primary) : Color.Transparent);
+
+                        int dotR = 2;
+                        int dotGap = 6;
+                        int dotY = cy - dotR;
+                        int startX = btn.Left + (btn.Width / 2) - dotGap;
+                        using (var b = new SolidBrush(hot ? AppTheme.Primary : UiKit.T.InkMuted))
+                        {
+                            gr.FillEllipse(b, startX - dotR, dotY, dotR * 2, dotR * 2);
+                            gr.FillEllipse(b, startX - dotR + dotGap, dotY, dotR * 2, dotR * 2);
+                            gr.FillEllipse(b, startX - dotR + dotGap * 2, dotY, dotR * 2, dotR * 2);
+                        }
+                        break;
+                    }
+
+                default:
+                    e.PaintContent(cell);
+                    break;
             }
 
-            // 2. Type Dot + Label
-            if (col == "TypeText")
-            {
-                Color accent = text switch
-                {
-                    "Inquiry" => AppTheme.Primary,
-                    "Complaint" => AppTheme.Danger,
-                    "Feedback" => AppTheme.Success,
-                    _ => UiKit.T.InkFaint
-                };
-
-                string label = text switch
-                {
-                    "Inquiry" => "Question",
-                    "Complaint" => "Concern",
-                    "Feedback" => "Review",
-                    _ => text
-                };
-
-                TableKit.PaintDotText(g, r, accent, label);
-                e.Handled = true;
-                return;
-            }
-
-            // 3. Customer Display (Name on line 1, Phone/Email on line 2)
-            if (col == "CustomerDisplay" && rowItem != null)
-            {
-                TableKit.PaintTwoLine(g, r, rowItem.CustomerDisplay, rowItem.ContactDisplay);
-                e.Handled = true;
-                return;
-            }
-
-            // 4. Linked Repair (Ticket # on line 1, Device model on line 2)
-            if (col == "RepairDisplay" && rowItem != null)
-            {
-                string line1 = !string.IsNullOrWhiteSpace(rowItem.RepairRequestNumber) ? rowItem.RepairRequestNumber : "General Support";
-                string line2 = !string.IsNullOrWhiteSpace(rowItem.DeviceModel) ? rowItem.DeviceModel : "No device linked";
-                TableKit.PaintTwoLine(g, r, line1, line2);
-                e.Handled = true;
-                return;
-            }
-
-            // 5. Subject & Notes Snippet (Subject in bold on line 1, Notes snippet on line 2)
-            if (col == "Subject" && rowItem != null)
-            {
-                string snippet = !string.IsNullOrWhiteSpace(rowItem.Notes)
-                    ? rowItem.Notes.Replace("\r", " ").Replace("\n", " ")
-                    : "No notes provided";
-                TableKit.PaintTwoLine(g, r, rowItem.Subject, snippet);
-                e.Handled = true;
-                return;
-            }
-
-            // 6. Priority — always a pill (High = urgent red, Medium = info blue).
-            if (col == "PriorityText")
-            {
-                if (text == "High" || text == "Medium")
-                {
-                    Color accent = text == "High" ? AppTheme.Danger : AppTheme.Primary;
-                    var size = UiKit.Measure(text, UiKit.T.SmallStrong);
-                    var pill = new Rectangle(r.Left + UiKit.T.S3, r.Top + (r.Height - 22) / 2,
-                        Math.Max(56, size.Width + 20), 22);
-                    UiKit.FillRounded(g, pill, UiKit.T.PillRadius, UiKit.Wash(accent));
-                    UiKit.Text(g, text, UiKit.T.SmallStrong, accent, pill,
-                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-                }
-                else
-                {
-                    TableKit.PaintPill(g, r, text);
-                }
-
-                e.Handled = true;
-                return;
-            }
-
-            // 7. Status Pill
-            if (col == "StatusText")
-            {
-                Color accent = text switch
-                {
-                    "Open" => AppTheme.Warning,
-                    "In Progress" => AppTheme.Primary,
-                    "Closed" => AppTheme.Success,
-                    _ => UiKit.T.InkMuted
-                };
-
-                var size = UiKit.Measure(text, UiKit.T.SmallStrong);
-                int pillW = size.Width + UiKit.T.S4;
-                int pillH = 22;
-                var pill = new Rectangle(r.Left + UiKit.T.S3, r.Top + (r.Height - pillH) / 2, pillW, pillH);
-
-                UiKit.FillRounded(g, pill, UiKit.T.PillRadius, UiKit.Wash(accent));
-                UiKit.Text(g, text, UiKit.T.SmallStrong, accent, pill,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-
-                e.Handled = true;
-            }
+            e.Handled = true;
         }
 
-        // ═══════════ ACTIONS MENU ═══════════
+        private static void PaintCustomerCell(Graphics gr, string? name, string? contact, Rectangle rect)
+        {
+            const int av = 36;
+            string cname = string.IsNullOrWhiteSpace(name) ? "Customer" : name;
+
+            var avRect = new Rectangle(rect.Left, rect.Top + (rect.Height - av) / 2, av, av);
+            Color ac = AvatarColor(cname);
+            UiKit.FillRounded(gr, avRect, 10, UiKit.Wash(ac));
+
+            string initial = string.IsNullOrWhiteSpace(cname) ? "?" : cname.Trim().Substring(0, 1).ToUpperInvariant();
+            UiKit.Text(gr, initial, UiKit.T.BodyStrong, ac, avRect, UiKit.Center);
+
+            int tx = avRect.Right + 12;
+            int tw = Math.Max(0, rect.Right - tx);
+            string sub = contact ?? "";
+
+            if (string.IsNullOrWhiteSpace(sub))
+            {
+                UiKit.Text(gr, cname, UiKit.T.BodyStrong, UiKit.T.Ink,
+                    new Rectangle(tx, rect.Top, tw, rect.Height), CellText);
+                return;
+            }
+
+            int h1 = UiKit.T.BodyStrong.Height + 2;
+            int h2 = UiKit.T.Small.Height + 2;
+            int y0 = rect.Top + (rect.Height - (h1 + h2)) / 2;
+
+            UiKit.Text(gr, cname, UiKit.T.BodyStrong, UiKit.T.Ink, new Rectangle(tx, y0, tw, h1), CellText);
+            UiKit.Text(gr, sub, UiKit.T.Small, UiKit.T.InkMuted, new Rectangle(tx, y0 + h1, tw, h2), CellText);
+        }
+
+        private static void PaintTwoLine(Graphics gr, Rectangle rect, string line1, string line2)
+        {
+            bool hasSecond = !string.IsNullOrWhiteSpace(line2);
+            if (!hasSecond)
+            {
+                UiKit.Text(gr, line1 ?? "", UiKit.T.BodyStrong, UiKit.T.Ink, rect, CellText);
+                return;
+            }
+
+            int h1 = UiKit.T.BodyStrong.Height + 2;
+            int h2 = UiKit.T.Small.Height + 2;
+            int y0 = rect.Top + (rect.Height - (h1 + h2)) / 2;
+
+            UiKit.Text(gr, line1 ?? "", UiKit.T.BodyStrong, UiKit.T.Ink,
+                new Rectangle(rect.Left, y0, rect.Width, h1), CellText);
+            UiKit.Text(gr, line2 ?? "", UiKit.T.Small, UiKit.T.InkMuted,
+                new Rectangle(rect.Left, y0 + h1, rect.Width, h2), CellText);
+        }
+
+        private static void PaintDotPill(Graphics gr, Rectangle rect, int cy, string text, Color fg, Font font)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            int textW = MeasureW(text, font);
+            int pillW = Math.Min(rect.Width, textW + 34);
+            var pill = new Rectangle(rect.Left, cy - 12, pillW, 24);
+
+            UiKit.FillRounded(gr, pill, 12, UiKit.Wash(fg));
+            UiKit.FillRounded(gr, new Rectangle(pill.Left + 11, cy - 3, 6, 6), 3, fg);
+            UiKit.Text(gr, text, font, fg,
+                new Rectangle(pill.Left + 23, pill.Top, Math.Max(0, pill.Width - 31), pill.Height),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat);
+        }
+
+        // ═══════════ ACTIONS MENU (logic unchanged) ═══════════
 
         private void BuildActionsMenu()
         {
-            _actionsMenu = TableKit.MakeMenu();
+            _actionsMenu = new ContextMenuStrip { ShowImageMargin = false, Font = UiKit.T.Body };
+            _actionsMenu.Renderer = new QuietMenuRenderer();
 
-            // 0: Resolve
-            var miResolve = _actionsMenu.Items.Add("Resolve / Close Ticket");
-            miResolve.Click += OnMenuQuickResolve;
+            var miResolve = _actionsMenu.Items.Add("Resolve / Close Ticket") as ToolStripMenuItem;
+            miResolve!.Click += OnMenuQuickResolve;
 
-            // 1: Schedule Follow-up
-            var miFollowUp = _actionsMenu.Items.Add("Schedule Customer Follow-Up");
-            miFollowUp.Click += OnMenuScheduleFollowUp;
-
-            _actionsMenu.Items.Add(new ToolStripSeparator());
-
-            // 3: Call Customer
-            var miCall = _actionsMenu.Items.Add("Call Customer");
-            miCall.Click += OnMenuCall;
-
-            // 4: Email Customer
-            var miEmail = _actionsMenu.Items.Add("Email Customer");
-            miEmail.Click += OnMenuEmail;
+            var miFollowUp = _actionsMenu.Items.Add("Schedule Customer Follow-Up") as ToolStripMenuItem;
+            miFollowUp!.Click += OnMenuScheduleFollowUp;
 
             _actionsMenu.Items.Add(new ToolStripSeparator());
 
-            // 6: Customer History
-            var miHistory = _actionsMenu.Items.Add("View Customer History");
-            miHistory.Click += OnMenuCustomerHistory;
+            var miCall = _actionsMenu.Items.Add("Call Customer") as ToolStripMenuItem;
+            miCall!.Click += OnMenuCall;
 
-            // 7: Linked Repair
-            var miRepair = _actionsMenu.Items.Add("View Linked Repair Ticket");
-            miRepair.Click += OnMenuRepairDetails;
+            var miEmail = _actionsMenu.Items.Add("Email Customer") as ToolStripMenuItem;
+            miEmail!.Click += OnMenuEmail;
 
-            // 8: Edit Full
-            var miEdit = _actionsMenu.Items.Add("Edit Interaction");
-            miEdit.Click += (s, e) =>
+            _actionsMenu.Items.Add(new ToolStripSeparator());
+
+            var miHistory = _actionsMenu.Items.Add("View Customer History") as ToolStripMenuItem;
+            miHistory!.Click += OnMenuCustomerHistory;
+
+            var miRepair = _actionsMenu.Items.Add("View Linked Repair Ticket") as ToolStripMenuItem;
+            miRepair!.Click += OnMenuRepairDetails;
+
+            var miEdit = _actionsMenu.Items.Add("Edit Interaction") as ToolStripMenuItem;
+            miEdit!.Click += (s, e) =>
             {
                 if (_menuRowIndex >= 0 && dgv.Rows[_menuRowIndex].DataBoundItem is InteractionDto dto)
                     OpenEditDialog(dto);
@@ -706,11 +874,8 @@ namespace CRM.winforms.Controls
 
             _actionsMenu.Items.Add(new ToolStripSeparator());
 
-            // 10: Archive / Restore
-            var miArchive = _actionsMenu.Items.Add("Archive");
-            miArchive.Click += OnMenuArchive;
-
-            TableKit.StyleMenuItems(_actionsMenu);
+            var miArchive = _actionsMenu.Items.Add("Archive") as ToolStripMenuItem;
+            miArchive!.Click += OnMenuArchive;
 
             _actionsMenu.Opening += (s, e) =>
             {
@@ -735,6 +900,8 @@ namespace CRM.winforms.Controls
             _actionsMenu.Closed += (s, e) => { dgv.Invalidate(); };
         }
 
+        // ═══════════ MENU HANDLERS (logic unchanged) ═══════════
+
         private void OnMenuQuickResolve(object? sender, EventArgs e)
         {
             if (_menuRowIndex < 0 || _menuRowIndex >= dgv.RowCount) return;
@@ -758,7 +925,7 @@ namespace CRM.winforms.Controls
                 RepairRequestId = dto.RepairRequestId,
                 Subject = $"Follow-up: {dto.Subject}",
                 ScheduledAt = DateTime.Today.AddDays(1).AddHours(10),
-                Channel = 0 // Call
+                Channel = 0
             };
 
             using var dlg = new FollowUpFormDialog(prefillFollowUp, _cachedCustomers, _cachedRepairs);
@@ -772,7 +939,6 @@ namespace CRM.winforms.Controls
         {
             if (_menuRowIndex < 0 || _menuRowIndex >= dgv.RowCount) return;
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
-
             if (string.IsNullOrWhiteSpace(dto.CustomerPhone)) return;
 
             try
@@ -791,7 +957,6 @@ namespace CRM.winforms.Controls
         {
             if (_menuRowIndex < 0 || _menuRowIndex >= dgv.RowCount) return;
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
-
             if (string.IsNullOrWhiteSpace(dto.CustomerEmail)) return;
 
             try
@@ -813,9 +978,7 @@ namespace CRM.winforms.Controls
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
 
             if (dto.CustomerId.HasValue)
-            {
                 ActionRequested?.Invoke(this, $"customer-history:{dto.CustomerId.Value}");
-            }
         }
 
         private void OnMenuRepairDetails(object? sender, EventArgs e)
@@ -824,9 +987,7 @@ namespace CRM.winforms.Controls
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
 
             if (dto.RepairRequestId.HasValue)
-            {
                 ActionRequested?.Invoke(this, "repairs");
-            }
         }
 
         private async void OnMenuArchive(object? sender, EventArgs e)
@@ -834,21 +995,18 @@ namespace CRM.winforms.Controls
             if (_menuRowIndex < 0 || _menuRowIndex >= dgv.RowCount) return;
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not InteractionDto dto) return;
 
-            if (dto.IsActive)
-                await ArchiveAsync(dto);
-            else
-                await RestoreAsync(dto);
+            if (dto.IsActive) await ArchiveAsync(dto);
+            else await RestoreAsync(dto);
         }
 
         private void Dgv_CellClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-
             if (dgv.Columns[e.ColumnIndex].Name != ColActions) return;
 
             _menuRowIndex = e.RowIndex;
             var cellRect = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
-            _actionsMenu.Show(dgv, new Point(cellRect.Right - 160, cellRect.Bottom));
+            _actionsMenu.Show(dgv, new Point(cellRect.Right - _actionsMenu.Width, cellRect.Bottom));
         }
 
         private void Dgv_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -861,11 +1019,9 @@ namespace CRM.winforms.Controls
         private void Dgv_CellMouseEnter(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0) { _hoverRow = -1; return; }
-
             _hoverRow = e.RowIndex;
             dgv.Cursor = e.ColumnIndex >= 0 && dgv.Columns[e.ColumnIndex].Name == ColActions
-                ? Cursors.Hand
-                : Cursors.Default;
+                ? Cursors.Hand : Cursors.Default;
             dgv.InvalidateRow(e.RowIndex);
         }
 
@@ -876,7 +1032,7 @@ namespace CRM.winforms.Controls
             dgv.InvalidateRow(e.RowIndex);
         }
 
-        // ═══════════ ARCHIVE / RESTORE ═══════════
+        // ═══════════ ARCHIVE / RESTORE (logic unchanged) ═══════════
 
         private async Task ArchiveAsync(InteractionDto dto)
         {
@@ -896,11 +1052,8 @@ namespace CRM.winforms.Controls
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    $"Couldn't archive this interaction.\n\n{ex.Message}",
-                    "Archive failed",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
+                MessageBox.Show($"Couldn't archive this interaction.\n\n{ex.Message}",
+                    "Archive failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -913,15 +1066,12 @@ namespace CRM.winforms.Controls
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    $"Couldn't restore this interaction.\n\n{ex.Message}",
-                    "Restore failed",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
+                MessageBox.Show($"Couldn't restore this interaction.\n\n{ex.Message}",
+                    "Restore failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        // ═══════════ MODAL LAUNCHERS ═══════════
+        // ═══════════ MODAL LAUNCHERS (logic unchanged) ═══════════
 
         private void OpenAddDialog()
         {
@@ -938,23 +1088,351 @@ namespace CRM.winforms.Controls
         }
 
         // ═══════════════════════════════════════════════════════════════
-        //  NESTED UI COMPONENTS
+        //  EMBEDDED KPI TILE (identical to CompaniesControl)
+        // ═══════════════════════════════════════════════════════════════
+
+        private sealed class KpiTile : Control
+        {
+            private const int Pad = 22;
+            private const int IconSize = 36;
+            private const int ChevronW = 16;
+            private const int UnitGap = 6;
+            private const int MinHeight = 132;
+
+            private const TextFormatFlags One = TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+            private const TextFormatFlags Wrapped = One | TextFormatFlags.WordBreak;
+
+            private static readonly Font[] NumFonts =
+            {
+                AppFonts.Strong(26F),
+                AppFonts.Strong(22F),
+                AppFonts.Strong(18F),
+                AppFonts.Strong(15F),
+                AppFonts.Strong(12F)
+            };
+
+            private static readonly Font UnitFont = AppFonts.Strong(11F);
+
+            private string _label = "";
+            private string _number = "0";
+            private string _sub = "";
+            private Color _accent = AppTheme.Primary;
+            private string _glyph = "";
+            private bool _hover;
+            private bool _down;
+
+            public KpiTile()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+                TabStop = true;
+                Cursor = Cursors.Hand;
+            }
+
+            public void Set(string label, string number, string sub, Color accent, string glyph)
+            {
+                _label = label;
+                _number = number;
+                _sub = sub;
+                _accent = accent;
+                _glyph = glyph;
+                AccessibleName = $"{label}: {number}. {sub}";
+                Invalidate();
+            }
+
+            public int HeightFor(int width) =>
+                string.IsNullOrEmpty(_label) ? MinHeight : Math.Max(MinHeight, Measure(width).Total);
+
+            private static int TextH(string text, Font font, int width, bool wrap)
+            {
+                if (string.IsNullOrEmpty(text)) return font.Height;
+                var size = TextRenderer.MeasureText(text, font,
+                    new Size(Math.Max(10, width - 4), int.MaxValue), wrap ? Wrapped : One);
+                return Math.Max(font.Height, size.Height) + 2;
+            }
+
+            private static bool TrySplit(string number, out string main, out string unit)
+            {
+                main = number;
+                unit = "";
+                if (string.IsNullOrWhiteSpace(number)) return false;
+
+                int sp = number.IndexOf(' ');
+                if (sp <= 0 || sp >= number.Length - 1) return false;
+
+                string head = number.Substring(0, sp);
+                if (!head.Any(char.IsDigit)) return false;
+
+                main = head;
+                unit = number.Substring(sp + 1);
+                return true;
+            }
+
+            private (Font NumFont, bool NumWrap, string Main, string Unit, int TopH, int NumH, int CapH, int Total) Measure(int width)
+            {
+                int inner = Math.Max(40, width - Pad * 2);
+                int labelW = Math.Max(40, inner - IconSize - 12 - ChevronW);
+
+                int labelH = TextH(_label, UiKit.T.SmallStrong, labelW, true);
+                int topH = Math.Max(IconSize, labelH);
+
+                bool split = TrySplit(_number, out string main, out string unit);
+                int unitW = split
+                    ? TextRenderer.MeasureText(unit, UnitFont, new Size(int.MaxValue, int.MaxValue), One).Width + UnitGap
+                    : 0;
+
+                Font numFont = NumFonts[^1];
+                bool numWrap = true;
+                foreach (var f in NumFonts)
+                {
+                    var w = TextRenderer.MeasureText(main, f, new Size(int.MaxValue, int.MaxValue), One).Width + unitW;
+                    if (w <= inner - 4) { numFont = f; numWrap = false; break; }
+                }
+
+                if (numWrap) { main = _number; unit = ""; }
+
+                int numH = TextH(main, numFont, inner, numWrap);
+                int capH = TextH(_sub, UiKit.T.Small, inner, true);
+
+                int total = Pad + topH + 14 + numH + 6 + capH + Pad;
+                return (numFont, numWrap, main, unit, topH, numH, capH, total);
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Focus(); Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var bg = new SolidBrush(AppTheme.Background))
+                    g.FillRectangle(bg, ClientRectangle);
+
+                bool loading = string.IsNullOrEmpty(_label);
+                Color accent = loading ? UiKit.T.InkFaint : _accent;
+
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius,
+                    _down && !loading ? UiKit.Wash(accent) : UiKit.T.Surface,
+                    _hover && !loading ? accent : UiKit.T.Line);
+
+                if (loading)
+                {
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad, IconSize, IconSize), 10, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad + IconSize + 12, Pad + 12, Math.Max(20, Width / 3), 12), 4, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad + 56, Math.Max(20, Width / 2), 26), 4, UiKit.T.LineSoft);
+                    return;
+                }
+
+                var m = Measure(Width);
+                int inner = Width - Pad * 2;
+
+                var iconRect = new Rectangle(Pad, Pad + (m.TopH - IconSize) / 2, IconSize, IconSize);
+                UiKit.FillRounded(g, iconRect, 10, UiKit.Wash(accent));
+                using (var f = UiKit.GlyphFont(12F))
+                    UiKit.Text(g, _glyph, f, accent, iconRect, UiKit.Center);
+
+                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(Pad + IconSize + 12, Pad, inner - IconSize - 12 - ChevronW, m.TopH),
+                    Wrapped | TextFormatFlags.VerticalCenter);
+
+                using (var cf = UiKit.GlyphFont(9F))
+                    UiKit.Text(g, "\uE76C", cf, _hover ? accent : UiKit.T.InkFaint,
+                        new Rectangle(Width - Pad - ChevronW + 2, Pad + (m.TopH - 20) / 2, ChevronW, 20), UiKit.Center);
+
+                int numTop = Pad + m.TopH + 14;
+                if (m.Unit.Length > 0)
+                {
+                    int mw = TextRenderer.MeasureText(m.Main, m.NumFont, new Size(int.MaxValue, int.MaxValue), One).Width;
+                    UiKit.Text(g, m.Main, m.NumFont, UiKit.T.Ink,
+                        new Rectangle(Pad, numTop, mw + 4, m.NumH), One | TextFormatFlags.Top);
+
+                    int uy = numTop + m.NumFont.Height - UnitFont.Height
+                             - (int)Math.Round(Descent(m.NumFont) - Descent(UnitFont));
+                    UiKit.Text(g, m.Unit, UnitFont, UiKit.T.InkMuted,
+                        new Rectangle(Pad + mw + UnitGap, uy, Math.Max(10, inner - mw - UnitGap), UnitFont.Height + 2),
+                        One | TextFormatFlags.Top);
+                }
+                else
+                {
+                    UiKit.Text(g, m.Main, m.NumFont, UiKit.T.Ink,
+                        new Rectangle(Pad, numTop, inner, m.NumH),
+                        (m.NumWrap ? Wrapped : One) | TextFormatFlags.Top);
+                }
+
+                UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkMuted,
+                    new Rectangle(Pad, numTop + m.NumH + 6, inner, m.CapH),
+                    Wrapped | TextFormatFlags.Top);
+
+                if (Focused)
+                {
+                    var ring = ClientRectangle;
+                    ring.Inflate(-1, -1);
+                    UiKit.StrokeRounded(g, ring, UiKit.T.Radius, accent, 2f);
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        //  SEGMENTED FILTER (consistent with CompaniesControl)
         // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]
-        private sealed class SurfaceCard : WorkbenchCard { }
-        [DesignerCategory("Code")]
-        private sealed class MetricStrip : WorkbenchMetrics { }
-        [DesignerCategory("Code")]
-        private sealed class SegmentedFilter : WorkbenchSegments<InteractionTypeFilter?>
+        private sealed class InteractionsSegmentedFilter : Control
         {
-            public SegmentedFilter((string, InteractionTypeFilter?)[] items) : base(items) { }
-        }
-        [DesignerCategory("Code")]
-        private sealed class SearchBox : WorkbenchSearch { }
-        [DesignerCategory("Code")]
-        private sealed class StateView : WorkbenchState { }
-        private sealed class QuietMenuRenderer : WorkbenchMenuRenderer { }
+            private readonly List<(string Key, int? Count)> _items = new();
+            private int _selected = 0;
+            private int _hover = -1;
 
+            public event EventHandler<string>? SelectionChanged;
+
+            public InteractionsSegmentedFilter((string Key, int? Count)[] items)
+            {
+                _items.AddRange(items);
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.T.Surface;
+                Cursor = Cursors.Hand;
+                Font = UiKit.T.SmallStrong;
+                Height = 36;
+            }
+
+            public int PreferredWidth
+            {
+                get
+                {
+                    int total = 16;
+                    foreach (var item in _items)
+                    {
+                        string text = item.Count.HasValue ? $"{item.Key} ({item.Count})" : item.Key;
+                        var sz = TextRenderer.MeasureText(text, Font);
+                        total += Math.Max(104, sz.Width + 28);
+                    }
+                    return Math.Max(330, total);
+                }
+            }
+
+            public void UpdateCounts(Dictionary<string, int?> counts)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (counts.TryGetValue(_items[i].Key, out var c))
+                        _items[i] = (_items[i].Key, c);
+                }
+                Invalidate();
+            }
+
+            public void SetKey(string key)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (string.Equals(_items[i].Key, key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (_selected != i)
+                        {
+                            _selected = i;
+                            Invalidate();
+                            SelectionChanged?.Invoke(this, _items[_selected].Key);
+                        }
+                        return;
+                    }
+                }
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 9, UiKit.T.LineSoft);
+
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var seg = new Rectangle(2 + i * segW, 2, segW, Height - 4);
+                    bool active = i == _selected;
+                    if (active)
+                    {
+                        UiKit.FillRounded(g, seg, 7, UiKit.T.Surface);
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 7);
+                        g.DrawPath(pen, path);
+                    }
+
+                    string text = _items[i].Count.HasValue
+                        ? $"{_items[i].Key} ({_items[i].Count.GetValueOrDefault()})"
+                        : _items[i].Key;
+
+                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.Ink : UiKit.T.InkMuted);
+                    UiKit.Text(g, text, UiKit.T.SmallStrong, fg, seg,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx != _hover) { _hover = idx; Invalidate(); }
+                base.OnMouseMove(e);
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                _hover = -1; Invalidate(); base.OnMouseLeave(e);
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx >= 0 && idx < _items.Count && idx != _selected)
+                {
+                    _selected = idx;
+                    Invalidate();
+                    SelectionChanged?.Invoke(this, _items[_selected].Key);
+                }
+                base.OnMouseClick(e);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        //  QUIET MENU RENDERER (consistent with CompaniesControl)
+        // ═══════════════════════════════════════════════════════════════
+
+        [DesignerCategory("Code")]
+        private sealed class QuietMenuRenderer : ToolStripProfessionalRenderer
+        {
+            public QuietMenuRenderer() : base(new Colors()) { RoundedEdges = false; }
+
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                var r = new Rectangle(4, 0, e.Item.Width - 8, e.Item.Height);
+                if (e.Item.Selected) UiKit.FillRounded(e.Graphics, r, 6, UiKit.T.RowHover);
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                using var pen = new Pen(UiKit.T.LineSoft, 1);
+                int y = e.Item.Height / 2;
+                e.Graphics.DrawLine(pen, 8, y, e.Item.Width - 8, y);
+            }
+
+            private sealed class Colors : ProfessionalColorTable
+            {
+                public override Color ToolStripDropDownBackground => UiKit.T.Surface;
+                public override Color MenuBorder => UiKit.T.Line;
+                public override Color MenuItemBorder => UiKit.T.Surface;
+                public override Color ImageMarginGradientBegin => UiKit.T.Surface;
+                public override Color ImageMarginGradientMiddle => UiKit.T.Surface;
+                public override Color ImageMarginGradientEnd => UiKit.T.Surface;
+            }
+        }
     }
 }

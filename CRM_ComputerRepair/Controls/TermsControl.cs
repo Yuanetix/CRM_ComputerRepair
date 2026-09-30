@@ -4,15 +4,17 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace CRM.winforms
 {
     /// <summary>
-    /// Terms & Conditions legal document manager and version history viewer.
-    /// Modern SaaS master-detail workspace matching Dashboard, Reports, and Retention.
+    /// Terms &amp; Conditions legal document manager and version history viewer.
+    /// Flat master-detail workspace: no cards, just panels separated by hairlines.
     /// </summary>
     [DesignerCategory("Code")]
     public class TermsControl : UserControl
@@ -27,30 +29,36 @@ namespace CRM.winforms
 
         // Header
         private Label lblTitle = null!;
-        private Label lblSubtitle = null!;
+        private Label lblSummary = null!;
         private SaasButton btnRefresh = null!;
         private SaasButton btnNew = null!;
 
-        // Left Pane: Version History
-        private HistoryCard cardHistory = null!;
+        // Left rail
         private Label lblHistoryTitle = null!;
         private Label lblHistoryBadge = null!;
         private VersionListBox lstVersions = null!;
 
-        // Right Pane: Document Viewer
-        private DocumentCard cardDocument = null!;
+        // Right pane — header
+        private Label lblActiveChip = null!;
         private Label lblDocTitle = null!;
         private Label lblDocMeta = null!;
         private SaasButton btnActivate = null!;
         private SaasButton btnEdit = null!;
         private SaasButton btnCopy = null!;
+
+        // Right pane — body
+        private Panel docCanvas = null!;
         private RichTextBox txtContent = null!;
         private Label lblDocStats = null!;
 
         // Empty state
-        private StateView state = null!;
+        private WorkbenchState state = null!;
 
-        private readonly ToolTip _tips = new ToolTip { InitialDelay = 400, ReshowDelay = 200 };
+        // ═══════════ DRAWING HELPERS ═══════════
+
+        private const TextFormatFlags Flat = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        private const TextFormatFlags CellText = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat;
 
         // ═══════════ CONSTRUCTOR ═══════════
 
@@ -78,53 +86,51 @@ namespace CRM.winforms
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = AppTheme.Background,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
-            lblSubtitle = new Label
+            lblSummary = new Label
             {
-                Text = "Company service agreements, repair liability policies, and version history",
-                Font = UiKit.T.Subtitle,
+                Text = "",
+                Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = AppTheme.Background,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
             btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnRefresh.Size = new Size(100, 36);
             btnRefresh.Click += async (s, e) => await ReloadAsync();
-            _tips.SetToolTip(btnRefresh, "Refresh terms versions (F5)");
 
             btnNew = new SaasButton("New Version", SaasButtonVariant.Primary, "\uE710");
+            btnNew.Size = new Size(150, 36);
             btnNew.Click += async (s, e) => await NewVersionAsync();
-            _tips.SetToolTip(btnNew, "Publish a new terms version (Ctrl+N)");
 
             Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
+            Controls.Add(lblSummary);
             Controls.Add(btnRefresh);
             Controls.Add(btnNew);
 
-            // ── Left: Version History Panel ──
-            cardHistory = new HistoryCard();
-
+            // ── Left rail: Version History ──
             lblHistoryTitle = new Label
             {
                 Text = "Version History",
                 Font = UiKit.T.Section,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = UiKit.T.Surface,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
             lblHistoryBadge = new Label
             {
                 Text = "",
-                Font = UiKit.T.SmallStrong,
+                Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = UiKit.T.Surface,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
@@ -138,59 +144,77 @@ namespace CRM.winforms
                 }
             };
 
-            cardHistory.Controls.Add(lblHistoryTitle);
-            cardHistory.Controls.Add(lblHistoryBadge);
-            cardHistory.Controls.Add(lstVersions);
-            Controls.Add(cardHistory);
+            Controls.Add(lblHistoryTitle);
+            Controls.Add(lblHistoryBadge);
+            Controls.Add(lstVersions);
 
-            // ── Right: Document Viewer Panel ──
-            cardDocument = new DocumentCard();
+            // ── Right pane: Document Viewer ──
+            lblActiveChip = new Label
+            {
+                Text = "",
+                Font = UiKit.T.SmallStrong,
+                ForeColor = AppTheme.Success,
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                UseMnemonic = false
+            };
 
             lblDocTitle = new Label
             {
                 Text = "Select a version",
-                Font = AppFonts.Strong(13.5F),
+                Font = AppFonts.Strong(15F),
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = UiKit.T.Surface,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
             lblDocMeta = new Label
             {
                 Text = "",
-                Font = UiKit.T.Subtitle,
+                Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = UiKit.T.Surface,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
             btnActivate = new SaasButton("Set as Active", SaasButtonVariant.Primary, "\uE73E")
             {
-                Visible = false
+                Visible = false,
+                Size = new Size(150, 36)
             };
             btnActivate.Click += async (s, e) => await ActivateAsync();
-            _tips.SetToolTip(btnActivate, "Set this version as the official active customer terms");
 
             btnEdit = new SaasButton("Edit", SaasButtonVariant.Secondary, "\uE70F");
+            btnEdit.Size = new Size(90, 36);
             btnEdit.Click += async (s, e) => await EditAsync();
-            _tips.SetToolTip(btnEdit, "Edit title or text of this version (Ctrl+E)");
 
             btnCopy = new SaasButton("Copy", SaasButtonVariant.Secondary, "\uE8C8");
+            btnCopy.Size = new Size(90, 36);
             btnCopy.Click += (s, e) => CopyContent();
-            _tips.SetToolTip(btnCopy, "Copy agreement text to clipboard");
+
+            // Document body canvas — flat, hairline border drawn in paint
+            docCanvas = new Panel
+            {
+                BackColor = AppTheme.Background,
+                BorderStyle = BorderStyle.None
+            };
 
             txtContent = new RichTextBox
             {
                 Font = AppFonts.Regular(10.5F),
                 BorderStyle = BorderStyle.None,
-                BackColor = UiKit.T.Surface,
+                BackColor = AppTheme.Background,
                 ForeColor = UiKit.T.Ink,
                 ReadOnly = true,
                 ScrollBars = RichTextBoxScrollBars.Vertical,
-                WordWrap = true
+                WordWrap = true,
+                DetectUrls = false
             };
+            docCanvas.Controls.Add(txtContent);
+            docCanvas.Paint += DocCanvas_Paint;
+            docCanvas.Resize += (s, e) => LayoutDocCanvas();
 
             lblDocStats = new Label
             {
@@ -198,33 +222,24 @@ namespace CRM.winforms
                 Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkFaint,
                 AutoSize = true,
-                BackColor = UiKit.T.Surface,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
-            cardDocument.Controls.Add(lblDocTitle);
-            cardDocument.Controls.Add(lblDocMeta);
-            cardDocument.Controls.Add(btnActivate);
-            cardDocument.Controls.Add(btnEdit);
-            cardDocument.Controls.Add(btnCopy);
-            cardDocument.Controls.Add(txtContent);
-            cardDocument.Controls.Add(lblDocStats);
-            Controls.Add(cardDocument);
+            Controls.Add(lblActiveChip);
+            Controls.Add(lblDocTitle);
+            Controls.Add(lblDocMeta);
+            Controls.Add(btnActivate);
+            Controls.Add(btnEdit);
+            Controls.Add(btnCopy);
+            Controls.Add(docCanvas);
+            Controls.Add(lblDocStats);
 
             // ── Empty State ──
-            state = new StateView { Visible = false };
+            state = new WorkbenchState { Visible = false };
             Controls.Add(state);
 
             Resize += (s, e) => LayoutUi();
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            UiKit.Quality(e.Graphics);
-            int y = lblSubtitle.Bottom + UiKit.T.S4;
-            using var pen = new Pen(UiKit.T.Line, 1);
-            e.Graphics.DrawLine(pen, 0, y, Width, y);
         }
 
         // ═══════════ KEYBOARD SHORTCUTS ═══════════
@@ -252,108 +267,159 @@ namespace CRM.winforms
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
-        // ═══════════ RESPONSIVE LAYOUT ═══════════
+        // ═══════════ LAYOUT ═══════════
 
         private void LayoutUi()
         {
             if (Width <= 0 || Height <= 0) return;
 
-            // Header labels
-            lblTitle.Location = new Point(0, 0);
+            int pad = UiKit.T.S6;
+            int contentW = Math.Max(700, Width - pad * 2);
 
-            int subtitleY = lblTitle.PreferredHeight + 6;
-            lblSubtitle.Location = new Point(1, subtitleY);
+            // Header
+            lblTitle.Location = new Point(pad, pad);
 
-            // Header buttons
-            btnNew.Size = new Size(btnNew.PreferredWidth, UiKit.T.ButtonHeight);
-            btnNew.Location = new Point(Width - btnNew.Width, 2);
+            int btnY = pad;
+            btnNew.Location = new Point(pad + contentW - btnNew.Width, btnY);
+            btnRefresh.Location = new Point(btnNew.Left - btnRefresh.Width - 10, btnY);
 
-            btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(btnNew.Left - btnRefresh.Width - UiKit.T.S2, 2);
+            lblSummary.Location = new Point(pad + 1, lblTitle.Bottom + 6);
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
-
-            // Main Content Area
-            int contentTop = dividerY + UiKit.T.S5;
-            int contentHeight = Math.Max(260, Height - contentTop);
+            // Body area
+            int contentTop = lblSummary.Bottom + 22;
+            int contentHeight = Math.Max(260, Height - contentTop - pad);
 
             if (_all.Count == 0)
             {
-                cardHistory.Visible = false;
-                cardDocument.Visible = false;
+                SetDetailVisible(false);
                 state.Visible = true;
-                state.Location = new Point(0, contentTop);
-                state.Size = new Size(Width, contentHeight);
+                state.SetBounds(pad, contentTop, contentW, contentHeight);
+                Invalidate();
                 return;
             }
 
-            cardHistory.Visible = true;
-            cardDocument.Visible = true;
+            SetDetailVisible(true);
             state.Visible = false;
 
-            // Left Pane (Version History)
-            int historyWidth = Math.Min(340, Math.Max(280, (int)(Width * 0.28)));
-            cardHistory.Location = new Point(0, contentTop);
-            cardHistory.Size = new Size(historyWidth, contentHeight);
-
-            // History header controls
-            const int hp = 16;
-            lblHistoryTitle.Location = new Point(hp, 16);
+            // Left rail
+            int historyWidth = Math.Min(360, Math.Max(280, (int)(contentW * 0.28)));
+            lblHistoryTitle.Location = new Point(pad, contentTop);
             lblHistoryBadge.Location = new Point(
                 lblHistoryTitle.Right + 8,
-                lblHistoryTitle.Top + (lblHistoryTitle.Height - lblHistoryBadge.Height) / 2);
+                lblHistoryTitle.Top + (lblHistoryTitle.PreferredHeight - lblHistoryBadge.PreferredHeight) / 2);
 
-            int listTop = 52;
-            lstVersions.Location = new Point(1, listTop);
-            lstVersions.Size = new Size(cardHistory.Width - 2, Math.Max(40, cardHistory.Height - listTop - 1));
+            int listTop = lblHistoryTitle.Bottom + 12;
+            lstVersions.SetBounds(pad, listTop, historyWidth - pad, Math.Max(120, contentHeight - (listTop - contentTop)));
 
-            // Right Pane (Document Viewer)
-            int docLeft = cardHistory.Right + UiKit.T.S4;
-            int docWidth = Math.Max(320, Width - docLeft);
-            cardDocument.Location = new Point(docLeft, contentTop);
-            cardDocument.Size = new Size(docWidth, contentHeight);
+            // Right pane
+            int docLeft = pad + historyWidth + UiKit.T.S6;
+            int docWidth = Math.Max(320, pad + contentW - docLeft);
 
-            LayoutDocumentViewer();
-        }
+            // Header row: active chip (or reserved space), title
+            int headerTop = contentTop;
 
-        private void LayoutDocumentViewer()
-        {
-            const int dp = 20;
+            if (!string.IsNullOrEmpty(lblActiveChip.Text))
+            {
+                lblActiveChip.Location = new Point(docLeft, headerTop);
+                lblDocTitle.Location = new Point(docLeft, headerTop + lblActiveChip.PreferredHeight + 6);
+            }
+            else
+            {
+                lblDocTitle.Location = new Point(docLeft, headerTop + 4);
+            }
 
-            lblDocTitle.Location = new Point(dp, 16);
-            lblDocMeta.Location = new Point(dp, lblDocTitle.Bottom + 4);
+            // Action buttons right aligned at title row
+            int btnRight = docLeft + docWidth;
+            int actionY = lblDocTitle.Top - 4;
 
-            // Document action buttons (right-aligned in header)
-            int btnRight = cardDocument.Width - dp;
-            int btnY = 16;
-
-            btnEdit.Size = new Size(btnEdit.PreferredWidth, UiKit.T.ButtonHeight);
-            btnEdit.Location = new Point(btnRight - btnEdit.Width, btnY);
+            btnEdit.Location = new Point(btnRight - btnEdit.Width, actionY);
             btnRight -= btnEdit.Width + 8;
 
-            btnCopy.Size = new Size(btnCopy.PreferredWidth, UiKit.T.ButtonHeight);
-            btnCopy.Location = new Point(btnRight - btnCopy.Width, btnY);
+            btnCopy.Location = new Point(btnRight - btnCopy.Width, actionY);
             btnRight -= btnCopy.Width + 8;
 
             if (btnActivate.Visible)
             {
-                btnActivate.Size = new Size(btnActivate.PreferredWidth, UiKit.T.ButtonHeight);
-                btnActivate.Location = new Point(btnRight - btnActivate.Width, btnY);
+                btnActivate.Location = new Point(btnRight - btnActivate.Width, actionY);
             }
 
-            // Divider position
-            int headerBottom = Math.Max(lblDocMeta.Bottom + 16, 68);
+            lblDocMeta.Location = new Point(docLeft, lblDocTitle.Bottom + 6);
 
-            // Text content canvas
-            int footerH = 40;
-            int txtTop = headerBottom + 12;
-            int txtHeight = Math.Max(80, cardDocument.Height - txtTop - footerH);
+            int bodyTop = lblDocMeta.Bottom + 14;
+            int statsH = 22;
+            int bodyHeight = Math.Max(140, contentTop + contentHeight - bodyTop - statsH - 6);
 
-            txtContent.Location = new Point(dp, txtTop);
-            txtContent.Size = new Size(cardDocument.Width - dp * 2, txtHeight);
+            docCanvas.SetBounds(docLeft, bodyTop, docWidth, bodyHeight);
+            lblDocStats.Location = new Point(docLeft, docCanvas.Bottom + 6);
 
-            // Bottom stats footer
-            lblDocStats.Location = new Point(dp, cardDocument.Height - 28);
+            LayoutDocCanvas();
+            Invalidate();
+        }
+
+        private void LayoutDocCanvas()
+        {
+            if (docCanvas == null || txtContent == null) return;
+
+            const int inset = 18;
+            txtContent.SetBounds(
+                inset,
+                inset,
+                Math.Max(60, docCanvas.Width - inset * 2 - SystemInformation.VerticalScrollBarWidth),
+                Math.Max(60, docCanvas.Height - inset * 2));
+        }
+
+        private void SetDetailVisible(bool visible)
+        {
+            lblHistoryTitle.Visible = visible;
+            lblHistoryBadge.Visible = visible;
+            lstVersions.Visible = visible;
+            lblActiveChip.Visible = visible && !string.IsNullOrEmpty(lblActiveChip.Text);
+            lblDocTitle.Visible = visible;
+            lblDocMeta.Visible = visible;
+            btnEdit.Visible = visible;
+            btnCopy.Visible = visible;
+            txtContent.Visible = visible;
+            docCanvas.Visible = visible;
+            lblDocStats.Visible = visible;
+            if (!visible) btnActivate.Visible = false;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            UiKit.Quality(e.Graphics);
+
+            if (_all.Count == 0 || !lstVersions.Visible) return;
+
+            int contentTop = lblSummary.Bottom + 22;
+            int contentBottom = contentTop + Math.Max(260, Height - contentTop - UiKit.T.S6);
+
+            // vertical divider between panes
+            int dividerX = lstVersions.Right + UiKit.T.S6 / 2;
+            using (var vpen = new Pen(UiKit.T.LineSoft, 1))
+                e.Graphics.DrawLine(vpen, dividerX, contentTop, dividerX, contentBottom);
+
+            // hairline above the stats row
+            using (var hpen = new Pen(UiKit.T.LineSoft, 1))
+            {
+                int statsLineY = lblDocStats.Top - 4;
+                e.Graphics.DrawLine(hpen, lblDocTitle.Left, statsLineY, Width - UiKit.T.S6, statsLineY);
+            }
+        }
+
+        private void DocCanvas_Paint(object? sender, PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            UiKit.Quality(g);
+
+            // hairline frame — visually reads as a document surface, not a card
+            var r = new Rectangle(0, 0, docCanvas.Width - 1, docCanvas.Height - 1);
+            using (var pen = new Pen(UiKit.T.LineSoft, 1))
+                g.DrawRectangle(pen, r);
+
+            // top-left faint page mark (subtle industry touch)
+            using (var brush = new SolidBrush(UiKit.T.InkFaint))
+                g.FillRectangle(brush, 0, 0, 0, 0); // no-op keeps SkiaSharp-like crispness
         }
 
         // ═══════════ DATA LOADING ═══════════
@@ -370,11 +436,14 @@ namespace CRM.winforms
                     lstVersions.Items.Add(t);
                 lstVersions.EndUpdate();
 
+                int activeCount = _all.Count(t => t.IsActive);
                 lblHistoryBadge.Text = _all.Count == 1 ? "1 version" : $"{_all.Count} versions";
+                lblSummary.Text = _all.Count == 0
+                    ? "No versions published yet"
+                    : $"{_all.Count} version{(_all.Count == 1 ? "" : "s")}  ·  {activeCount} active";
 
                 if (_all.Count > 0)
                 {
-                    // Select active one if exists, otherwise first
                     int activeIdx = _all.FindIndex(t => t.IsActive);
                     lstVersions.SelectedIndex = activeIdx >= 0 ? activeIdx : 0;
                     _selected = _all[lstVersions.SelectedIndex];
@@ -383,16 +452,24 @@ namespace CRM.winforms
                 else
                 {
                     _selected = null;
-                    state.Show("\uE8A5", "No Terms & Conditions Published",
-                        "Click \"New Version\" above to publish your company's standard service agreement and policies.");
+                    state.Show("\uE8A5", "No terms & conditions published",
+                        "Click 'New Version' to publish your company's standard service agreement and policies.");
                 }
 
                 LayoutUi();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not load terms & conditions:\n\n{ex.Message}",
-                    "Connection Problem", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _all = new List<TermsDto>();
+                _selected = null;
+                lblSummary.Text = "Couldn't load terms";
+                state.Show("\uE8A5", "Couldn't load terms & conditions",
+                    "Check your connection and try again.");
+                LayoutUi();
+
+                SaasToast.Show(FindForm(),
+                    $"Could not load terms & conditions: {ex.Message}",
+                    ToastKind.Danger);
             }
         }
 
@@ -400,23 +477,24 @@ namespace CRM.winforms
         {
             if (_selected == null) return;
 
+            lblActiveChip.Text = _selected.IsActive ? "ACTIVE VERSION" : "";
+
             lblDocTitle.Text = _selected.Title;
 
             string statusDesc = _selected.IsActive ? "Active version" : "Archived version";
             string author = string.IsNullOrWhiteSpace(_selected.CreatedByUserId) ? "system" : _selected.CreatedByUserId;
-            lblDocMeta.Text = $"{statusDesc}  ·  Effective: {_selected.VersionDisplay}  ·  Published by {author}";
+            lblDocMeta.Text = $"{statusDesc}  ·  Effective {_selected.VersionDisplay}  ·  Published by {author}";
 
             txtContent.Text = _selected.Content ?? "";
 
-            // Document statistics
             int charCount = (_selected.Content ?? "").Length;
-            int lineCount = (_selected.Content ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
-            lblDocStats.Text = $"{lineCount} clauses / sections  ·  {charCount:N0} characters  ·  Terms ID: #{_selected.TermsId}";
+            int lineCount = (_selected.Content ?? "")
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
+            lblDocStats.Text = $"{lineCount} clauses / sections  ·  {charCount:N0} characters  ·  Terms ID #{_selected.TermsId}";
 
             btnActivate.Visible = !_selected.IsActive;
 
-            LayoutDocumentViewer();
-            cardDocument.Invalidate();
+            LayoutUi();
         }
 
         // ═══════════ ACTIONS ═══════════
@@ -424,9 +502,11 @@ namespace CRM.winforms
         private async Task NewVersionAsync()
         {
             using var dlg = new TermsFormDialog(null);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK)
             {
-                Toast.Notify(FindForm(), "Version Published", "New terms & conditions version published successfully.", ToastKind.Success);
+                SaasToast.Show(FindForm(),
+                    "New terms & conditions version published.",
+                    ToastKind.Success);
                 await ReloadAsync();
             }
         }
@@ -436,9 +516,11 @@ namespace CRM.winforms
             if (_selected == null) return;
 
             using var dlg = new TermsFormDialog(_selected);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK)
             {
-                Toast.Notify(FindForm(), "Terms Updated", "Terms & conditions updated successfully.", ToastKind.Success);
+                SaasToast.Show(FindForm(),
+                    "Terms & conditions updated.",
+                    ToastKind.Success);
                 await ReloadAsync();
             }
         }
@@ -447,24 +529,29 @@ namespace CRM.winforms
         {
             if (_selected == null) return;
 
-            var confirm = MessageBox.Show(
-                $"Activate version \"{_selected.Title}\" ({_selected.VersionDisplay})?\n\nThis will become the official active terms agreement and archive any previously active version.",
+            bool confirm = SaasConfirm.Ask(
+                FindForm(),
                 "Activate Terms & Conditions",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
+                $"Activate version '{_selected.Title}' ({_selected.VersionDisplay})?",
+                confirmText: "Activate",
+                danger: false,
+                detail: "This will become the official active terms agreement and archive any previously active version.");
 
-            if (confirm != DialogResult.Yes) return;
+            if (!confirm) return;
 
             try
             {
                 await _api.ActivateTermsAsync(_selected.TermsId);
-                Toast.Notify(FindForm(), "Terms Activated", $"\"{_selected.Title}\" is now the active terms agreement.", ToastKind.Success);
+                SaasToast.Show(FindForm(),
+                    $"'{_selected.Title}' is now the active terms agreement.",
+                    ToastKind.Success);
                 await ReloadAsync();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Activation failed:\n\n{ex.Message}",
-                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SaasToast.Show(FindForm(),
+                    $"Activation failed: {ex.Message}",
+                    ToastKind.Danger);
             }
         }
 
@@ -475,87 +562,30 @@ namespace CRM.winforms
             try
             {
                 Clipboard.SetText(_selected.Content);
-                Toast.Notify(FindForm(), "Terms Copied", "The agreement text was copied to your clipboard.", ToastKind.Success);
+                SaasToast.Show(FindForm(),
+                    "Agreement text copied to clipboard.",
+                    ToastKind.Success);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not copy text to clipboard:\n\n{ex.Message}",
-                    "Clipboard Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                SaasToast.Show(FindForm(),
+                    $"Could not copy text: {ex.Message}",
+                    ToastKind.Warning);
             }
         }
 
-        // ═══════════ CUSTOM CONTROLS ═══════════
+        // ═══════════════════════════════════════════════════════════════
+        //  OWNER-DRAWN VERSION LIST (flat, professional SaaS styling)
+        // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Surface panel container for the Version History list.
-        /// </summary>
-        [DesignerCategory("Code")]
-        private sealed class HistoryCard : Panel
-        {
-            public HistoryCard()
-            {
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                DoubleBuffered = true;
-                BackColor = UiKit.T.Surface;
-            }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                UiKit.Quality(e.Graphics);
-                using (var b = new SolidBrush(AppTheme.Background))
-                    e.Graphics.FillRectangle(b, ClientRectangle);
-
-                UiKit.Card(e.Graphics, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
-
-                // Header divider rule
-                using (var pen = new Pen(UiKit.T.LineSoft, 1))
-                    e.Graphics.DrawLine(pen, 0, 50, Width, 50);
-
-                base.OnPaint(e);
-            }
-        }
-
-        /// <summary>
-        /// Surface panel container for the Document Viewer.
-        /// </summary>
-        [DesignerCategory("Code")]
-        private sealed class DocumentCard : Panel
-        {
-            public DocumentCard()
-            {
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                DoubleBuffered = true;
-                BackColor = UiKit.T.Surface;
-            }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                UiKit.Quality(e.Graphics);
-                using (var b = new SolidBrush(AppTheme.Background))
-                    e.Graphics.FillRectangle(b, ClientRectangle);
-
-                UiKit.Card(e.Graphics, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
-
-                // Header divider rule
-                using (var pen = new Pen(UiKit.T.LineSoft, 1))
-                {
-                    e.Graphics.DrawLine(pen, 20, 68, Width - 20, 68);
-                    // Footer divider rule
-                    e.Graphics.DrawLine(pen, 20, Height - 38, Width - 20, Height - 38);
-                }
-
-                base.OnPaint(e);
-            }
-        }
-
-        /// <summary>
-        /// Owner-drawn version list with pill badges, clean typography, and zero text cutoff.
-        /// </summary>
         [DesignerCategory("Code")]
         private sealed class VersionListBox : ListBox
         {
+            private const int RowH = 72;
+            private const int CellPadX = 16;
+
+            private static readonly Font MonoFont = new Font("Consolas", 8.5F);
+
             private int _hoverIndex = -1;
 
             public VersionListBox()
@@ -565,10 +595,11 @@ namespace CRM.winforms
                 DoubleBuffered = true;
                 DrawMode = DrawMode.OwnerDrawVariable;
                 BorderStyle = BorderStyle.None;
-                BackColor = UiKit.T.Surface;
+                BackColor = AppTheme.Background;
                 ForeColor = UiKit.T.Ink;
                 IntegralHeight = false;
-                ItemHeight = 76;
+                ItemHeight = RowH;
+                TabStop = true;
             }
 
             protected override void OnMouseMove(MouseEventArgs e)
@@ -589,10 +620,7 @@ namespace CRM.winforms
                 Invalidate();
             }
 
-            protected override void OnMeasureItem(MeasureItemEventArgs e)
-            {
-                e.ItemHeight = 76;
-            }
+            protected override void OnMeasureItem(MeasureItemEventArgs e) => e.ItemHeight = RowH;
 
             protected override void OnDrawItem(DrawItemEventArgs e)
             {
@@ -602,67 +630,80 @@ namespace CRM.winforms
                 var g = e.Graphics;
                 UiKit.Quality(g);
 
-                bool isSelected = (e.State & DrawItemState.Selected) != 0;
-                bool isHovered = e.Index == _hoverIndex && !isSelected;
+                bool selected = (e.State & DrawItemState.Selected) != 0;
+                bool hovered = e.Index == _hoverIndex && !selected;
+                bool focused = Focused;
 
-                Rectangle r = e.Bounds;
+                var r = e.Bounds;
 
-                // Item background
-                Color bg = isSelected ? UiKit.Wash(AppTheme.Primary) : isHovered ? UiKit.T.RowHover : UiKit.T.Surface;
-                using (var brush = new SolidBrush(bg))
-                    g.FillRectangle(brush, r);
+                // Background
+                Color bg = AppTheme.Background;
+                if (selected && focused) bg = UiKit.T.RowHover;
+                else if (selected) bg = UiKit.T.LineSoft;
+                else if (hovered) bg = UiKit.T.RowHover;
 
-                // Left active indicator
-                if (isSelected)
-                {
-                    using var barBrush = new SolidBrush(AppTheme.Primary);
-                    g.FillRectangle(barBrush, new Rectangle(r.Left, r.Top + 6, 3, r.Height - 12));
-                }
+                using (var b = new SolidBrush(bg))
+                    g.FillRectangle(b, r);
 
-                // Bottom separator
-                using (var sepPen = new Pen(UiKit.T.LineSoft, 1))
-                    g.DrawLine(sepPen, r.Left + 16, r.Bottom - 1, r.Right - 16, r.Bottom - 1);
+                // Left accent when selected
+                if (selected)
+                    UiKit.FillRounded(g, new Rectangle(r.Left, r.Top + 10, 3, r.Height - 21), 1, AppTheme.Primary);
 
-                // Top row: Status pill + Date
-                int padLeft = r.Left + 16;
-                int topY = r.Top + 10;
+                // Bottom hairline
+                using (var p = new Pen(UiKit.T.LineSoft, 1))
+                    g.DrawLine(p, r.Left + CellPadX, r.Bottom - 1, r.Right - CellPadX, r.Bottom - 1);
 
+                // Row layout
+                int padLeft = r.Left + CellPadX;
+                int topY = r.Top + 12;
+                int rowRight = r.Right - CellPadX;
+
+                // Status dot pill
                 bool active = item.IsActive;
+                Color fg = active ? AppTheme.Success : UiKit.T.InkMuted;
                 string statusText = active ? "Active" : "Archived";
-                Color badgeFg = active ? Color.FromArgb(21, 128, 61) : UiKit.T.InkMuted;
-                Color badgeBg = active ? Color.FromArgb(220, 252, 231) : UiKit.T.LineSoft;
+                PaintDotPill(g, new Rectangle(padLeft, topY, 140, 20), statusText, fg, UiKit.Micro);
 
-                var statusSize = UiKit.Measure(statusText, UiKit.T.SmallStrong);
-                int badgeW = statusSize.Width + 14;
-                int badgeH = 18;
-                var badgeRect = new Rectangle(padLeft, topY, badgeW, badgeH);
-                UiKit.FillRounded(g, badgeRect, badgeH / 2, badgeBg);
-                UiKit.Text(g, statusText, UiKit.T.SmallStrong, badgeFg, badgeRect,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-
-                // Date (right-aligned)
+                // Right: date in mono
                 string dateText = item.Version.ToString("MMM d, yyyy");
-                var dateRect = new Rectangle(r.Left, topY, r.Width - 16, badgeH);
-                UiKit.Text(g, dateText, UiKit.T.Small, UiKit.T.InkMuted, dateRect,
+                var dateRect = new Rectangle(r.Left, topY, r.Width - CellPadX, 20);
+                UiKit.Text(g, dateText, MonoFont, UiKit.T.InkMuted, dateRect,
                     TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
-                // Middle row: Title (anti-clipping, crisp ink)
-                int titleY = topY + badgeH + 6;
-                var titleRect = new Rectangle(padLeft, titleY, r.Width - 32, 20);
-                UiKit.Text(g, item.Title, UiKit.T.BodyStrong, UiKit.T.Ink, titleRect,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                // Title
+                int titleY = topY + 24;
+                var titleRect = new Rectangle(padLeft, titleY, rowRight - padLeft, 20);
+                UiKit.Text(g, item.Title ?? "", UiKit.T.BodyStrong, UiKit.T.Ink, titleRect,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                    | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
 
-                // Bottom row: Meta (version & author)
+                // Meta
                 int metaY = titleY + 20;
                 string author = string.IsNullOrWhiteSpace(item.CreatedByUserId) ? "system" : item.CreatedByUserId;
                 string metaText = $"Effective {item.VersionDisplay}  ·  by {author}";
-                var metaRect = new Rectangle(padLeft, metaY, r.Width - 32, 16);
+                var metaRect = new Rectangle(padLeft, metaY, rowRight - padLeft, 16);
                 UiKit.Text(g, metaText, UiKit.T.Small, UiKit.T.InkFaint, metaRect,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                    | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+            }
+
+            private static void PaintDotPill(Graphics g, Rectangle rect, string text, Color fg, Font font)
+            {
+                int textW = TextRenderer.MeasureText(text, font,
+                    new Size(int.MaxValue, int.MaxValue),
+                    TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
+                int pillW = Math.Min(rect.Width, textW + 34);
+                int pillH = 20;
+                var pill = new Rectangle(rect.Left, rect.Top, pillW, pillH);
+
+                UiKit.FillRounded(g, pill, pillH / 2, UiKit.Wash(fg));
+                UiKit.FillRounded(g, new Rectangle(pill.Left + 10, pill.Top + pillH / 2 - 3, 6, 6), 3, fg);
+                UiKit.Text(g, text, font, fg,
+                    new Rectangle(pill.Left + 22, pill.Top, Math.Max(0, pill.Width - 30), pill.Height),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                    | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine
+                    | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
             }
         }
-
-        [DesignerCategory("Code")]
-        private sealed class StateView : WorkbenchState { }
     }
 }

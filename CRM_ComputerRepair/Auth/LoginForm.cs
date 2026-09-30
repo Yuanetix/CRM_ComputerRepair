@@ -15,23 +15,31 @@ namespace CRM.winforms.Auth
         private readonly ApiClient _api = new ApiClient();
 
         // ─────────────────────────────────────────────────────────────────
-        //  Layout constants — Increased dimensions for a spacious, modern portal
+        //  Layout constants
         // ─────────────────────────────────────────────────────────────────
-        private const int DefaultFormW  = 1240;
-        private const int DefaultFormH  = 800;
-        private const int BrandPanelW   = 520;     // Branded left panel (~42% width)
-        private const int FormColW      = 460;     // Login form column width
-        private const int FieldH        = 50;      // Spacious input height
-        private const int FieldGap      = 18;      // Space between field groups
+        private const int DefaultFormW = 1200;
+        private const int DefaultFormH = 780;
+        private const int BrandPanelW = 520;
+        private const int FormColW = 420;
+        private const int FieldH = 52;
+        private const int FieldGap = 24;
 
         // ─────────────────────────────────────────────────────────────────
-        //  Win32: Apply native left/right text inset inside TextBox
+        //  Brand palette — light blue family (consistent with AppTheme.Primary)
+        // ─────────────────────────────────────────────────────────────────
+        private static readonly Color BrandTop = Color.FromArgb(59, 130, 246);   // blue-500
+        private static readonly Color BrandMid = Color.FromArgb(37, 99, 235);    // blue-600
+        private static readonly Color BrandBottom = Color.FromArgb(30, 58, 138);    // blue-900
+        private static readonly Color BrandAccent = Color.FromArgb(147, 197, 253);  // blue-300
+
+        // ─────────────────────────────────────────────────────────────────
+        //  Win32: text inset
         // ─────────────────────────────────────────────────────────────────
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-        private const int EM_SETMARGINS  = 0xD3;
-        private const int EC_LEFTMARGIN  = 0x1;
+        private const int EM_SETMARGINS = 0xD3;
+        private const int EC_LEFTMARGIN = 0x1;
         private const int EC_RIGHTMARGIN = 0x2;
 
         private static void ApplyTextInset(TextBox tb, int px)
@@ -60,13 +68,11 @@ namespace CRM.winforms.Auth
         private Label lblTitle = null!;
         private Label lblSubtitle = null!;
 
-        private Label lblCompanyId = null!;
         private Label lblUsername = null!;
         private Label lblPassword = null!;
 
-        private TextField inpCompanyId = null!;
-        private TextField inpUsername = null!;
-        private TextField inpPassword = null!;
+        private ModernInput inpUsername = null!;
+        private ModernInput inpPassword = null!;
 
         private CheckBox chkShowPassword = null!;
         private Label lblShowPassword = null!;
@@ -74,7 +80,6 @@ namespace CRM.winforms.Auth
 
         private Label lblError = null!;
         private Button btnLogin = null!;
-        private Label lblHelp = null!;
 
         public LoginForm()
         {
@@ -86,20 +91,19 @@ namespace CRM.winforms.Auth
         // ─────────────────────────────────────────────────────────────────
         private void BuildUi()
         {
-            Text = "Sign in — Fixory CRM Enterprise Portal";
+            Text = "Sign in — Fixory CRM";
             FormBorderStyle = FormBorderStyle.FixedSingle;
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = false;
             MinimizeBox = false;
 
-            // Responsive sizing to ensure it fits comfortably on any screen while honoring the size increase
             var workingArea = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
             int targetW = DefaultFormW;
             int targetH = DefaultFormH;
             if (workingArea.Height < 840)
             {
-                targetH = Math.Min(780, workingArea.Height - 30);
-                targetW = Math.Min(1200, workingArea.Width - 40);
+                targetH = Math.Min(760, workingArea.Height - 30);
+                targetW = Math.Min(1180, workingArea.Width - 40);
             }
             ClientSize = new Size(targetW, targetH);
 
@@ -118,15 +122,12 @@ namespace CRM.winforms.Auth
             Shown += (s, e) =>
             {
                 CenterFormContainer();
-                if (string.IsNullOrWhiteSpace(inpCompanyId.Text))
-                    inpCompanyId.Focus();
-                else
-                    inpUsername.Focus();
+                inpUsername.Focus();
             };
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Left Branded Panel (Tech-blue gradient, dot matrix, vector features)
+        //  LEFT — Brand panel (light blue, consistent with AppTheme.Primary)
         // ─────────────────────────────────────────────────────────────────
         private void BuildBrandPanel()
         {
@@ -134,16 +135,14 @@ namespace CRM.winforms.Auth
             {
                 Dock = DockStyle.Left,
                 Width = BrandPanelW,
-                BackColor = Color.FromArgb(10, 110, 235)
+                BackColor = BrandMid
             };
 
-            const int brandPadX = 52;
+            const int brandPadX = 60;
             int brandTextW = BrandPanelW - brandPadX * 2;
 
-            // 5 Features customized for Computer Repair CRM
             string[] featureTitles =
             {
-                "Data Analytics & Insights",
                 "Work Orders & Scheduling",
                 "Diagnostics & Device Tracking",
                 "Customer Retention & CRM",
@@ -156,144 +155,109 @@ namespace CRM.winforms.Auth
                 UiKit.Quality(g);
                 var bounds = pnlBrand.ClientRectangle;
 
-                // ── 1. Vibrant Tech-Blue Gradient (matching modern enterprise portals) ──
+                // 1. Light-blue vertical gradient (matches primary family)
                 using (var bgBrush = new LinearGradientBrush(
                     bounds,
-                    Color.FromArgb(11, 115, 238),   // Radiant electric blue at top
-                    Color.FromArgb(2, 45, 130),     // Deep royal blue at bottom
+                    BrandTop,
+                    BrandBottom,
                     LinearGradientMode.Vertical))
                 {
                     g.FillRectangle(bgBrush, bounds);
                 }
 
-                // ── 2. Top-Left Circular Dot Grid Matrix (8 cols x 6 rows) ──
-                using (var dotBrush = new SolidBrush(Color.FromArgb(45, 255, 255, 255)))
+                // 2. Soft diagonal highlight for depth
+                using (var sheen = new LinearGradientBrush(
+                    bounds,
+                    Color.FromArgb(40, 255, 255, 255),
+                    Color.FromArgb(0, 255, 255, 255),
+                    35f))
                 {
-                    int dotCols = 8, dotRows = 6;
-                    int startX = brandPadX, startY = 44;
-                    int dotGap = 16;
-                    for (int r = 0; r < dotRows; r++)
-                    {
-                        for (int c = 0; c < dotCols; c++)
-                        {
-                            g.FillEllipse(dotBrush, startX + c * dotGap, startY + r * dotGap, 4, 4);
-                        }
-                    }
+                    g.FillRectangle(sheen, new Rectangle(0, 0, bounds.Width, bounds.Height / 2));
                 }
 
-                // ── 3. Bottom-Right Subtle Dot Grid Matrix ──
-                using (var dotBrush2 = new SolidBrush(Color.FromArgb(26, 255, 255, 255)))
+                // 3. Quiet dot matrix, top-left
+                using (var dotBrush = new SolidBrush(Color.FromArgb(70, 255, 255, 255)))
                 {
-                    int dotCols = 8, dotRows = 6;
-                    int startX = pnlBrand.Width - 170, startY = pnlBrand.Height - 210;
-                    int dotGap = 15;
+                    int dotCols = 6, dotRows = 4;
+                    int startX = brandPadX, startY = 52;
+                    int dotGap = 14;
                     for (int r = 0; r < dotRows; r++)
-                    {
                         for (int c = 0; c < dotCols; c++)
-                        {
-                            g.FillEllipse(dotBrush2, startX + c * dotGap, startY + r * dotGap, 3.5f, 3.5f);
-                        }
-                    }
+                            g.FillEllipse(dotBrush, startX + c * dotGap, startY + r * dotGap, 3, 3);
                 }
 
-                // ── 4. Organic Flowing Geometric Waves at Bottom ──
-                using (var waveBrush1 = new SolidBrush(Color.FromArgb(16, 255, 255, 255)))
+                // 4. Single soft wave
+                using (var waveBrush = new SolidBrush(Color.FromArgb(28, 255, 255, 255)))
                 {
                     using var path = new GraphicsPath();
-                    path.AddBezier(0, pnlBrand.Height - 165,
-                                   pnlBrand.Width * 0.35f, pnlBrand.Height - 225,
-                                   pnlBrand.Width * 0.70f, pnlBrand.Height - 110,
-                                   pnlBrand.Width, pnlBrand.Height - 150);
+                    path.AddBezier(0, pnlBrand.Height - 150,
+                                   pnlBrand.Width * 0.40f, pnlBrand.Height - 210,
+                                   pnlBrand.Width * 0.75f, pnlBrand.Height - 100,
+                                   pnlBrand.Width, pnlBrand.Height - 140);
                     path.AddLine(pnlBrand.Width, pnlBrand.Height, 0, pnlBrand.Height);
                     path.CloseFigure();
-                    g.FillPath(waveBrush1, path);
+                    g.FillPath(waveBrush, path);
                 }
 
-                using (var waveBrush2 = new SolidBrush(Color.FromArgb(24, 56, 189, 248))) // Soft cyan-blue overlay
-                {
-                    using var path = new GraphicsPath();
-                    path.AddBezier(0, pnlBrand.Height - 90,
-                                   pnlBrand.Width * 0.40f, pnlBrand.Height - 145,
-                                   pnlBrand.Width * 0.75f, pnlBrand.Height - 65,
-                                   pnlBrand.Width, pnlBrand.Height - 95);
-                    path.AddLine(pnlBrand.Width, pnlBrand.Height, 0, pnlBrand.Height);
-                    path.CloseFigure();
-                    g.FillPath(waveBrush2, path);
-                }
-
-                // ── 5. Render Translucent Badges and Clean Vector Icons (Zero Emojis) ──
-                int featureStartY = 330;
-                int featureStep = 52;
+                // 5. Feature icon badges
+                int featureStartY = 340;
+                int featureStep = 60;
                 for (int i = 0; i < featureTitles.Length; i++)
                 {
                     int cy = featureStartY + i * featureStep;
-                    var badgeRect = new Rectangle(brandPadX, cy, 34, 34);
+                    var badgeRect = new Rectangle(brandPadX, cy, 36, 36);
 
-                    // Badge fill + outline
-                    using (var badgeFill = new SolidBrush(Color.FromArgb(35, 255, 255, 255)))
-                        UiKit.FillRounded(g, badgeRect, 10, Color.FromArgb(35, 255, 255, 255));
+                    using (var badgeFill = new SolidBrush(Color.FromArgb(60, 255, 255, 255)))
+                        UiKit.FillRounded(g, badgeRect, 10, Color.FromArgb(60, 255, 255, 255));
 
-                    using (var badgeStroke = new Pen(Color.FromArgb(60, 255, 255, 255), 1.2f))
-                        UiKit.StrokeRounded(g, badgeRect, 10, Color.FromArgb(60, 255, 255, 255), 1.2f);
+                    using (var badgeStroke = new Pen(Color.FromArgb(110, 255, 255, 255), 1.2f))
+                        UiKit.StrokeRounded(g, badgeRect, 10, Color.FromArgb(110, 255, 255, 255), 1.2f);
 
-                    // Crisp geometric vector icon
                     DrawFeatureIcon(g, i, badgeRect);
                 }
             };
 
-            // ── Big Bold Portal Headline ──
+            // ── Headline ──
             var lblHeadline = new Label
             {
                 Text = "Fixory\r\nComputer Repair CRM",
-                Font = AppFonts.Strong(28F),
+                Font = AppFonts.Strong(27F),
                 ForeColor = Color.White,
-                AutoSize = true,
+                AutoSize = false,
+                Size = new Size(brandTextW, 100),
                 BackColor = Color.Transparent,
-                Location = new Point(brandPadX, 160),
+                Location = new Point(brandPadX, 166),
+                TextAlign = ContentAlignment.MiddleLeft,
                 UseCompatibleTextRendering = false
             };
             pnlBrand.Controls.Add(lblHeadline);
 
-            // ── Feature Text Labels (Auto-sized so text is never cut) ──
-            int featureStartY = 310;
-            int featureStep = 52;
+            // ── Feature labels (fixed-width column) ──
+            int featureLabelX = brandPadX + 36 + 16;
+            int featureLabelW = brandTextW - 36 - 16;
+            int featureStartY = 340;
+            int featureStep = 60;
+
             for (int i = 0; i < featureTitles.Length; i++)
             {
                 var lblFeature = new Label
                 {
                     Text = featureTitles[i],
-                    Font = AppFonts.Regular(11F),
+                    Font = AppFonts.Regular(10.5F),
                     ForeColor = Color.White,
-                    AutoSize = true,
+                    AutoSize = false,
+                    Size = new Size(featureLabelW, 36),
                     BackColor = Color.Transparent,
-                    Location = new Point(brandPadX + 34 + 16, featureStartY + i * featureStep + 5),
+                    Location = new Point(featureLabelX, featureStartY + i * featureStep),
+                    TextAlign = ContentAlignment.MiddleLeft,
                     UseCompatibleTextRendering = false
                 };
                 pnlBrand.Controls.Add(lblFeature);
             }
-
-            // ── Left Panel Bottom Footer ──
-            var lblBrandFooter = new Label
-            {
-                Text = "Fixory \u00b7 Computer Repair CRM",
-                Font = AppFonts.Regular(8.5F),
-                ForeColor = Color.FromArgb(180, 215, 255),
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                Location = new Point(brandPadX, pnlBrand.Height - 50),
-                Size = new Size(brandTextW, 22),
-                TextAlign = ContentAlignment.MiddleLeft,
-                UseCompatibleTextRendering = false
-            };
-            pnlBrand.Resize += (s, e) =>
-            {
-                lblBrandFooter.Location = new Point(brandPadX, pnlBrand.Height - 50);
-            };
-            pnlBrand.Controls.Add(lblBrandFooter);
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Crisp GDI+ Vector Icon Renderer (No Emojis, Sharp at all DPIs)
+        //  Feature icons
         // ─────────────────────────────────────────────────────────────────
         private static void DrawFeatureIcon(Graphics g, int index, Rectangle badgeRect)
         {
@@ -310,13 +274,7 @@ namespace CRM.winforms.Auth
 
             switch (index)
             {
-                case 0: // Data Analytics (3 ascending bars)
-                    g.FillRectangle(fillBrush, cx - 7.5f, cy + 2f, 3f, 6f);
-                    g.FillRectangle(fillBrush, cx - 1.5f, cy - 2.5f, 3f, 10.5f);
-                    g.FillRectangle(fillBrush, cx + 4.5f, cy - 7f, 3f, 15f);
-                    break;
-
-                case 1: // Work Orders & Scheduling (Calendar)
+                case 0:
                     var calRect = new RectangleF(cx - 7.5f, cy - 6.5f, 15f, 13f);
                     using (var calPen = new Pen(Color.White, 1.5f))
                     {
@@ -329,18 +287,18 @@ namespace CRM.winforms.Auth
                     g.FillEllipse(fillBrush, cx + 1.5f, cy + 1f, 2f, 2f);
                     break;
 
-                case 2: // Diagnostics & Device Tracking (Diagnostic Wrench / Tool)
+                case 1:
                     g.DrawLine(pen, cx - 5.5f, cy + 5.5f, cx + 2f, cy - 2f);
                     g.DrawArc(pen, cx - 1f, cy - 8f, 8f, 8f, 45, 270);
                     g.FillEllipse(fillBrush, cx - 7f, cy + 5f, 3.5f, 3.5f);
                     break;
 
-                case 3: // Customer Retention & CRM (Customer Profile Silhouette)
+                case 2:
                     g.DrawEllipse(pen, cx - 3.5f, cy - 7f, 7f, 7f);
                     g.DrawArc(pen, cx - 7f, cy - 0.5f, 14f, 11f, 200, 140);
                     break;
 
-                case 4: // Invoicing & Payments (Document / Card)
+                case 3:
                     var docRect = new RectangleF(cx - 6f, cy - 7.5f, 12f, 15f);
                     using (var docPen = new Pen(Color.White, 1.5f))
                     {
@@ -354,7 +312,7 @@ namespace CRM.winforms.Auth
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Right Panel (Clean white canvas, perfectly centered form container)
+        //  RIGHT — white canvas
         // ─────────────────────────────────────────────────────────────────
         private void BuildRightPanel()
         {
@@ -362,6 +320,12 @@ namespace CRM.winforms.Auth
             {
                 Dock = DockStyle.Fill,
                 BackColor = Color.White
+            };
+
+            pnlRight.Paint += (s, e) =>
+            {
+                using var pen = new Pen(Color.FromArgb(238, 242, 247), 1);
+                e.Graphics.DrawLine(pen, 0, 0, 0, pnlRight.Height);
             };
 
             pnlFormContainer = new Panel
@@ -380,67 +344,60 @@ namespace CRM.winforms.Auth
         {
             if (pnlFormContainer == null || pnlRight == null) return;
             pnlFormContainer.Location = new Point(
-                Math.Max(30, (pnlRight.ClientSize.Width - pnlFormContainer.Width) / 2),
-                Math.Max(20, (pnlRight.ClientSize.Height - pnlFormContainer.Height) / 2));
+                Math.Max(40, (pnlRight.ClientSize.Width - pnlFormContainer.Width) / 2),
+                Math.Max(24, (pnlRight.ClientSize.Height - pnlFormContainer.Height) / 2));
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Form Content Layout (Company ID, Username, Password, Login button)
+        //  Form content
         // ─────────────────────────────────────────────────────────────────
         private void BuildFormContent()
         {
             int w = FormColW;
             int y = 0;
 
-            // ── Main Heading "Login" (Direct task focus, no redundant titles) ──
+            // ── Welcome ──
             lblTitle = new Label
             {
-                Text = "Login",
+                Text = "Welcome back",
                 Font = AppFonts.Strong(28F),
                 ForeColor = Color.FromArgb(15, 23, 42),
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                Location = new Point(0, y)
+                Location = new Point(0, y),
+                UseCompatibleTextRendering = false
             };
             pnlFormContainer.Controls.Add(lblTitle);
-            y = lblTitle.Bottom + 8;
+            y = lblTitle.Bottom + 6;
 
-            // ── Subtitle (User guidance) ──
             lblSubtitle = new Label
             {
-                Text = "Enter your company and account credentials to sign in.",
+                Text = "Sign in to continue to your workspace.",
                 Font = AppFonts.Regular(10F),
                 ForeColor = Color.FromArgb(100, 116, 139),
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                Location = new Point(0, y)
+                Location = new Point(0, y),
+                UseCompatibleTextRendering = false
             };
             pnlFormContainer.Controls.Add(lblSubtitle);
-            y = lblSubtitle.Bottom + 28;
+            y = lblSubtitle.Bottom + 36;
 
-            // ── Field 1: Company ID ──
-            y = CreateFieldGroup("Company ID", "e.g. 1",
-                                 out lblCompanyId, out inpCompanyId,
-                                 w, y, 0, isPassword: false);
-            inpCompanyId.Text = "1";
-
-            // ── Field 2: Username ──
-            y = CreateFieldGroup("Username", "Enter your username",
+            // ── Username ──
+            y = CreateFieldGroup("USERNAME", "Enter your username",
                                  out lblUsername, out inpUsername,
-                                 w, y, 1, isPassword: false);
+                                 w, y, 0, isPassword: false);
 
-            // ── Field 3: Password ──
-            y = CreateFieldGroup("Password", "Enter your password",
+            // ── Password ──
+            y = CreateFieldGroup("PASSWORD", "Enter your password",
                                  out lblPassword, out inpPassword,
-                                 w, y, 2, isPassword: true);
+                                 w, y, 1, isPassword: true);
 
-            // Interactive focus label highlights
-            WireFocusFeedback(inpCompanyId, lblCompanyId);
             WireFocusFeedback(inpUsername, lblUsername);
             WireFocusFeedback(inpPassword, lblPassword);
 
-            // ── Row under Password: [ ] Show password ........ Caps Lock is ON ──
-            int pwdRowY = y + 2;
+            // ── Show password + caps lock row ──
+            int pwdRowY = y - FieldGap + 2;
 
             chkShowPassword = new CheckBox
             {
@@ -450,7 +407,7 @@ namespace CRM.winforms.Auth
                 Location = new Point(2, pwdRowY + 2),
                 BackColor = Color.Transparent,
                 Cursor = Cursors.Hand,
-                TabIndex = 3,
+                TabIndex = 2,
                 Text = string.Empty,
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = Color.FromArgb(100, 116, 139)
@@ -466,7 +423,8 @@ namespace CRM.winforms.Auth
                 AutoSize = true,
                 BackColor = Color.Transparent,
                 Location = new Point(chkShowPassword.Right + 8, pwdRowY + 1),
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                UseCompatibleTextRendering = false
             };
             lblShowPassword.Click += (s, e) => chkShowPassword.Checked = !chkShowPassword.Checked;
             pnlFormContainer.Controls.Add(lblShowPassword);
@@ -475,47 +433,48 @@ namespace CRM.winforms.Auth
             {
                 Text = "Caps Lock is ON",
                 Font = AppFonts.Strong(9F),
-                ForeColor = Color.FromArgb(217, 119, 6), // Amber-600
+                ForeColor = Color.FromArgb(217, 119, 6),
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                Visible = false
+                Visible = false,
+                UseCompatibleTextRendering = false
             };
             pnlFormContainer.Controls.Add(lblCaps);
             lblCaps.Location = new Point(w - lblCaps.PreferredWidth - 2, pwdRowY + 1);
 
-            y = Math.Max(chkShowPassword.Bottom, lblShowPassword.Bottom) + 20;
+            y = Math.Max(chkShowPassword.Bottom, lblShowPassword.Bottom) + 30;
 
-            // ── Error Alert Banner (Padded, clean, auto-sizing for zero text cutting) ──
+            // ── Error banner ──
             lblError = new Label
             {
                 Text = "",
                 Font = AppFonts.Regular(9F),
-                ForeColor = Color.FromArgb(185, 28, 28),         // Red-700
-                BackColor = Color.FromArgb(254, 242, 242),       // Red-50
+                ForeColor = Color.FromArgb(185, 28, 28),
+                BackColor = Color.FromArgb(254, 242, 242),
                 AutoSize = false,
                 Location = new Point(0, y),
                 Size = new Size(w, 0),
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(14, 6, 14, 6),
+                Padding = new Padding(16, 6, 16, 6),
                 Visible = false,
                 UseCompatibleTextRendering = false
             };
-            UiHelpers.ApplyRoundedRegion(lblError, 8);
+            UiHelpers.ApplyRoundedRegion(lblError, 10);
             pnlFormContainer.Controls.Add(lblError);
 
-            // ── Primary Action Button: "LOGIN" (Prominent, matching reference) ──
+            // ── Sign in ──
             btnLogin = new Button
             {
-                Text = "LOGIN",
+                Text = "SIGN IN",
                 Font = AppFonts.Strong(11.5F),
-                BackColor = Color.FromArgb(37, 99, 235), // Vibrant royal blue
+                BackColor = Color.FromArgb(37, 99, 235),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
                 UseVisualStyleBackColor = false,
                 Location = new Point(0, y),
                 Size = new Size(w, 52),
-                TabIndex = 4
+                TabIndex = 3
             };
             btnLogin.FlatAppearance.BorderSize = 0;
             btnLogin.FlatAppearance.MouseOverBackColor = Color.FromArgb(29, 78, 216);
@@ -523,83 +482,57 @@ namespace CRM.winforms.Auth
             btnLogin.Resize += (s, e) => UiHelpers.ApplyRoundedRegion(btnLogin, 10);
             btnLogin.Click += async (s, e) => await LoginAsync();
             pnlFormContainer.Controls.Add(btnLogin);
-            y = btnLogin.Bottom + 20;
+            y = btnLogin.Bottom + 12;
 
-            // ── Footer / Help text ──
-            lblHelp = new Label
-            {
-                Text = "Need access? Contact your system administrator.",
-                Font = AppFonts.Regular(9.5F),
-                ForeColor = Color.FromArgb(148, 163, 184), // Slate-400
-                AutoSize = false,
-                TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.Transparent,
-                Location = new Point(0, y),
-                Size = new Size(w, 24),
-                UseCompatibleTextRendering = false
-            };
-            pnlFormContainer.Controls.Add(lblHelp);
-            y = lblHelp.Bottom + 16;
-
-            // Set final height of form container
             pnlFormContainer.Height = y;
 
             WireInteractions();
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Helper: Create Field Group (Label + Spacious TextField)
+        //  Field group helper — uses custom ModernInput
         // ─────────────────────────────────────────────────────────────────
         private int CreateFieldGroup(
             string labelText, string placeholder,
-            out Label lbl, out TextField inp,
+            out Label lbl, out ModernInput inp,
             int w, int y, int tabIndex, bool isPassword)
         {
             lbl = new Label
             {
                 Text = labelText,
-                Font = AppFonts.Strong(9.5F),
-                ForeColor = Color.FromArgb(71, 85, 105), // Slate-600
+                Font = AppFonts.Strong(9F),
+                ForeColor = Color.FromArgb(71, 85, 105),
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                Location = new Point(0, y)
+                Location = new Point(2, y),
+                UseCompatibleTextRendering = false
             };
             pnlFormContainer.Controls.Add(lbl);
 
-            inp = new TextField
+            inp = new ModernInput
             {
                 PlaceholderText = placeholder,
                 Location = new Point(0, lbl.Bottom + 8),
                 Size = new Size(w, FieldH),
                 TabIndex = tabIndex,
-                Padding = new Padding(16, 0, 16, 0)
+                IsPassword = isPassword
             };
-            inp.InnerTextBox.Font = AppFonts.Regular(10.5F);
-
-            if (isPassword)
-                inp.InnerTextBox.UseSystemPasswordChar = true;
-
-            ApplyTextInset(inp.InnerTextBox, 4);
             pnlFormContainer.Controls.Add(inp);
 
             return inp.Bottom + FieldGap;
         }
 
-        // ─────────────────────────────────────────────────────────────────
-        //  Focus Feedback: Label gets darker when its field is focused
-        // ─────────────────────────────────────────────────────────────────
-        private static void WireFocusFeedback(TextField inp, Label lbl)
+        private static void WireFocusFeedback(ModernInput inp, Label lbl)
         {
-            inp.InnerTextBox.GotFocus += (s, e) => lbl.ForeColor = Color.FromArgb(15, 23, 42);
+            inp.InnerTextBox.GotFocus += (s, e) => lbl.ForeColor = Color.FromArgb(37, 99, 235);
             inp.InnerTextBox.LostFocus += (s, e) => lbl.ForeColor = Color.FromArgb(71, 85, 105);
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Interactive Wiring & Caps Lock detection
+        //  Interactions
         // ─────────────────────────────────────────────────────────────────
         private void WireInteractions()
         {
-            inpCompanyId.InnerTextBox.TextChanged += (s, e) => ClearError();
             inpUsername.InnerTextBox.TextChanged += (s, e) => ClearError();
             inpPassword.InnerTextBox.TextChanged += (s, e) => ClearError();
 
@@ -624,8 +557,7 @@ namespace CRM.winforms.Auth
         private void SetBusy(bool busy)
         {
             btnLogin.Enabled = !busy;
-            btnLogin.Text = busy ? "SIGNING IN..." : "LOGIN";
-            inpCompanyId.Enabled = !busy;
+            btnLogin.Text = busy ? "SIGNING IN..." : "SIGN IN";
             inpUsername.Enabled = !busy;
             inpPassword.Enabled = !busy;
             chkShowPassword.Enabled = !busy;
@@ -634,24 +566,15 @@ namespace CRM.winforms.Auth
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Login Flow
+        //  Login flow — company id fixed to 1
         // ─────────────────────────────────────────────────────────────────
         private async Task LoginAsync()
         {
             ClearError();
 
-            var companyIdText = inpCompanyId.Text?.Trim() ?? "";
             var username = inpUsername.Text?.Trim() ?? "";
             var password = inpPassword.Text ?? "";
-
-            if (string.IsNullOrWhiteSpace(companyIdText)
-                || !int.TryParse(companyIdText, out var companyId)
-                || companyId <= 0)
-            {
-                ShowError("Please enter a valid numeric Company ID (e.g. 1).");
-                inpCompanyId.Focus();
-                return;
-            }
+            const int companyId = 1;
 
             if (string.IsNullOrWhiteSpace(username))
             {
@@ -713,25 +636,22 @@ namespace CRM.winforms.Auth
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Error Handling (Adaptive height so error messages are never cut)
+        //  Error handling
         // ─────────────────────────────────────────────────────────────────
         private void ShowError(string message)
         {
             lblCaps.Visible = false;
             lblError.Text = message;
 
-            // Measure required height so multi-line errors are never truncated
             using var g = lblError.CreateGraphics();
-            var size = g.MeasureString(message, lblError.Font, FormColW - 28);
-            int calculatedH = Math.Max(42, (int)Math.Ceiling(size.Height) + 14);
+            var size = g.MeasureString(message, lblError.Font, FormColW - 32);
+            int calculatedH = Math.Max(44, (int)Math.Ceiling(size.Height) + 14);
 
             lblError.Height = calculatedH;
             lblError.Visible = true;
 
-            // Shift login button & footer smoothly
             btnLogin.Location = new Point(0, lblError.Bottom + 16);
-            lblHelp.Location = new Point(0, btnLogin.Bottom + 20);
-            pnlFormContainer.Height = lblHelp.Bottom + 16;
+            pnlFormContainer.Height = btnLogin.Bottom + 12;
             CenterFormContainer();
         }
 
@@ -742,17 +662,148 @@ namespace CRM.winforms.Auth
             lblError.Visible = false;
             lblError.Height = 0;
 
-            // Restore default locations
             btnLogin.Location = new Point(0, lblError.Top);
-            lblHelp.Location = new Point(0, btnLogin.Bottom + 20);
-            pnlFormContainer.Height = lblHelp.Bottom + 16;
+            pnlFormContainer.Height = btnLogin.Bottom + 12;
             CenterFormContainer();
 
             UpdateCapsWarning();
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  Double-buffered panel for flicker-free rendering
+        //  ModernInput — clean rounded input with focus ring & placeholder
+        // ─────────────────────────────────────────────────────────────────
+        [DesignerCategory("Code")]
+        private sealed class ModernInput : Control
+        {
+            private readonly TextBox _inner;
+            private bool _hover;
+            private bool _focused;
+            private string _placeholder = "";
+            private bool _isPassword;
+
+            public TextBox InnerTextBox => _inner;
+
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public string PlaceholderText
+            {
+                get => _placeholder;
+                set { _placeholder = value ?? ""; UpdatePlaceholder(); Invalidate(); }
+            }
+
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            [Browsable(false)]
+            public bool IsPassword
+            {
+                get => _isPassword;
+                set
+                {
+                    _isPassword = value;
+                    _inner.UseSystemPasswordChar = value;
+                }
+            }
+
+            public override string Text
+            {
+                get => _inner.Text;
+                set => _inner.Text = value;
+            }
+
+            public ModernInput()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint
+                       | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint
+                       | ControlStyles.ResizeRedraw, true);
+                BackColor = Color.White;
+                Padding = new Padding(16, 0, 16, 0);
+
+                _inner = new TextBox
+                {
+                    BorderStyle = BorderStyle.None,
+                    Font = AppFonts.Regular(10.5F),
+                    ForeColor = Color.FromArgb(15, 23, 42),
+                    BackColor = Color.White,
+                    ShortcutsEnabled = true
+                };
+                _inner.GotFocus += (s, e) => { _focused = true; UpdatePlaceholder(); Invalidate(); };
+                _inner.LostFocus += (s, e) => { _focused = false; UpdatePlaceholder(); Invalidate(); };
+                _inner.TextChanged += (s, e) => UpdatePlaceholder();
+
+                Controls.Add(_inner);
+                ApplyTextInset(_inner, 4);
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _inner.Focus(); base.OnMouseDown(e); }
+
+            protected override void OnResize(EventArgs e)
+            {
+                base.OnResize(e);
+                LayoutInner();
+            }
+
+            private void LayoutInner()
+            {
+                if (_inner == null) return;
+                int padL = 16, padR = 16;
+                _inner.Location = new Point(padL, (Height - _inner.PreferredHeight) / 2);
+                _inner.Width = Math.Max(20, Width - padL - padR);
+            }
+
+            private void UpdatePlaceholder()
+            {
+                // Placeholder rendered via paint; no need to modify inner Text
+                Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                // Background
+                using (var b = new SolidBrush(Color.White))
+                    g.FillRectangle(b, ClientRectangle);
+
+                // Border
+                Color border = _focused
+                    ? Color.FromArgb(37, 99, 235)       // blue-600
+                    : _hover
+                        ? Color.FromArgb(148, 163, 184)  // slate-400
+                        : Color.FromArgb(203, 213, 225); // slate-300
+
+                var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+                float thickness = _focused ? 1.8f : 1.3f;
+
+                using (var path = UiKit.Rounded(rect, 10))
+                using (var pen = new Pen(border, thickness))
+                    g.DrawPath(pen, path);
+
+                // Focus ring (soft outer glow)
+                if (_focused)
+                {
+                    var ring = new Rectangle(-1, -1, Width + 1, Height + 1);
+                    using var ringPath = UiKit.Rounded(ring, 11);
+                    using var ringPen = new Pen(Color.FromArgb(60, 37, 99, 235), 3f);
+                    g.DrawPath(ringPen, ringPath);
+                }
+
+                // Placeholder
+                if (string.IsNullOrEmpty(_inner.Text) && !string.IsNullOrEmpty(_placeholder))
+                {
+                    var textRect = new Rectangle(16, 0, Width - 32, Height);
+                    TextRenderer.DrawText(g, _placeholder, _inner.Font, textRect,
+                        Color.FromArgb(148, 163, 184),
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                        | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        //  Double-buffered panel
         // ─────────────────────────────────────────────────────────────────
         private sealed class BufferedPanel : Panel
         {

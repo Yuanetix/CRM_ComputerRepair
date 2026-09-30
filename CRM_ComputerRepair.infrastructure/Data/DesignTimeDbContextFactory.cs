@@ -27,28 +27,4 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<MasterCrmD
 
         return new MasterCrmDbContext(optionsBuilder.Options);
     }
-}
-
-public class TenantDesignTimeDbContextFactory : IDesignTimeDbContextFactory<TenantCrmDbContext>
-{
-    public TenantCrmDbContext CreateDbContext(string[] args)
-    {
-        var apiProjectPath = Path.Combine(
-            Directory.GetCurrentDirectory(),
-            "..",
-            "CRM_ComputerRepair.api");
-
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(apiProjectPath)
-            .AddJsonFile("appsettings.json", optional: true)
-            .Build();
-
-        var connectionString = configuration.GetConnectionString("DefaultTenant")
-            ?? @"Server=(localdb)\MSSQLLocalDB;Database=DB_TenantRepairs_Company1;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;";
-
-        var optionsBuilder = new DbContextOptionsBuilder<TenantCrmDbContext>();
-        optionsBuilder.UseSqlServer(connectionString);
-
-        return new TenantCrmDbContext(optionsBuilder.Options);
-    }
-}
+}

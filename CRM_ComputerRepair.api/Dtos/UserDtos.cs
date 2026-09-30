@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace CRM_ComputerRepair.api.Dtos;
 
@@ -10,6 +10,7 @@ public class UserSummaryDto
     public string FirstName { get; set; } = "";
     public string LastName { get; set; } = "";
     public bool IsActive { get; set; }
+    public int? CompanyId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public List<string> Roles { get; set; } = new();

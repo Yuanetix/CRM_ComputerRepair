@@ -19,6 +19,72 @@ namespace CRM_ComputerRepair.api.Services;
 /// </summary>
 public static class DatabaseSeeder
 {
+    public static async Task ResetAndSeedAllAsync(IServiceProvider sp, ILogger logger)
+    {
+        var master = sp.GetRequiredService<MasterCrmDbContext>();
+        var factory = sp.GetRequiredService<ITenantDbContextFactory>();
+        var users = sp.GetRequiredService<UserManager<User>>();
+        var roles = sp.GetRequiredService<RoleManager<IdentityRole>>();
+
+        logger.LogInformation("Applying master database migrations...");
+        await master.Database.MigrateAsync();
+
+        // 1. Reset identity: exactly ONE super admin account, plus the 3 tenant company accounts
+        await ResetAndSeedIdentityAsync(users, roles, logger);
+
+        // 2. Reset master CRM companies & subscriptions
+        await ResetAndSeedCompaniesAsync(master, logger);
+
+        // 3. Loyalty programs
+        var seededPrograms = await SeedLoyaltyProgramsAsync(master);
+
+        // 4. Reset & seed all 3 tenant databases
+        var tenantDatabases = await master.CompanyDatabases
+            .Where(d => d.IsActive)
+            .ToListAsync();
+
+        foreach (var tdb in tenantDatabases)
+        {
+            logger.LogInformation("Wiping and reseeding tenant database for Company {CompanyId} ({DatabaseName})...", tdb.CompanyId, tdb.DatabaseName);
+            await using var tenant = await factory.CreateAsync(tdb.CompanyId);
+            await tenant.Database.MigrateAsync();
+
+            // Clean slate wipe
+            tenant.FollowUps.RemoveRange(tenant.FollowUps);
+            tenant.CustomerInteractions.RemoveRange(tenant.CustomerInteractions);
+            tenant.RepairParts.RemoveRange(tenant.RepairParts);
+            tenant.Payments.RemoveRange(tenant.Payments);
+            tenant.RepairStatusHistories.RemoveRange(tenant.RepairStatusHistories);
+            tenant.RepairRequests.RemoveRange(tenant.RepairRequests);
+            tenant.Parts.RemoveRange(tenant.Parts);
+            tenant.Suppliers.RemoveRange(tenant.Suppliers);
+            tenant.Devices.RemoveRange(tenant.Devices);
+            tenant.RetentionEmailLogs.RemoveRange(tenant.RetentionEmailLogs);
+            tenant.RetentionRequests.RemoveRange(tenant.RetentionRequests);
+            tenant.RetentionSettings.RemoveRange(tenant.RetentionSettings);
+            tenant.RetentionEmailTemplates.RemoveRange(tenant.RetentionEmailTemplates);
+            tenant.Customers.RemoveRange(tenant.Customers);
+            tenant.SyncQueue.RemoveRange(tenant.SyncQueue);
+            await tenant.SaveChangesAsync();
+
+            // Seed fresh realistic data (over 1,600 realistic records)
+            await SeedTenantAsync(tenant, master, seededPrograms, tdb.CompanyId);
+            await SeedRetentionDefaultsAsync(tenant);
+        }
+
+        // 5. Loyalty memberships
+        try
+        {
+            await SeedMissingLoyaltyAccountsAsync(master, factory, seededPrograms, tenantDatabases, logger);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed seeding loyalty memberships into master database");
+        }
+
+        logger.LogInformation("All system databases have been reset and seeded with valid realistic data.");
+    }
+
     public static async Task SeedAsync(IServiceProvider sp, ILogger<Program> logger)
     {
         var master = sp.GetRequiredService<MasterCrmDbContext>();
@@ -27,12 +93,12 @@ public static class DatabaseSeeder
         logger.LogInformation("Applying master database migrations...");
         await master.Database.MigrateAsync();
 
-        // ── Identity roles + demo users ──
+        // ── Identity roles + system users ──
         var users = sp.GetRequiredService<UserManager<User>>();
         var roles = sp.GetRequiredService<RoleManager<IdentityRole>>();
         await SeedIdentityAsync(users, roles);
 
-        // ── Demo company + tenant database row ──
+        // ── 3 Companies + tenant database rows ──
         await SeedCompanyAsync(master);
 
         // ── Loyalty programs, terms, subscription ──
@@ -52,26 +118,27 @@ public static class DatabaseSeeder
                 await using var tenant = await factory.CreateAsync(tdb.CompanyId);
                 await tenant.Database.MigrateAsync();
 
-                if (!await tenant.RepairRequests.AnyAsync())
+                int existingCustCount = await tenant.Customers.CountAsync();
+                if (existingCustCount < 200)
                 {
-                    if (await tenant.Customers.AnyAsync())
-                    {
-                        tenant.FollowUps.RemoveRange(tenant.FollowUps);
-                        tenant.CustomerInteractions.RemoveRange(tenant.CustomerInteractions);
-                        tenant.RepairParts.RemoveRange(tenant.RepairParts);
-                        tenant.Payments.RemoveRange(tenant.Payments);
-                        tenant.RepairStatusHistories.RemoveRange(tenant.RepairStatusHistories);
-                        tenant.RepairRequests.RemoveRange(tenant.RepairRequests);
-                        tenant.Parts.RemoveRange(tenant.Parts);
-                        tenant.Suppliers.RemoveRange(tenant.Suppliers);
-                        tenant.Devices.RemoveRange(tenant.Devices);
-                        tenant.RetentionEmailLogs.RemoveRange(tenant.RetentionEmailLogs);
-                        tenant.RetentionRequests.RemoveRange(tenant.RetentionRequests);
-                        tenant.Customers.RemoveRange(tenant.Customers);
-                        await tenant.SaveChangesAsync();
-                    }
+                    logger.LogInformation("Tenant database for Company {CompanyId} has only {Count} customers (needs >= 200). Reseeding with full 200+ dataset...", tdb.CompanyId, existingCustCount);
+                    tenant.FollowUps.RemoveRange(tenant.FollowUps);
+                    tenant.CustomerInteractions.RemoveRange(tenant.CustomerInteractions);
+                    tenant.RepairParts.RemoveRange(tenant.RepairParts);
+                    tenant.Payments.RemoveRange(tenant.Payments);
+                    tenant.RepairStatusHistories.RemoveRange(tenant.RepairStatusHistories);
+                    tenant.RepairRequests.RemoveRange(tenant.RepairRequests);
+                    tenant.Parts.RemoveRange(tenant.Parts);
+                    tenant.Suppliers.RemoveRange(tenant.Suppliers);
+                    tenant.Devices.RemoveRange(tenant.Devices);
+                    tenant.RetentionEmailLogs.RemoveRange(tenant.RetentionEmailLogs);
+                    tenant.RetentionRequests.RemoveRange(tenant.RetentionRequests);
+                    tenant.RetentionSettings.RemoveRange(tenant.RetentionSettings);
+                    tenant.RetentionEmailTemplates.RemoveRange(tenant.RetentionEmailTemplates);
+                    tenant.Customers.RemoveRange(tenant.Customers);
+                    tenant.SyncQueue.RemoveRange(tenant.SyncQueue);
+                    await tenant.SaveChangesAsync();
 
-                    logger.LogInformation("Seeding tenant demo data for Company {CompanyId}...", tdb.CompanyId);
                     await SeedTenantAsync(tenant, master, seededPrograms, tdb.CompanyId);
                 }
 
@@ -98,96 +165,392 @@ public static class DatabaseSeeder
 
     // ═══════════════════════ Identity ═══════════════════════
 
+    // ═══════════════════════ Identity ═══════════════════════
+
+    private static async Task ResetAndSeedIdentityAsync(
+        UserManager<User> users, RoleManager<IdentityRole> roles, ILogger logger)
+    {
+        var roleNames = new[] { "Super Admin", "Admin", "Manager", "Staff" };
+        foreach (var r in roleNames)
+        {
+            if (!await roles.RoleExistsAsync(r))
+                await roles.CreateAsync(new IdentityRole(r));
+        }
+
+        var allowedUsers = new[]
+        {
+            // Exactly ONE super admin account -> DB_MasterCRM
+            new { UserName = "superadmin", Email = "admin@fixorycrm.com", Password = "SuperAdmin@123", First = "Super", Last = "Admin", Role = "Super Admin", CompanyId = (int?)1 },
+
+            // Fixtech accounts (Company 1) -> DB_Fixtech
+            new { UserName = "fixtech", Email = "admin@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Administrator", Role = "Admin", CompanyId = (int?)1 },
+            new { UserName = "fixtechManager", Email = "manager@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Manager", Role = "Manager", CompanyId = (int?)1 },
+            new { UserName = "fixtechStaff", Email = "staff@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Staff", Role = "Staff", CompanyId = (int?)1 },
+
+            // ByteCare accounts (Company 2) -> DB_Bytecare
+            new { UserName = "bytecare", Email = "admin@bytecare.ph", Password = "Bytecare@123", First = "ByteCare", Last = "Administrator", Role = "Admin", CompanyId = (int?)2 },
+            new { UserName = "bytecareManager", Email = "manager@bytecare.ph", Password = "Bytecare@123", First = "ByteCare", Last = "Manager", Role = "Manager", CompanyId = (int?)2 },
+            new { UserName = "bytecareStaff", Email = "staff@bytecare.ph", Password = "Bytecare@123", First = "ByteCare", Last = "Staff", Role = "Staff", CompanyId = (int?)2 },
+
+            // TechRevive accounts (Company 3) -> DB_Techrevive
+            new { UserName = "techrevive", Email = "admin@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Administrator", Role = "Admin", CompanyId = (int?)3 },
+            new { UserName = "techreviveManager", Email = "manager@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Manager", Role = "Manager", CompanyId = (int?)3 },
+            new { UserName = "techreviveStaff", Email = "staff@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Staff", Role = "Staff", CompanyId = (int?)3 },
+        };
+
+        var allowedUsernames = allowedUsers.Select(x => x.UserName.ToLowerInvariant()).ToHashSet();
+
+        // Remove any legacy users not in allowed list
+        var existing = await users.Users.ToListAsync();
+        foreach (var u in existing)
+        {
+            if (!allowedUsernames.Contains((u.UserName ?? "").ToLowerInvariant()))
+            {
+                logger.LogInformation("Removing legacy user: {Username}", u.UserName);
+                await users.DeleteAsync(u);
+            }
+        }
+
+        // Create or update allowed users
+        foreach (var d in allowedUsers)
+        {
+            var u = await users.FindByNameAsync(d.UserName);
+            if (u == null)
+            {
+                u = new User
+                {
+                    UserName = d.UserName,
+                    Email = d.Email,
+                    EmailConfirmed = true,
+                    FirstName = d.First,
+                    LastName = d.Last,
+                    CompanyId = d.CompanyId,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+                var createRes = await users.CreateAsync(u, d.Password);
+                if (createRes.Succeeded)
+                {
+                    await users.AddToRoleAsync(u, d.Role);
+                }
+            }
+            else
+            {
+                u.CompanyId = d.CompanyId;
+                u.Email = d.Email;
+                u.FirstName = d.First;
+                u.LastName = d.Last;
+                u.IsActive = true;
+                await users.UpdateAsync(u);
+
+                var curRoles = await users.GetRolesAsync(u);
+                if (!curRoles.Contains(d.Role))
+                {
+                    await users.RemoveFromRolesAsync(u, curRoles);
+                    await users.AddToRoleAsync(u, d.Role);
+                }
+
+                var token = await users.GeneratePasswordResetTokenAsync(u);
+                await users.ResetPasswordAsync(u, token, d.Password);
+            }
+        }
+    }
+
     private static async Task SeedIdentityAsync(
         UserManager<User> users, RoleManager<IdentityRole> roles)
     {
+        var roleNames = new[] { "Super Admin", "Admin", "Manager", "Staff" };
+        foreach (var r in roleNames)
+        {
+            if (!await roles.RoleExistsAsync(r))
+                await roles.CreateAsync(new IdentityRole(r));
+        }
+
         var demoUsers = new[]
         {
-            new { UserName = "superadmin", Email = "admin@fixory.local",      Password = "SuperAdmin@123", First = "Super",  Last = "Admin",    Role = "Super Admin" },
-            new { UserName = "admin",      Email = "admin.user@fixory.local", Password = "Admin@123",      First = "Admin",  Last = "User",     Role = "Admin" },
-            new { UserName = "manager",    Email = "manager@fixory.local",    Password = "Manager@123",    First = "Manager",Last = "User",     Role = "Manager" },
-            new { UserName = "staff",      Email = "staff@fixory.local",      Password = "Staff@123",      First = "Juan",   Last = "Dela Cruz",Role = "Staff" }
+            new { UserName = "superadmin", Email = "admin@fixorycrm.com", Password = "SuperAdmin@123", First = "Super", Last = "Admin", Role = "Super Admin", CompanyId = (int?)1 },
+            new { UserName = "fixtech", Email = "admin@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Administrator", Role = "Admin", CompanyId = (int?)1 },
+            new { UserName = "fixtechManager", Email = "manager@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Manager", Role = "Manager", CompanyId = (int?)1 },
+            new { UserName = "fixtechStaff", Email = "staff@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Staff", Role = "Staff", CompanyId = (int?)1 },
+            new { UserName = "bytecare", Email = "admin@bytecare.ph", Password = "Bytecare@123", First = "ByteCare", Last = "Administrator", Role = "Admin", CompanyId = (int?)2 },
+            new { UserName = "bytecareManager", Email = "manager@bytecare.ph", Password = "Bytecare@123", First = "ByteCare", Last = "Manager", Role = "Manager", CompanyId = (int?)2 },
+            new { UserName = "bytecareStaff", Email = "staff@bytecare.ph", Password = "Bytecare@123", First = "ByteCare", Last = "Staff", Role = "Staff", CompanyId = (int?)2 },
+            new { UserName = "techrevive", Email = "admin@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Administrator", Role = "Admin", CompanyId = (int?)3 },
+            new { UserName = "techreviveManager", Email = "manager@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Manager", Role = "Manager", CompanyId = (int?)3 },
+            new { UserName = "techreviveStaff", Email = "staff@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Staff", Role = "Staff", CompanyId = (int?)3 },
         };
+
+        var allowedUsernames = demoUsers.Select(x => x.UserName.ToLowerInvariant()).ToHashSet();
+
+        // Prune any legacy or unapproved accounts
+        var existing = await users.Users.ToListAsync();
+        foreach (var u in existing)
+        {
+            if (!allowedUsernames.Contains((u.UserName ?? "").ToLowerInvariant()))
+            {
+                await users.DeleteAsync(u);
+            }
+        }
 
         foreach (var d in demoUsers)
         {
-            if (!await roles.RoleExistsAsync(d.Role))
-                await roles.CreateAsync(new IdentityRole(d.Role));
-
-            if (await users.FindByNameAsync(d.UserName) != null)
-                continue;
-
-            var user = new User
+            var user = await users.FindByNameAsync(d.UserName);
+            if (user == null)
             {
-                UserName = d.UserName,
-                Email = d.Email,
-                EmailConfirmed = true,
-                FirstName = d.First,
-                LastName = d.Last,
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow
-            };
+                user = new User
+                {
+                    UserName = d.UserName,
+                    Email = d.Email,
+                    EmailConfirmed = true,
+                    FirstName = d.First,
+                    LastName = d.Last,
+                    CompanyId = d.CompanyId,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
 
-            var result = await users.CreateAsync(user, d.Password);
-            if (result.Succeeded)
-                await users.AddToRoleAsync(user, d.Role);
+                var result = await users.CreateAsync(user, d.Password);
+                if (result.Succeeded)
+                    await users.AddToRoleAsync(user, d.Role);
+            }
+            else
+            {
+                user.CompanyId = d.CompanyId;
+                user.Email = d.Email;
+                user.FirstName = d.First;
+                user.LastName = d.Last;
+                user.IsActive = true;
+                await users.UpdateAsync(user);
+
+                var curRoles = await users.GetRolesAsync(user);
+                if (!curRoles.Contains(d.Role))
+                {
+                    await users.RemoveFromRolesAsync(user, curRoles);
+                    await users.AddToRoleAsync(user, d.Role);
+                }
+
+                var token = await users.GeneratePasswordResetTokenAsync(user);
+                await users.ResetPasswordAsync(user, token, d.Password);
+            }
         }
     }
 
     // ═══════════════════════ Master ═══════════════════════
 
-    private static async Task SeedCompanyAsync(MasterCrmDbContext master)
+    private static async Task ResetAndSeedCompaniesAsync(MasterCrmDbContext master, ILogger logger)
     {
-        const string code = "FIXORY-001";
-
-        var company = await master.Companies
-            .FirstOrDefaultAsync(c => c.CompanyId == 1 || c.CompanyCode == code);
-
-        if (company is null)
+        // 1. Subscription Plans
+        var starter = await master.Subscriptions.FirstOrDefaultAsync(s => s.SubscriptionName == "Starter Plan");
+        if (starter == null)
         {
-            company = new Company
+            starter = new Subscription
             {
-                CompanyCode = code,
-                CompanyName = "Fixory Computer Repair Services",
-                ContactPhone = "+63 917 555 0192",
-                ContactEmail = "contact@fixoryrepairs.ph",
-                Address = "Unit 102 Gilmore Tech Center, Aurora Blvd",
-                City = "Quezon City",
-                StateOrProvince = "Metro Manila",
-                PostalCode = "1112",
-                Country = "Philippines",
+                SubscriptionName = "Starter Plan",
+                PricePerMonth = 999.00m,
+                DurationMonths = 1,
+                Duration = "1 Month",
+                MaxUsers = 5,
+                MaxDevices = 100,
+                EnableMultiBranching = false,
+                Description = "Essential repair intake, customer tracking, and diagnostic ticketing for small repair shops.",
+                BillingCycle = "Monthly",
                 IsActive = true,
+                IsArchived = false,
+                StartDate = DateTime.UtcNow.AddDays(-30),
+                EndDate = DateTime.UtcNow.AddDays(365),
                 CreatedAt = DateTime.UtcNow
             };
-            master.Companies.Add(company);
-            await master.SaveChangesAsync();
+            master.Subscriptions.Add(starter);
         }
-        else if (string.IsNullOrWhiteSpace(company.ContactEmail))
+        else
         {
-            company.ContactPhone = "+63 917 555 0192";
-            company.ContactEmail = "contact@fixoryrepairs.ph";
-            company.Address = "Unit 102 Gilmore Tech Center, Aurora Blvd";
-            company.City = "Quezon City";
-            company.StateOrProvince = "Metro Manila";
-            company.PostalCode = "1112";
-            company.Country = "Philippines";
-            await master.SaveChangesAsync();
+            starter.EnableMultiBranching = false;
         }
 
-        var hasDb = await master.CompanyDatabases
-            .AnyAsync(d => d.CompanyId == company.CompanyId);
-
-        if (!hasDb)
+        var pro = await master.Subscriptions.FirstOrDefaultAsync(s => s.SubscriptionName == "Professional Plan");
+        if (pro == null)
         {
-            master.CompanyDatabases.Add(new CompanyDatabase
+            pro = new Subscription
             {
-                CompanyId = company.CompanyId,
-                ServerName = @"(localdb)\MSSQLLocalDB",
-                DatabaseName = "DB_TenantRepairs_Company1",
-                CredentialKey = "",
-                IsActive = true
-            });
-            await master.SaveChangesAsync();
+                SubscriptionName = "Professional Plan",
+                PricePerMonth = 2499.00m,
+                DurationMonths = 1,
+                Duration = "1 Month",
+                MaxUsers = 15,
+                MaxDevices = 500,
+                EnableMultiBranching = false,
+                Description = "Full CRM power including automated retention email campaigns, customer loyalty rewards, and PDF exports.",
+                BillingCycle = "Monthly",
+                IsActive = true,
+                IsArchived = false,
+                StartDate = DateTime.UtcNow.AddDays(-30),
+                EndDate = DateTime.UtcNow.AddDays(365),
+                CreatedAt = DateTime.UtcNow
+            };
+            master.Subscriptions.Add(pro);
+        }
+        else
+        {
+            pro.EnableMultiBranching = false;
+        }
+
+        var ent = await master.Subscriptions.FirstOrDefaultAsync(s => s.SubscriptionName == "Enterprise Multi-Branch");
+        if (ent == null)
+        {
+            ent = new Subscription
+            {
+                SubscriptionName = "Enterprise Multi-Branch",
+                PricePerMonth = 4999.00m,
+                DurationMonths = 12,
+                Duration = "12 Months (Annual)",
+                MaxUsers = 50,
+                MaxDevices = 2500,
+                EnableMultiBranching = true,
+                Description = "Multi-branch store synchronization, unlimited repair technicians, priority database cluster, and custom retention templates.",
+                BillingCycle = "Yearly",
+                IsActive = true,
+                IsArchived = false,
+                StartDate = DateTime.UtcNow.AddDays(-30),
+                EndDate = DateTime.UtcNow.AddDays(365),
+                CreatedAt = DateTime.UtcNow
+            };
+            master.Subscriptions.Add(ent);
+        }
+        else
+        {
+            ent.EnableMultiBranching = true;
+        }
+
+        await master.SaveChangesAsync();
+
+        // 2. Remove legacy non-conforming companies
+        var legacyCompanies = await master.Companies
+            .Where(c => c.CompanyId > 3 || (c.CompanyCode != "FIXTECH" && c.CompanyCode != "BYTECARE" && c.CompanyCode != "TECHREVIVE" && c.CompanyId != 1 && c.CompanyId != 2 && c.CompanyId != 3))
+            .ToListAsync();
+
+        foreach (var extra in legacyCompanies)
+        {
+            var extraLpIds = await master.LoyaltyPrograms.Where(lp => lp.CompanyId == extra.CompanyId).Select(lp => lp.LoyaltyProgramId).ToListAsync();
+            var extraLoyaltyAccs = await master.CustomerLoyaltyAccounts.Where(a => extraLpIds.Contains(a.LoyaltyProgramId)).ToListAsync();
+            master.CustomerLoyaltyAccounts.RemoveRange(extraLoyaltyAccs);
+
+            var extraLoyalty = await master.LoyaltyPrograms.Where(lp => lp.CompanyId == extra.CompanyId).ToListAsync();
+            master.LoyaltyPrograms.RemoveRange(extraLoyalty);
+
+            var extraDevices = await master.Devices.Where(d => d.CompanyId == extra.CompanyId).ToListAsync();
+            master.Devices.RemoveRange(extraDevices);
+
+            var extraSubs = await master.Subscriptions.Where(s => s.CompanyId == extra.CompanyId).ToListAsync();
+            foreach (var sub in extraSubs)
+            {
+                sub.CompanyId = null;
+            }
+
+            var extraDbs = await master.CompanyDatabases.Where(d => d.CompanyId == extra.CompanyId).ToListAsync();
+            master.CompanyDatabases.RemoveRange(extraDbs);
+            master.Companies.Remove(extra);
+        }
+        await master.SaveChangesAsync();
+
+        // 3. Ensure Company 1: Fixtech
+        var c1 = await master.Companies.FirstOrDefaultAsync(c => c.CompanyId == 1);
+        if (c1 == null)
+        {
+            c1 = new Company { CompanyId = 1 };
+            master.Companies.Add(c1);
+        }
+        c1.CompanyCode = "FIXTECH";
+        c1.CompanyName = "Fixtech Computer Solutions";
+        c1.ContactFirstName = "Eduardo";
+        c1.ContactLastName = "Santos";
+        c1.ContactPhone = "+63 917 555 1010";
+        c1.ContactEmail = "contact@fixtech.ph";
+        c1.Address = "Unit 204 Cyberzone Gilmore, Aurora Blvd";
+        c1.City = "Quezon City";
+        c1.StateOrProvince = "Metro Manila";
+        c1.PostalCode = "1112";
+        c1.Country = "Philippines";
+        c1.SubscriptionId = starter.SubscriptionId;
+        c1.IsActive = true;
+        c1.HasAcceptedTerms = true;
+        c1.TermsAcceptedAt = DateTime.UtcNow;
+
+        // Ensure Company 2: bytecare
+        var c2 = await master.Companies.FirstOrDefaultAsync(c => c.CompanyId == 2);
+        if (c2 == null)
+        {
+            c2 = new Company { CompanyId = 2 };
+            master.Companies.Add(c2);
+        }
+        c2.CompanyCode = "BYTECARE";
+        c2.CompanyName = "ByteCare Repairs & IT Services";
+        c2.ContactFirstName = "Carmela";
+        c2.ContactLastName = "Reyes";
+        c2.ContactPhone = "+63 918 555 2020";
+        c2.ContactEmail = "support@bytecare.ph";
+        c2.Address = "Level 3 Ayala Malls Circuit, Theater Drive";
+        c2.City = "Makati";
+        c2.StateOrProvince = "Metro Manila";
+        c2.PostalCode = "1207";
+        c2.Country = "Philippines";
+        c2.SubscriptionId = pro.SubscriptionId;
+        c2.IsActive = true;
+        c2.HasAcceptedTerms = true;
+        c2.TermsAcceptedAt = DateTime.UtcNow;
+
+        // Ensure Company 3: techrevive
+        var c3 = await master.Companies.FirstOrDefaultAsync(c => c.CompanyId == 3);
+        if (c3 == null)
+        {
+            c3 = new Company { CompanyId = 3 };
+            master.Companies.Add(c3);
+        }
+        c3.CompanyCode = "TECHREVIVE";
+        c3.CompanyName = "TechRevive Systems & Electronics";
+        c3.ContactFirstName = "Rodrigo";
+        c3.ContactLastName = "Navarro";
+        c3.ContactPhone = "+63 920 555 3030";
+        c3.ContactEmail = "info@techrevive.ph";
+        c3.Address = "G/F High Street South Corporate Plaza, 26th St";
+        c3.City = "Taguig";
+        c3.StateOrProvince = "Metro Manila";
+        c3.PostalCode = "1634";
+        c3.Country = "Philippines";
+        c3.SubscriptionId = ent.SubscriptionId;
+        c3.IsActive = true;
+        c3.HasAcceptedTerms = true;
+        c3.TermsAcceptedAt = DateTime.UtcNow;
+
+        await master.SaveChangesAsync();
+
+        // 4. Map CompanyDatabases
+        var dbMap = new[]
+        {
+            new { CompId = 1, DbName = "DB_TenantRepairs_Company1" },
+            new { CompId = 2, DbName = "DB_TenantRepairs_Company2" },
+            new { CompId = 3, DbName = "DB_TenantRepairs_Company3" },
+        };
+
+        foreach (var dm in dbMap)
+        {
+            var cdb = await master.CompanyDatabases.FirstOrDefaultAsync(d => d.CompanyId == dm.CompId);
+            if (cdb == null)
+            {
+                master.CompanyDatabases.Add(new CompanyDatabase
+                {
+                    CompanyId = dm.CompId,
+                    ServerName = @"(localdb)\MSSQLLocalDB",
+                    DatabaseName = dm.DbName,
+                    CredentialKey = "",
+                    IsActive = true
+                });
+            }
+            else
+            {
+                cdb.ServerName = @"(localdb)\MSSQLLocalDB";
+                cdb.DatabaseName = dm.DbName;
+                cdb.IsActive = true;
+            }
         }
 
         if (!await master.TermsAndConditionsSet.AnyAsync(t => t.Title == "Standard Service Agreement"))
@@ -206,81 +569,14 @@ public static class DatabaseSeeder
                 CreatedByUserId = "system",
                 CreatedAt = DateTime.UtcNow
             });
-            await master.SaveChangesAsync();
         }
 
-        // ── Seed Subscription Plans ──
-        if (!await master.Subscriptions.AnyAsync(s => s.SubscriptionName == "Starter Plan"))
-        {
-            master.Subscriptions.Add(new Subscription
-            {
-                SubscriptionName = "Starter Plan",
-                PricePerMonth = 999.00m,
-                DurationMonths = 1,
-                Duration = "1 Month",
-                MaxUsers = 5,
-                MaxDevices = 100,
-                EnableMultiBranching = false,
-                Description = "Essential repair intake, customer tracking, and diagnostic ticketing for small repair shops.",
-                BillingCycle = "Monthly",
-                IsActive = true,
-                IsArchived = false,
-                StartDate = DateTime.UtcNow.AddDays(-30),
-                EndDate = DateTime.UtcNow.AddDays(365),
-                CreatedAt = DateTime.UtcNow
-            });
-        }
+        await master.SaveChangesAsync();
+    }
 
-        if (!await master.Subscriptions.AnyAsync(s => s.SubscriptionName == "Professional Plan"))
-        {
-            var pro = new Subscription
-            {
-                SubscriptionName = "Professional Plan",
-                PricePerMonth = 2499.00m,
-                DurationMonths = 1,
-                Duration = "1 Month",
-                MaxUsers = 15,
-                MaxDevices = 500,
-                EnableMultiBranching = false,
-                Description = "Full CRM power including automated retention email campaigns, customer loyalty rewards, and PDF exports.",
-                BillingCycle = "Monthly",
-                IsActive = true,
-                IsArchived = false,
-                StartDate = DateTime.UtcNow.AddDays(-30),
-                EndDate = DateTime.UtcNow.AddDays(365),
-                CreatedAt = DateTime.UtcNow
-            };
-            master.Subscriptions.Add(pro);
-            await master.SaveChangesAsync();
-
-            if (company.SubscriptionId == null)
-            {
-                company.SubscriptionId = pro.SubscriptionId;
-                await master.SaveChangesAsync();
-            }
-        }
-
-        if (!await master.Subscriptions.AnyAsync(s => s.SubscriptionName == "Enterprise Multi-Branch"))
-        {
-            master.Subscriptions.Add(new Subscription
-            {
-                SubscriptionName = "Enterprise Multi-Branch",
-                PricePerMonth = 4999.00m,
-                DurationMonths = 12,
-                Duration = "12 Months (Annual)",
-                MaxUsers = 50,
-                MaxDevices = 2500,
-                EnableMultiBranching = true,
-                Description = "Multi-branch store synchronization, unlimited repair technicians, priority database cluster, and custom retention templates.",
-                BillingCycle = "Yearly",
-                IsActive = true,
-                IsArchived = false,
-                StartDate = DateTime.UtcNow.AddDays(-30),
-                EndDate = DateTime.UtcNow.AddDays(365),
-                CreatedAt = DateTime.UtcNow
-            });
-            await master.SaveChangesAsync();
-        }
+    private static async Task SeedCompanyAsync(MasterCrmDbContext master)
+    {
+        await ResetAndSeedCompaniesAsync(master, null!);
     }
 
     private static async Task<List<LoyaltyProgram>> SeedLoyaltyProgramsAsync(MasterCrmDbContext master)
@@ -476,7 +772,15 @@ public static class DatabaseSeeder
             ("DEV-SA-01", "Samsung S22 Ultra",           "Phone",   "Samsung","Galaxy S22 Ultra"),
             ("DEV-AP-01", "iMac 24\" M1",                "Desktop", "Apple", "iMac 24 A2438"),
             ("DEV-LA-01", "Sony VAIO",                   "Laptop",  "Sony",  "VAIO SVF152"),
-            ("DEV-CB-01", "Razer Blade 15",              "Laptop",  "Razer", "Blade 15 Advanced")
+            ("DEV-CB-01", "Razer Blade 15",              "Laptop",  "Razer", "Blade 15 Advanced"),
+            ("DEV-LT-04", "Lenovo Legion 5 Gaming",      "Laptop",  "Lenovo","Legion 5 15ACH6"),
+            ("DEV-LT-05", "ASUS ZenBook 14",             "Laptop",  "ASUS",  "UX425EA"),
+            ("DEV-LT-06", "MSI Modern 14",               "Laptop",  "MSI",   "B11M"),
+            ("DEV-DT-02", "Dell OptiPlex 7080 Micro",    "Desktop", "Dell",  "OptiPlex 7080"),
+            ("DEV-MB-02", "MacBook Pro 16\" M2 Max",     "Laptop",  "Apple", "MacBook Pro A2780"),
+            ("DEV-IP-02", "iPad Pro 11\" M2",            "Tablet",  "Apple", "iPad Pro A2759"),
+            ("DEV-SA-02", "Samsung Galaxy Tab S8",       "Tablet",  "Samsung","Galaxy Tab S8"),
+            ("DEV-PC-02", "Office Workstation Core i7",   "Desktop", "Dell",  "Precision 3650")
         };
 
         foreach (var d in deviceDefs)
@@ -501,7 +805,7 @@ public static class DatabaseSeeder
         }
         tenant.Devices.AddRange(devices);
 
-        // ── Customers (80) ──
+        // ── Customers (220) ──
         var firstNames = new[]
         {
             "Maria", "Jose", "Juan", "Ana", "Pedro", "Liza", "Carlo", "Rosa", "Miguel", "Elena",
@@ -511,7 +815,10 @@ public static class DatabaseSeeder
             "Jasper", "Kristine", "Leo", "Mila", "Nonoy", "Olive", "Perry", "Queen", "Rico", "Sheryl",
             "Tim", "Vina", "Willie", "Yanie", "Zed", "Aileen", "Brando", "Connie", "Dante", "Fely",
             "Gilbert", "Harold", "Imelda", "Jun", "Kayla", "Louie", "May", "Nestor", "Odessa", "Paolo",
-            "Rafael", "Sonia", "Teresa", "Vince", "Winston", "Yumi", "Amon", "Bella", "Cesar", "Divina"
+            "Rafael", "Sonia", "Teresa", "Vince", "Winston", "Yumi", "Amon", "Bella", "Cesar", "Divina",
+            "Eduardo", "Francis", "Gloria", "Henry", "Irene", "Joel", "Karen", "Lorenzo", "Mercedes", "Noel",
+            "Orlando", "Patricia", "Quirino", "Rowena", "Salvador", "Thelma", "Ulysses", "Valerie", "Wilfredo", "Ximena",
+            "Yolanda", "Zachary", "Abigail", "Benjie", "Clarissa", "Danilo", "Esther", "Froilan", "Gemma", "Hermie"
         };
 
         var lastNames = new[]
@@ -520,11 +827,12 @@ public static class DatabaseSeeder
             "Torres", "Flores", "Ramos", "Aquino", "Domingo", "Rosario", "Villanueva", "Navarro",
             "Salazar", "Perez", "Castillo", "Lopez", "Fernandez", "Gonzales", "Rivera", "Castro",
             "Valdez", "Aguilar", "Morales", "Alvarez", "Rojas", "Del Rosario", "Sison", "Tan",
-            "Lim", "Chua", "Co", "Uy", "Sy", "Dizon", "Espinoza", "Marquez"
+            "Lim", "Chua", "Co", "Uy", "Sy", "Dizon", "Espinoza", "Marquez", "Manalo", "Mercado",
+            "Soriano", "Pascual", "David", "Macaraeg", "Pineda", "Cabrera", "Tolentino", "Padilla", "Bernardo"
         };
 
         var customers = new List<Customer>();
-        for (int i = 0; i < 80; i++)
+        for (int i = 0; i < 220; i++)
         {
             var joined = now;
             var roll = i % 100;
@@ -533,15 +841,24 @@ public static class DatabaseSeeder
             else if (roll < 70) joined = now.AddDays(-rng.Next(180, 365));
             else joined = now.AddDays(-rng.Next(365, 700));
 
-            var cities = new[] { "Makati", "Manila", "Pasig", "Quezon City", "Taguig", "Mandaluyong" };
+            var fn = firstNames[i % firstNames.Length];
+            var ln = lastNames[(i * 3 + rng.Next(lastNames.Length)) % lastNames.Length];
+            var cleanLn = ln.ToLowerInvariant().Replace(" ", "").Replace(".", "");
+            var cleanFn = fn.ToLowerInvariant();
+
+            var emailDomains = new[] { "gmail.com", "yahoo.com", "outlook.com", "icloud.com" };
+            var selectedDomain = emailDomains[rng.Next(emailDomains.Length)];
+
+            var cities = new[] { "Makati", "Manila", "Pasig", "Quezon City", "Taguig", "Mandaluyong", "San Juan", "Parañaque" };
+            var streets = new[] { "Pearl", "Rizal", "Bonifacio", "Quezon", "Luna", "Mahogany", "Shaw Blvd", "Gilmore", "Aurora Blvd", "Ayala Ave", "Kalayaan", "Taft Ave" };
             var selectedCity = cities[rng.Next(cities.Length)];
             customers.Add(new Customer
             {
-                FirstName = firstNames[i],
-                LastName = lastNames[rng.Next(lastNames.Length)],
-                Email = $"cust{i + 1:D2}@example.com",
-                Phone = $"09{rng.Next(10_000_000, 99_999_999):D8}",
-                Address = $"{rng.Next(12, 499)} {new[] { "Pearl", "Rizal", "Bonifacio", "Quezon", "Luna", "Mahogany" }[rng.Next(6)]} St.",
+                FirstName = fn,
+                LastName = ln,
+                Email = $"{cleanFn}.{cleanLn}{i + 1}@{selectedDomain}",
+                Phone = $"09{rng.Next(11, 20)}{rng.Next(1000000, 9999999)}",
+                Address = $"{rng.Next(12, 599)} {streets[rng.Next(streets.Length)]} St.",
                 City = selectedCity,
                 StateOrProvince = "Metro Manila",
                 PostalCode = $"{rng.Next(1000, 1800)}",
@@ -552,9 +869,9 @@ public static class DatabaseSeeder
             });
         }
 
-        // 4 customers intentionally have zero repairs — for the "never purchased" segment.
-        var neverPurchased = new[] { 3, 21, 44, 67 };
-        var inactiveIndexes = Enumerable.Range(0, 80).Where(i => !neverPurchased.Contains(i) && i % 13 == 0).ToList();
+        // Selected customers intentionally have zero repairs — for the "never purchased" segment.
+        var neverPurchased = new[] { 3, 21, 44, 67, 102, 145, 189 };
+        var inactiveIndexes = Enumerable.Range(0, 220).Where(i => !neverPurchased.Contains(i) && i % 17 == 0).ToList();
 
         tenant.Customers.AddRange(customers);
         await tenant.SaveChangesAsync();
@@ -659,7 +976,7 @@ public static class DatabaseSeeder
             "Data lost after failed OS update — needs recovery."
         };
 
-        const int repairCount = 240;
+        const int repairCount = 280;
         var repairs = new List<RepairRequest>();
         var payments = new List<Payment>();
         var paymentByRepair = new List<(Payment payment, RepairRequest rr)>();
@@ -757,6 +1074,23 @@ public static class DatabaseSeeder
                     paymentByRepair.Add((payment, rr));
                 }
             }
+            else if ((status == RepairStatus.InProgress || status == RepairStatus.Approved) && rng.NextDouble() < 0.70)
+            {
+                // Deposit transaction for in-progress or approved diagnostic tickets
+                var deposit = new Payment
+                {
+                    RepairRequestId = 0,
+                    Amount = Math.Round(estimatedCost * 0.50m, 2),
+                    PaymentDate = requestDate.AddHours(rng.Next(2, 24)),
+                    PaymentMethod = new[] { "Cash", "G-Cash", "Card" }[rng.Next(3)],
+                    ReferenceNumber = $"DEP-{rng.Next(1_000_000, 9_999_999)}",
+                    IsPaid = true,
+                    IsVoid = false
+                };
+                payments.Add(deposit);
+                paymentByRepair.Add((deposit, rr));
+                rr.AssignedToStaffId = "staff";
+            }
             else
             {
                 rr.AssignedToStaffId = status == RepairStatus.Reassigned ? "staff" : null;
@@ -776,7 +1110,7 @@ public static class DatabaseSeeder
             });
         }
 
-        // ── Interactions (inquiries / complaints / feedback) ──
+        // ── Interactions (inquiries / complaints / feedback) (220) ──
         var interactions = new List<CustomerInteraction>();
         var interactionSubjects = new[]
         {
@@ -792,7 +1126,21 @@ public static class DatabaseSeeder
             "Inquiry: warranty on replaced battery"
         };
 
-        for (int i = 0; i < 130; i++)
+        var interactionNotes = new[]
+        {
+            "Customer contacted shop regarding diagnostic evaluation status. Advised unit is currently undergoing power rail measurement.",
+            "Customer visited shop to check turnaround time. Technician confirmed parts arrival and target completion tomorrow.",
+            "Customer requested detailed quotation breakdown for replacement display vs labor. Provided formal estimate.",
+            "Client reported minor thermal throttling during video rendering. Recommended internal fan cleaning and thermal pad replacement.",
+            "Customer asked about warranty coverage on logic board capacitor rework. Reassured with 90-day comprehensive guarantee.",
+            "Customer requested data backup prior to SSD upgrade. Confirmed all personal files and browser profiles backed up safely.",
+            "Client expressed high satisfaction with speedy turnaround and courteous technical assistance.",
+            "Customer inquired about compatibility of upgrading to 32GB DDR4 memory for architectural CAD workstation.",
+            "Client called regarding pickup authorization for family member. Recorded authorized representative details.",
+            "Customer reported power adapter was misplaced. Matched compatible OEM 65W fast charger from inventory."
+        };
+
+        for (int i = 0; i < 220; i++)
         {
             var type = rng.Next(0, 3) switch { 0 => InteractionType.Inquiry, 1 => InteractionType.Complaint, _ => InteractionType.Feedback };
             var statusRoll = rng.NextDouble();
@@ -810,8 +1158,8 @@ public static class DatabaseSeeder
                 Status = status,
                 Priority = (InteractionPriority)rng.Next(0, 3),
                 Subject = interactionSubjects[rng.Next(interactionSubjects.Length)],
-                Notes = "Auto-generated demo interaction used to exercise the retention engine.",
-                InteractionByUserId = rng.Next(0, 2) == 0 ? "staff" : "manager",
+                Notes = interactionNotes[rng.Next(interactionNotes.Length)],
+                InteractionByUserId = rng.Next(0, 2) == 0 ? "technician" : "admin",
                 InteractionDate = now.AddDays(-rng.Next(0, 365)),
                 IsActive = true
             };
@@ -822,23 +1170,47 @@ public static class DatabaseSeeder
             interactions.Add(interaction);
         }
 
-        // ── Follow-ups ──
-        var followUps = new List<FollowUp>();
-        for (int i = 0; i < 18; i++)
+        // ── Follow-ups (200) ──
+        var followUpSubjects = new[]
         {
-            var scheduled = now.AddDays(-rng.Next(0, 45));
-            var status = scheduled < now.AddDays(-30) ? FollowUpStatus.Cancelled : rng.NextDouble() < 0.3 ? FollowUpStatus.Completed : FollowUpStatus.Scheduled;
+            "Post-repair 48hr diagnostic check and temperature stability verification",
+            "Quotation approval callback for logic board capacitor replacement",
+            "Satisfaction inquiry: replacement IPS screen visual quality check",
+            "Unclaimed unit notification — repair completed and ready for counter pickup",
+            "Follow up: battery replacement cycle calibration and health report",
+            "Preventative maintenance reminder: 6-month thermal fan de-dusting",
+            "Software update confirmation: Windows 11 clean installation and driver check",
+            "VIP corporate client workstation fleet diagnostic follow-up"
+        };
+
+        var followUpNotes = new[]
+        {
+            "Contacted customer via phone; confirmed system is running smoothly without thermal throttling.",
+            "Called client regarding repair quote approval. Customer confirmed proceeding with service.",
+            "Verified replacement display panel brightness and color gamut. Customer highly satisfied.",
+            "Sent SMS alert confirming unit is securely packed at pickup counter ready for collection.",
+            "Advised customer on best charging habits to prolong lifespan of new 6-cell battery.",
+            "Customer scheduled on-site pickup for tomorrow afternoon.",
+            "Confirmed all accounting and productivity software functioning properly after SSD migration.",
+            "Discussed recurring annual preventive maintenance schedule with office administrator."
+        };
+
+        var followUps = new List<FollowUp>();
+        for (int i = 0; i < 200; i++)
+        {
+            var scheduled = now.AddDays(-rng.Next(0, 60));
+            var status = scheduled < now.AddDays(-30) ? FollowUpStatus.Cancelled : rng.NextDouble() < 0.4 ? FollowUpStatus.Completed : FollowUpStatus.Scheduled;
 
             followUps.Add(new FollowUp
             {
                 CustomerId = customers[rng.Next(customers.Count)].CustomerId,
-                Subject = "Follow up: repair status check",
-                Notes = "Auto-generated follow-up from the demo seed.",
+                Subject = followUpSubjects[rng.Next(followUpSubjects.Length)],
+                Notes = followUpNotes[rng.Next(followUpNotes.Length)],
                 ScheduledAt = scheduled,
                 CompletedAt = status == FollowUpStatus.Completed ? scheduled.AddDays(1) : null,
                 Channel = (FollowUpChannel)rng.Next(0, 4),
                 Status = status,
-                AssignedToUserId = "staff",
+                AssignedToUserId = "technician",
                 CreatedAt = scheduled.AddDays(-1),
                 IsActive = true
             });

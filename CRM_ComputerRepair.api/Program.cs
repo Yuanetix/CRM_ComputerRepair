@@ -9,6 +9,9 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
+// ─── Ensure ports 5213 & 7042 are free by terminating any lingering/orphaned API processes ───
+EnsurePortsAvailable(5213, 7042);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ─── DbContexts ───
@@ -112,6 +115,8 @@ builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<IAuditWriter, AuditWriter>();
 builder.Services.AddScoped<IEmailDeliveryService, SmtpEmailDeliveryService>();
 builder.Services.AddScoped<RetentionEngine>();
+builder.Services.AddScoped<ICloudSyncService, CloudSyncService>();
+builder.Services.AddHostedService<CloudSyncBackgroundWorker>();
 builder.Services.AddHttpContextAccessor();
 
 // ─── Controllers ───
@@ -129,17 +134,29 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+bool isSeedOnly = args.Contains("--seed-fresh");
+
 // ─── Apply migrations + seed data (idempotent) ───
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     try
     {
-        await DatabaseSeeder.SeedAsync(scope.ServiceProvider, logger);
+        if (isSeedOnly)
+        {
+            await DatabaseSeeder.ResetAndSeedAllAsync(scope.ServiceProvider, logger);
+            logger.LogInformation("Database reset and seed finished. Exiting as requested.");
+            return;
+        }
+        else
+        {
+            await DatabaseSeeder.SeedAsync(scope.ServiceProvider, logger);
+        }
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Database seeding failed at startup.");
+        logger.LogError(ex, "Database seeding failed.");
+        if (isSeedOnly) throw;
     }
 }
 
@@ -190,4 +207,61 @@ app.MapGet("/health", () => Results.Ok(new
 
 app.MapControllers();
 
-app.Run();
+try
+{
+    app.Run();
+}
+catch (IOException ex) when (ex.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase))
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine($"[API Startup] Address in use on port 5213/7042. Attempting auto-cleanup: {ex.Message}");
+    Console.ResetColor();
+
+    EnsurePortsAvailable(5213, 7042);
+    Thread.Sleep(800);
+    throw;
+}
+
+static void EnsurePortsAvailable(params int[] ports)
+{
+    if (!OperatingSystem.IsWindows()) return;
+
+    try
+    {
+        var current = System.Diagnostics.Process.GetCurrentProcess();
+
+        // 1. Terminate any previous instances of the same process name
+        foreach (var proc in System.Diagnostics.Process.GetProcessesByName(current.ProcessName))
+        {
+            if (proc.Id != current.Id)
+            {
+                try
+                {
+                    proc.Kill();
+                    proc.WaitForExit(1000);
+                }
+                catch { }
+            }
+        }
+
+        // 2. Terminate any lingering orphaned process holding the specified listening ports
+        foreach (var port in ports)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c for /f \"tokens=5\" %a in ('netstat -aon ^| findstr \":{port}\" ^| findstr \"LISTENING\"') do if not \"%a\"==\"{current.Id}\" taskkill /f /pid %a",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+                };
+                using var p = System.Diagnostics.Process.Start(psi);
+                p?.WaitForExit(2000);
+            }
+            catch { }
+        }
+    }
+    catch { }
+}

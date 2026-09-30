@@ -10,7 +10,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("users")]
-[Authorize(Roles = "Admin,Super Admin")]
+[Authorize(Roles = "Manager,Admin,Super Admin")]
 public class UsersController : ControllerBase
 {
     private readonly UserManager<User> _users;
@@ -25,7 +25,15 @@ public class UsersController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] bool? activeOnly = null)
     {
+        var currentCompanyId = UserSessionHelper.GetCompanyId(HttpContext);
+        var isSuperAdmin = User.IsInRole("Super Admin");
+
         var query = _users.Users.AsNoTracking();
+        if (!isSuperAdmin && currentCompanyId > 0)
+        {
+            query = query.Where(u => u.CompanyId == currentCompanyId);
+        }
+
         if (activeOnly == true)
             query = query.Where(u => u.IsActive);
 
@@ -42,6 +50,7 @@ public class UsersController : ControllerBase
                 Email = u.Email,
                 FirstName = u.FirstName,
                 LastName = u.LastName,
+                CompanyId = u.CompanyId,
                 IsActive = u.IsActive,
                 CreatedAt = u.CreatedAt,
                 UpdatedAt = u.UpdatedAt,
@@ -58,6 +67,11 @@ public class UsersController : ControllerBase
         var u = await _users.FindByIdAsync(id);
         if (u is null) return NotFound();
 
+        var currentCompanyId = UserSessionHelper.GetCompanyId(HttpContext);
+        var isSuperAdmin = User.IsInRole("Super Admin");
+        if (!isSuperAdmin && currentCompanyId > 0 && u.CompanyId != currentCompanyId)
+            return Forbid();
+
         var roles = await _users.GetRolesAsync(u);
 
         return Ok(new UserSummaryDto
@@ -67,6 +81,7 @@ public class UsersController : ControllerBase
             Email = u.Email,
             FirstName = u.FirstName,
             LastName = u.LastName,
+            CompanyId = u.CompanyId,
             IsActive = u.IsActive,
             CreatedAt = u.CreatedAt,
             UpdatedAt = u.UpdatedAt,
@@ -75,6 +90,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin,Super Admin")]
     public async Task<IActionResult> Create([FromBody] CreateUserRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -119,6 +135,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [Authorize(Roles = "Admin,Super Admin")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateUserRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -166,6 +183,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin,Super Admin")]
     public async Task<IActionResult> Deactivate(string id)
     {
         var user = await _users.FindByIdAsync(id);
@@ -183,6 +201,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost("{id}/restore")]
+    [Authorize(Roles = "Admin,Super Admin")]
     public async Task<IActionResult> Restore(string id)
     {
         var user = await _users.FindByIdAsync(id);

@@ -111,6 +111,7 @@ namespace CRM.winforms
             "user-accounts" => IconFont.Profile,
             "admin-accounts" => "\uE716",
             "system-monitor" => "\uE7BA",
+            "branching" => "\uE716",
             _ => IconFont.Dashboard
         };
 
@@ -145,8 +146,11 @@ namespace CRM.winforms
         public void RefreshForRole(string? role)
         {
             role ??= "Staff";
-            if (role == _builtRole && _buttons.Count > 0) return;
-            _builtRole = role;
+            string comp = (UserSession.CompanyName ?? "").ToLowerInvariant();
+            string user = (UserSession.Username ?? "").ToLowerInvariant();
+            string menuKey = $"{role}_{comp}_{user}";
+            if (menuKey == _builtRole && _buttons.Count > 0) return;
+            _builtRole = menuKey;
             _userRole = role;
 
             _nav.Controls.Clear();
@@ -154,12 +158,38 @@ namespace CRM.winforms
             _sections.Clear();
             _navY = 0;
 
-            switch (role)
+            if (string.Equals(role, "Super Admin", StringComparison.OrdinalIgnoreCase))
             {
-                case "Super Admin": BuildSuperAdminMenu(); break;
-                case "Admin": BuildAdminMenu(); break;
-                case "Manager": BuildManagerMenu(); break;
-                default: BuildStaffMenu(); break;
+                BuildSuperAdminMenu();
+            }
+            else if (string.Equals(role, "Manager", StringComparison.OrdinalIgnoreCase))
+            {
+                BuildManagerMenu(comp, user);
+            }
+            else if (string.Equals(role, "Staff", StringComparison.OrdinalIgnoreCase))
+            {
+                BuildStaffMenu(comp, user);
+            }
+            else if (comp.Contains("fixtech") || user.Contains("fixtech"))
+            {
+                BuildFixtechMenu();
+            }
+            else if (comp.Contains("bytecare") || user.Contains("bytecare"))
+            {
+                BuildBytecareMenu();
+            }
+            else if (comp.Contains("techrevive") || user.Contains("techrevive"))
+            {
+                BuildTechreviveMenu();
+            }
+            else
+            {
+                switch (role)
+                {
+                    case "Admin": BuildAdminMenu(); break;
+                    case "Manager": BuildManagerMenu(comp, user); break;
+                    default: BuildStaffMenu(comp, user); break;
+                }
             }
 
             foreach (var kv in _buttons) _tips.SetToolTip(kv.Value, kv.Value.Title);
@@ -169,13 +199,55 @@ namespace CRM.winforms
 
         private void BuildSuperAdminMenu()
         {
-            AddSection("Main");
-            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
+            AddSection("Business Intelligence");
+            AddNav("dashboard", IconFor("dashboard"), "Platform BI");
+
+            AddSection("Super Admin");
             AddNav("companies", IconFor("companies"), "Tenants / Businesses");
             AddNav("subscriptions", IconFor("subscriptions"), "Subscriptions");
-            AddSection("Administration");
+
+            AddSection("Admin Panel");
             AddNav("system-monitor", IconFor("system-monitor"), "System monitor");
+            AddNav("admin-accounts", IconFor("admin-accounts"), "Admin accounts");
+            AddNav("user-accounts", IconFor("user-accounts"), "User accounts");
             AddNav("terms", IconFor("terms"), "Terms & conditions");
+        }
+
+        private void BuildFixtechMenu()
+        {
+            AddSection("Main Transactions");
+            AddNav("repairs", IconFor("repairs"), "Repair requests");
+
+            AddSection("Data Collection");
+            AddNav("customers", IconFor("customers"), "Customers");
+            AddNav("customer-history", IconFor("customer-history"), "Customer history");
+        }
+
+        private void BuildBytecareMenu()
+        {
+            AddSection("Business Intelligence");
+            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
+            AddNav("reports", IconFor("reports"), "Reports");
+
+            AddSection("Actions");
+            AddNav("follow-ups", IconFor("follow-ups"), "Follow-ups");
+            AddNav("interactions", IconFor("interactions"), "Interactions");
+            AddNav("retention", IconFor("retention"), "Retention");
+        }
+
+        private void BuildTechreviveMenu()
+        {
+            AddSection("Branching");
+            AddNav("branching", IconFor("branching"), "Branch management");
+
+            AddSection("Business Intelligence");
+            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
+            AddNav("reports", IconFor("reports"), "Reports");
+
+            AddSection("Actions");
+            AddNav("follow-ups", IconFor("follow-ups"), "Follow-ups");
+            AddNav("interactions", IconFor("interactions"), "Interactions");
+            AddNav("retention", IconFor("retention"), "Retention");
         }
 
         private void BuildAdminMenu()
@@ -190,28 +262,44 @@ namespace CRM.winforms
             AddNav("terms", IconFor("terms"), "Terms & conditions");
         }
 
-        private void BuildManagerMenu()
+        private void BuildManagerMenu(string comp = "", string user = "")
         {
-            AddSection("Main");
+            AddSection("Overview & Intelligence");
             AddNav("dashboard", IconFor("dashboard"), "Dashboard");
-            AddNav("reports", IconFor("reports"), "Reports");
-            AddNav("retention", IconFor("retention"), "Retention");
+            AddNav("reports", IconFor("reports"), "Reports & analytics");
+
             AddSection("Operations");
             AddNav("repairs", IconFor("repairs"), "Repair requests");
             AddNav("staff-activity", IconFor("staff-activity"), "Staff activity");
+
+            AddSection("Loyalty & Customer Care");
             AddNav("loyalty", IconFor("loyalty"), "Loyalty programs");
+
+            if (comp.Contains("techrevive") || user.Contains("techrevive"))
+            {
+                AddSection("Branching");
+                AddNav("branching", IconFor("branching"), "Branch management");
+            }
+
+            if (comp.Contains("bytecare") || user.Contains("bytecare"))
+            {
+                AddNav("retention", IconFor("retention"), "Customer retention");
+            }
         }
 
-        private void BuildStaffMenu()
+        private void BuildStaffMenu(string comp = "", string user = "")
         {
-            AddSection("Main");
-            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
+            AddSection("Overview");
+            AddNav("dashboard", IconFor("dashboard"), "Operations dashboard");
+
+            AddSection("Customer Care");
             AddNav("customers", IconFor("customers"), "Customers");
-            AddSection("Customer care");
             AddNav("follow-ups", IconFor("follow-ups"), "Follow-ups");
-            AddNav("interactions", IconFor("interactions"), "Interactions");
-            AddNav("repairs", IconFor("repairs"), "Repair requests");
+            AddNav("interactions", IconFor("interactions"), "Customer interactions");
             AddNav("customer-history", IconFor("customer-history"), "Customer history");
+
+            AddSection("Repair Workbench");
+            AddNav("repairs", IconFor("repairs"), "Repair requests");
         }
 
         private void AddSection(string text)

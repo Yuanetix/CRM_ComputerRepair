@@ -3,7 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -19,26 +21,65 @@ namespace CRM.winforms
 
         // ── Controls ──
         private Label lblTitle = null!;
-        private Label lblSubtitle = null!;
         private SaasButton btnAdd = null!;
         private SaasButton btnRefresh = null!;
 
         // ── Stat Tiles ──
-        private StatTile tileTotal = null!;
-        private StatTile tileActive = null!;
-        private StatTile tileMultiBranch = null!;
-        private StatTile tileSubscribers = null!;
+        private KpiTile tileTotal = null!;
+        private KpiTile tileActive = null!;
+        private KpiTile tileMultiBranch = null!;
+        private KpiTile tileSubscribers = null!;
+        private readonly List<KpiTile> _tiles = new();
 
         // ── Workbench Card ──
-        private SurfaceCard card = null!;
+        private WorkbenchCard card = null!;
         private WorkbenchSearch searchBox = null!;
-        private SegmentedFilter filterBar = null!;
+        private SubscriptionsSegmentedFilter filterBar = null!;
         private Label lblCount = null!;
         private DataGridView dgv = null!;
-        private SaasEmptyState emptyState = null!;
+        private WorkbenchState emptyState = null!;
 
         private ContextMenuStrip _actionsMenu = null!;
         private int _menuRowIndex = -1;
+        private int _hoverRow = -1;
+
+        // ═══════════ SHARED DRAWING HELPERS ═══════════
+        private const int CellPadX = 14;
+        private const TextFormatFlags Flat = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        private const TextFormatFlags CellText = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat;
+
+        private static readonly Font MonoFont = new Font("Consolas", 9F);
+        private static readonly Color Emerald = Color.FromArgb(16, 185, 129);
+        private static readonly Color[] AvatarPalette =
+        {
+            Color.FromArgb(99, 102, 241),
+            Color.FromArgb(16, 185, 129),
+            Color.FromArgb(245, 158, 11),
+            Color.FromArgb(236, 72, 153),
+            Color.FromArgb(59, 130, 246),
+            Color.FromArgb(124, 58, 237)
+        };
+
+        private static int MeasureW(string text, Font font) =>
+            TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue),
+                Flat | TextFormatFlags.SingleLine).Width;
+
+        private static float Descent(Font f)
+        {
+            var fam = f.FontFamily;
+            int asc = fam.GetCellAscent(f.Style);
+            int desc = fam.GetCellDescent(f.Style);
+            return f.Height * desc / (float)Math.Max(1, asc + desc);
+        }
+
+        private static Color AvatarColor(string? seed)
+        {
+            if (string.IsNullOrWhiteSpace(seed)) return AvatarPalette[0];
+            int h = 0;
+            foreach (char ch in seed) h = (h * 31 + ch) & 0x7FFFFFFF;
+            return AvatarPalette[h % AvatarPalette.Length];
+        }
 
         public SubscriptionsControl()
         {
@@ -56,7 +97,7 @@ namespace CRM.winforms
 
         private void BuildActionsMenu()
         {
-            _actionsMenu = new ContextMenuStrip { ShowImageMargin = false };
+            _actionsMenu = new ContextMenuStrip { ShowImageMargin = false, Font = UiKit.T.Body };
             _actionsMenu.Renderer = new QuietMenuRenderer();
 
             var miEdit = new ToolStripMenuItem("Edit Plan") { Height = 32 };
@@ -87,51 +128,37 @@ namespace CRM.winforms
 
         private void BuildUi()
         {
-            // Header
+            // ── Header ──
             lblTitle = new Label
             {
                 Text = "Subscription Plans",
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
-            };
-
-            lblSubtitle = new Label
-            {
-                Text = "Manage subscription plans, pricing, and quotas.",
-                Font = UiKit.T.Subtitle,
-                ForeColor = UiKit.T.InkMuted,
-                AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
 
             btnAdd = new SaasButton("Add Plan", SaasButtonVariant.Primary, "\uE710");
-            btnAdd.Size = new Size(130, UiKit.T.ButtonHeight);
+            btnAdd.Size = new Size(140, 36);
             btnAdd.Click += async (s, e) => await AddPlanAsync();
 
             btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
-            btnRefresh.Size = new Size(100, UiKit.T.ButtonHeight);
+            btnRefresh.Size = new Size(100, 36);
             btnRefresh.Click += async (s, e) => await ReloadAsync();
 
             Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
             Controls.Add(btnAdd);
             Controls.Add(btnRefresh);
 
-            // KPI Tiles
-            tileTotal = new StatTile("TOTAL PLANS", "0", "\uE9D5");
-            tileActive = new StatTile("ACTIVE TIERS", "0", "\uE73E");
-            tileMultiBranch = new StatTile("MULTI-BRANCH", "0", "\uE716");
-            tileSubscribers = new StatTile("SUBSCRIBED TENANTS", "0", "\uE716");
+            // ── KPI Tiles ──
+            tileTotal = AddTile("TOTAL PLANS", "0", "All subscription tiers", AppTheme.Primary, "\uE9D5");
+            tileActive = AddTile("ACTIVE TIERS", "0", "Currently offered to tenants", AppTheme.Success, "\uE73E");
+            tileMultiBranch = AddTile("MULTI-BRANCH", "0", "Plans with branching enabled", Color.FromArgb(139, 92, 246), "\uE716");
+            tileSubscribers = AddTile("SUBSCRIBED TENANTS", "0", "Businesses on a plan", Color.FromArgb(59, 130, 246), "\uE716");
 
-            Controls.Add(tileTotal);
-            Controls.Add(tileActive);
-            Controls.Add(tileMultiBranch);
-            Controls.Add(tileSubscribers);
-
-            // Workbench Card
-            card = new SurfaceCard();
+            // ── Workbench Card ──
+            card = new WorkbenchCard { BackColor = UiKit.T.Surface };
 
             searchBox = new WorkbenchSearch
             {
@@ -139,7 +166,7 @@ namespace CRM.winforms
             };
             searchBox.QueryChanged += (s, e) => ApplyFilter();
 
-            filterBar = new SegmentedFilter(new (string, int?)[]
+            filterBar = new SubscriptionsSegmentedFilter(new (string, int?)[]
             {
                 ("All", null),
                 ("Active", null),
@@ -156,7 +183,7 @@ namespace CRM.winforms
             {
                 Text = "",
                 Font = UiKit.T.Small,
-                ForeColor = UiKit.T.InkFaint,
+                ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
@@ -169,14 +196,29 @@ namespace CRM.winforms
                 if (e.RowIndex >= 0 && e.RowIndex < _filtered.Count)
                     EditCurrentPlan();
             };
-
-            emptyState = new SaasEmptyState
+            dgv.CellMouseMove += (s, e) =>
             {
-                Icon = "\uE9D5",
-                Text = "No subscription plans found",
-                Subtitle = "Create your first SaaS subscription tier with pricing in PHP and user limits."
+                if (e.RowIndex != _hoverRow)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = e.RowIndex;
+                    if (old >= 0 && old < dgv.RowCount) dgv.InvalidateRow(old);
+                    if (_hoverRow >= 0 && _hoverRow < dgv.RowCount) dgv.InvalidateRow(_hoverRow);
+                }
             };
-            emptyState.SetAction("Add Subscription Plan", async (s, e) => await AddPlanAsync());
+            dgv.CellMouseLeave += (s, e) =>
+            {
+                if (_hoverRow >= 0 && _hoverRow < dgv.RowCount)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = -1;
+                    dgv.InvalidateRow(old);
+                }
+            };
+
+            emptyState = new WorkbenchState { Visible = false };
+            emptyState.Show("\uE9D5", "No subscription plans found",
+                "Create your first SaaS subscription tier with pricing in PHP and user limits.");
 
             card.Controls.Add(searchBox);
             card.Controls.Add(filterBar);
@@ -190,48 +232,84 @@ namespace CRM.winforms
             LayoutUi();
         }
 
+        private KpiTile AddTile(string label, string number, string sub, Color accent, string glyph)
+        {
+            var t = new KpiTile();
+            t.Set(label, number, sub, accent, glyph);
+            _tiles.Add(t);
+            Controls.Add(t);
+            return t;
+        }
+
+        // ═══════════ LAYOUT ═══════════
+
         private void LayoutUi()
         {
+            if (Width <= 0 || Height <= 0) return;
+
             int pad = UiKit.T.S6;
-            int right = Width - pad;
+            int contentW = Math.Max(700, Width - pad * 2);
 
+            // ── Header ──
             lblTitle.Location = new Point(pad, pad);
-            lblSubtitle.Location = new Point(pad, lblTitle.Bottom + 4);
 
-            btnRefresh.Location = new Point(right - btnRefresh.Width, pad);
-            btnAdd.Location = new Point(btnRefresh.Left - btnAdd.Width - UiKit.T.S3, pad);
+            int btnY = pad;
+            btnRefresh.Location = new Point(pad + contentW - btnRefresh.Width, btnY);
+            btnAdd.Location = new Point(btnRefresh.Left - btnAdd.Width - 10, btnY);
 
-            // Stats
-            int tileY = lblSubtitle.Bottom + UiKit.T.S5;
-            int gap = UiKit.T.S4;
-            int tileW = Math.Max(180, (Width - pad * 2 - gap * 3) / 4);
-            int tileH = 88;
+            int y = lblTitle.Bottom + 20;
 
-            tileTotal.SetBounds(pad, tileY, tileW, tileH);
-            tileActive.SetBounds(pad + (tileW + gap), tileY, tileW, tileH);
-            tileMultiBranch.SetBounds(pad + (tileW + gap) * 2, tileY, tileW, tileH);
-            tileSubscribers.SetBounds(pad + (tileW + gap) * 3, tileY, tileW, tileH);
+            // ── KPI Tiles ──
+            int tileCols = contentW >= 1100 ? 4 : (contentW >= 760 ? 2 : 1);
+            int tileGap = 16;
+            int tileW = (contentW - (tileCols - 1) * tileGap) / tileCols;
 
-            // Card
-            int cardY = tileY + tileH + UiKit.T.S5;
-            int cardH = Height - cardY - pad;
-            card.SetBounds(pad, cardY, Width - pad * 2, Math.Max(260, cardH));
+            int rowMaxH = 0;
+            for (int i = 0; i < _tiles.Count; i++)
+            {
+                int col = i % tileCols;
+                if (col == 0 && i > 0)
+                {
+                    y += rowMaxH + tileGap;
+                    rowMaxH = 0;
+                }
 
-            // Card content
-            int innerW = card.Width - pad * 2;
-            searchBox.SetBounds(pad, pad, Math.Min(420, innerW - 280), 38);
-            filterBar.SetBounds(card.Width - pad - filterBar.PreferredWidth, pad + 1, filterBar.PreferredWidth, 36);
+                int tx = pad + col * (tileW + tileGap);
+                int th = _tiles[i].HeightFor(tileW);
+                _tiles[i].SetBounds(tx, y, tileW, th);
+                rowMaxH = Math.Max(rowMaxH, th);
+            }
+            y += rowMaxH + 24;
 
-            int gridY = searchBox.Bottom + UiKit.T.S4;
-            int gridH = card.Height - gridY - pad - 26;
+            // ── Workbench Card ──
+            int cardPad = UiKit.T.S6;
+            int cardH = Math.Max(320, Height - y - pad);
+            card.SetBounds(pad, y, contentW, cardH);
 
-            dgv.SetBounds(pad, gridY, innerW, Math.Max(120, gridH));
-            emptyState.SetBounds(pad, gridY, innerW, Math.Max(120, gridH));
-            lblCount.Location = new Point(pad, dgv.Bottom + 6);
+            int innerW = contentW - cardPad * 2;
+
+            int filterW = filterBar.PreferredWidth;
+            int searchW = Math.Max(240, Math.Min(440, innerW - filterW - 20));
+
+            searchBox.SetBounds(cardPad, cardPad, searchW, 38);
+            filterBar.SetBounds(cardPad + innerW - filterW, cardPad + 1, filterW, 36);
+
+            int gridY = searchBox.Bottom + 14;
+            int gridH = cardH - gridY - cardPad - 26;
+
+            dgv.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+            emptyState.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+            lblCount.Location = new Point(cardPad, dgv.Bottom + 6);
         }
+
+        // ═══════════ GRID ═══════════
 
         private void StyleGrid(DataGridView g)
         {
+            typeof(DataGridView)
+                .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(g, true);
+
             g.AutoGenerateColumns = false;
             g.AllowUserToAddRows = false;
             g.AllowUserToDeleteRows = false;
@@ -241,162 +319,312 @@ namespace CRM.winforms
             g.MultiSelect = false;
             g.BackgroundColor = UiKit.T.Surface;
             g.BorderStyle = BorderStyle.None;
-            g.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
             g.GridColor = UiKit.T.LineSoft;
             g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
             g.EnableHeadersVisualStyles = false;
             g.ScrollBars = ScrollBars.Both;
-            g.RowTemplate.Height = 52;
-            g.ColumnHeadersHeight = 42;
+            g.RowTemplate.Height = 64;
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            g.ColumnHeadersHeight = 46;
 
             g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
             g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
             g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
-            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(12, 0, 12, 0);
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
 
             g.DefaultCellStyle.BackColor = UiKit.T.Surface;
             g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
             g.DefaultCellStyle.Font = UiKit.T.Body;
             g.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
             g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
-            g.DefaultCellStyle.Padding = new Padding(12, 6, 12, 6);
-            g.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            g.DefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
 
             g.Columns.Clear();
 
-            g.Columns.Add(new DataGridViewTextBoxColumn
+            void Col(string name, string header, string prop, int fillWeight, int minWidth)
             {
-                Name = "colName",
-                HeaderText = "PLAN NAME",
-                DataPropertyName = "SubscriptionName",
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-                FillWeight = 180,
-                MinimumWidth = 220
-            });
+                g.Columns.Add(new DataGridViewTextBoxColumn
+                {
+                    Name = name,
+                    HeaderText = header,
+                    DataPropertyName = prop,
+                    AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                    FillWeight = fillWeight,
+                    MinimumWidth = minWidth,
+                    SortMode = DataGridViewColumnSortMode.NotSortable
+                });
+            }
 
-            g.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                Name = "colPrice",
-                HeaderText = "PRICE (PHP)",
-                DataPropertyName = "PriceDisplay",
-                Width = 160,
-                MinimumWidth = 140
-            });
-
-            g.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                Name = "colDuration",
-                HeaderText = "DURATION",
-                DataPropertyName = "DurationDisplay",
-                Width = 140,
-                MinimumWidth = 120
-            });
-
-            g.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                Name = "colUsers",
-                HeaderText = "QUOTAS (USERS / DEVICES)",
-                Width = 240,
-                MinimumWidth = 200
-            });
+            Col("colName", "PLAN NAME", "SubscriptionName", 200, 240);
+            Col("colPrice", "PRICE (PHP)", "PriceDisplay", 120, 130);
+            Col("colDuration", "DURATION", "DurationDisplay", 110, 130);
+            Col("colUsers", "QUOTAS", "", 170, 200);
 
             g.Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = "colMultiBranch",
                 HeaderText = "MULTI-BRANCH",
-                Width = 140,
-                MinimumWidth = 125
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+                Width = 150,
+                MinimumWidth = 150,
+                SortMode = DataGridViewColumnSortMode.NotSortable
             });
 
             g.Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = "colSubscribers",
                 HeaderText = "SUBSCRIBED",
-                Width = 120,
-                MinimumWidth = 105
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+                Width = 140,
+                MinimumWidth = 140,
+                SortMode = DataGridViewColumnSortMode.NotSortable
             });
 
             g.Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = "colStatus",
                 HeaderText = "STATUS",
-                Width = 120,
-                MinimumWidth = 105
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+                Width = 150,
+                MinimumWidth = 150,
+                SortMode = DataGridViewColumnSortMode.NotSortable
             });
 
             var btnCol = new DataGridViewButtonColumn
             {
                 Name = "colActions",
                 HeaderText = "",
-                Text = "\u22EF",
+                Text = "",
                 UseColumnTextForButtonValue = true,
-                Width = 48,
-                FlatStyle = FlatStyle.Flat
+                Width = 56,
+                MinimumWidth = 56,
+                FlatStyle = FlatStyle.Flat,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
             };
             btnCol.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-            btnCol.DefaultCellStyle.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
-            btnCol.DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            btnCol.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            btnCol.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
+            btnCol.DefaultCellStyle.Padding = new Padding(0);
             g.Columns.Add(btnCol);
 
-            g.CellPainting += (s, e) =>
+            g.CellPainting += (s, e) => PaintCell(g, e);
+
+            g.CellToolTipTextNeeded += (s, e) =>
             {
-                if (e.RowIndex < 0 || e.RowIndex >= _filtered.Count) return;
-                var item = _filtered[e.RowIndex];
-
-                // Quotas column
-                if (e.ColumnIndex == g.Columns["colUsers"]!.Index)
+                if (e.RowIndex < 0 || e.RowIndex >= g.RowCount || e.ColumnIndex < 0) return;
+                switch (g.Columns[e.ColumnIndex].Name)
                 {
-                    e.PaintBackground(e.CellBounds, true);
-                    string quotaText = $"Max {item.MaxUsers} Users  ·  {item.MaxDevices} Units";
-                    UiKit.Text(e.Graphics, quotaText, UiKit.T.Body, UiKit.T.Ink, e.CellBounds, UiKit.LeftWrap);
-                    e.Handled = true;
-                }
-                // Multi-branch badge
-                else if (e.ColumnIndex == g.Columns["colMultiBranch"]!.Index)
-                {
-                    e.PaintBackground(e.CellBounds, true);
-                    var gState = e.Graphics;
-                    UiKit.Quality(gState);
-
-                    Color bg = item.EnableMultiBranching ? UiKit.Wash(AppTheme.Primary) : UiKit.LineSoft;
-                    Color fg = item.EnableMultiBranching ? AppTheme.Primary : UiKit.T.InkMuted;
-                    string txt = item.EnableMultiBranching ? "ENABLED" : "SINGLE";
-
-                    var pill = new Rectangle(e.CellBounds.Left + 8, e.CellBounds.Top + (e.CellBounds.Height - 22) / 2, 74, 22);
-                    UiKit.FillRounded(gState, pill, 11, bg);
-                    UiKit.Text(gState, txt, UiKit.MicroStrong, fg, pill, UiKit.Center);
-                    e.Handled = true;
-                }
-                // Subscribers count
-                else if (e.ColumnIndex == g.Columns["colSubscribers"]!.Index)
-                {
-                    e.PaintBackground(e.CellBounds, true);
-                    string subsText = $"{item.SubscribedCompaniesCount} tenant(s)";
-                    UiKit.Text(e.Graphics, subsText, UiKit.T.Small, UiKit.T.InkMuted, e.CellBounds, UiKit.Left);
-                    e.Handled = true;
-                }
-                // Status Pill Cell
-                else if (e.ColumnIndex == g.Columns["colStatus"]!.Index)
-                {
-                    e.PaintBackground(e.CellBounds, true);
-                    var stateG = e.Graphics;
-                    UiKit.Quality(stateG);
-
-                    Color bg = item.IsArchived
-                        ? UiKit.LineSoft
-                        : (item.IsActive ? UiKit.Wash(AppTheme.Success) : UiKit.Wash(AppTheme.Danger));
-                    Color fg = item.IsArchived
-                        ? UiKit.T.InkMuted
-                        : (item.IsActive ? AppTheme.Success : AppTheme.Danger);
-                    string txt = item.IsArchived ? "ARCHIVED" : (item.IsActive ? "ACTIVE" : "INACTIVE");
-
-                    var pill = new Rectangle(e.CellBounds.Left + 8, e.CellBounds.Top + (e.CellBounds.Height - 22) / 2, 88, 22);
-                    UiKit.FillRounded(stateG, pill, 11, bg);
-                    UiKit.Text(stateG, txt, UiKit.MicroStrong, fg, pill, UiKit.Center);
-                    e.Handled = true;
+                    case "colName":
+                    case "colUsers":
+                    case "colDuration":
+                        var v = Convert.ToString(g.Rows[e.RowIndex].Cells[e.ColumnIndex].Value);
+                        if (!string.IsNullOrWhiteSpace(v)) e.ToolTipText = v;
+                        break;
                 }
             };
+
+            g.CellMouseClick += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.RowIndex >= _filtered.Count) return;
+                g.ClearSelection();
+                g.Rows[e.RowIndex].Selected = true;
+                _menuRowIndex = e.RowIndex;
+            };
         }
+
+        private void PaintCell(DataGridView g, DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.ColumnIndex < 0) return;
+            var gr = e.Graphics;
+            var cell = e.CellBounds;
+
+            // Header
+            if (e.RowIndex == -1)
+            {
+                using (var b = new SolidBrush(UiKit.T.Surface))
+                    gr.FillRectangle(b, cell);
+                using (var p = new Pen(UiKit.T.Line))
+                    gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+                UiKit.Quality(gr);
+                UiKit.Text(gr, Convert.ToString(e.Value) ?? "", UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1),
+                    CellText);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.RowIndex < 0 || e.RowIndex >= _filtered.Count) return;
+            var item = _filtered[e.RowIndex];
+
+            bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
+            bool hovered = e.RowIndex == _hoverRow;
+            bool focused = g.Focused;
+
+            Color rowBg = UiKit.T.Surface;
+            if (selected && focused) rowBg = UiKit.T.RowHover;
+            else if (selected && !focused) rowBg = UiKit.T.LineSoft;
+            else if (hovered) rowBg = UiKit.T.RowHover;
+
+            using (var b = new SolidBrush(rowBg))
+                gr.FillRectangle(b, cell);
+            using (var p = new Pen(UiKit.T.LineSoft))
+                gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+            UiKit.Quality(gr);
+
+            if (e.ColumnIndex == 0 && selected && focused)
+                UiKit.FillRounded(gr, new Rectangle(cell.Left, cell.Top + 12, 3, cell.Height - 25), 1, AppTheme.Primary);
+
+            var rect = new Rectangle(cell.Left + CellPadX, cell.Top,
+                Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1);
+            int cy = rect.Top + rect.Height / 2;
+            string text = Convert.ToString(e.FormattedValue) ?? "";
+
+            switch (g.Columns[e.ColumnIndex].Name)
+            {
+                case "colName":
+                    PaintNameCell(gr, item, rect);
+                    break;
+
+                case "colPrice":
+                    if (string.IsNullOrWhiteSpace(text))
+                        DrawMuted(gr, "—", rect, UiKit.T.Small, UiKit.T.InkFaint);
+                    else
+                        UiKit.Text(gr, text, MonoFont, UiKit.T.Ink, rect, CellText);
+                    break;
+
+                case "colDuration":
+                    if (string.IsNullOrWhiteSpace(text))
+                        DrawMuted(gr, "—", rect, UiKit.T.Small, UiKit.T.InkFaint);
+                    else
+                        UiKit.Text(gr, text, UiKit.T.Small, UiKit.T.InkMuted, rect, CellText);
+                    break;
+
+                case "colUsers":
+                    {
+                        string quota = $"Max {item.MaxUsers} users  ·  {item.MaxDevices} devices";
+                        UiKit.Text(gr, quota, UiKit.T.Small, UiKit.T.Ink, rect, CellText);
+                        break;
+                    }
+
+                case "colMultiBranch":
+                    {
+                        bool ok = item.EnableMultiBranching;
+                        Color fg = ok ? AppTheme.Primary : UiKit.T.InkMuted;
+                        string txt = ok ? "Enabled" : "Single";
+                        PaintDotPill(gr, rect, cy, txt, fg, UiKit.Micro);
+                        break;
+                    }
+
+                case "colSubscribers":
+                    {
+                        int count = item.SubscribedCompaniesCount;
+                        if (count <= 0)
+                        {
+                            DrawMuted(gr, "No subscribers", rect, UiKit.T.Small, UiKit.T.InkFaint);
+                        }
+                        else
+                        {
+                            string txt = $"{count} tenant{(count == 1 ? "" : "s")}";
+                            UiKit.Text(gr, txt, UiKit.T.Small, UiKit.T.Ink, rect, CellText);
+                        }
+                        break;
+                    }
+
+                case "colStatus":
+                    {
+                        bool archived = item.IsArchived;
+                        bool active = item.IsActive && !archived;
+                        Color fg = archived ? UiKit.T.InkMuted : (active ? AppTheme.Success : AppTheme.Danger);
+                        string txt = archived ? "Archived" : (active ? "Active" : "Inactive");
+                        PaintDotPill(gr, rect, cy, txt, fg, UiKit.Micro);
+                        break;
+                    }
+
+                case "colActions":
+                    {
+                        int size = 30;
+                        var btn = new Rectangle(rect.Right - size, cy - size / 2, size, size);
+                        bool hot = hovered;
+
+                        UiKit.FillRounded(gr, btn, 8,
+                            hot ? UiKit.Wash(AppTheme.Primary) : Color.Transparent);
+
+                        int dotR = 2;
+                        int dotGap = 6;
+                        int dotY = cy - dotR;
+                        int startX = btn.Left + (btn.Width / 2) - dotGap;
+                        using (var b = new SolidBrush(hot ? AppTheme.Primary : UiKit.T.InkMuted))
+                        {
+                            gr.FillEllipse(b, startX - dotR, dotY, dotR * 2, dotR * 2);
+                            gr.FillEllipse(b, startX - dotR + dotGap, dotY, dotR * 2, dotR * 2);
+                            gr.FillEllipse(b, startX - dotR + dotGap * 2, dotY, dotR * 2, dotR * 2);
+                        }
+                        e.Handled = true;
+                        return;
+                    }
+
+                default:
+                    return;
+            }
+
+            e.Handled = true;
+        }
+
+        private static void PaintNameCell(Graphics gr, SubscriptionDto item, Rectangle rect)
+        {
+            const int av = 36;
+            string name = item.SubscriptionName ?? "";
+
+            var avRect = new Rectangle(rect.Left, rect.Top + (rect.Height - av) / 2, av, av);
+            Color ac = AvatarColor(name);
+            UiKit.FillRounded(gr, avRect, 10, UiKit.Wash(ac));
+
+            string initial = string.IsNullOrWhiteSpace(name) ? "?" : name.Trim().Substring(0, 1).ToUpperInvariant();
+            UiKit.Text(gr, initial, UiKit.T.BodyStrong, ac, avRect, UiKit.Center);
+
+            int tx = avRect.Right + 12;
+            int tw = Math.Max(0, rect.Right - tx);
+            string sub = item.Description ?? "";
+
+            if (string.IsNullOrWhiteSpace(sub))
+            {
+                UiKit.Text(gr, name, UiKit.T.BodyStrong, UiKit.T.Ink,
+                    new Rectangle(tx, rect.Top, tw, rect.Height), CellText);
+                return;
+            }
+
+            int h1 = UiKit.T.BodyStrong.Height + 2;
+            int h2 = UiKit.T.Small.Height + 2;
+            int y0 = rect.Top + (rect.Height - (h1 + h2)) / 2;
+
+            UiKit.Text(gr, name, UiKit.T.BodyStrong, UiKit.T.Ink, new Rectangle(tx, y0, tw, h1), CellText);
+            UiKit.Text(gr, sub, UiKit.T.Small, UiKit.T.InkMuted, new Rectangle(tx, y0 + h1, tw, h2), CellText);
+        }
+
+        private static void PaintDotPill(Graphics gr, Rectangle rect, int cy, string text, Color fg, Font font)
+        {
+            int textW = MeasureW(text, font);
+            int pillW = Math.Min(rect.Width, textW + 34);
+            var pill = new Rectangle(rect.Left, cy - 12, pillW, 24);
+
+            UiKit.FillRounded(gr, pill, 12, UiKit.Wash(fg));
+            UiKit.FillRounded(gr, new Rectangle(pill.Left + 11, cy - 3, 6, 6), 3, fg);
+            UiKit.Text(gr, text, font, fg,
+                new Rectangle(pill.Left + 23, pill.Top, Math.Max(0, pill.Width - 31), pill.Height),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat);
+        }
+
+        private static void DrawMuted(Graphics gr, string text, Rectangle rect, Font font, Color color)
+            => UiKit.Text(gr, text, font, color, rect, CellText);
+
+        // ═══════════ DATA ═══════════
 
         private async Task ReloadAsync()
         {
@@ -411,10 +639,15 @@ namespace CRM.winforms
                 int multiBranch = _all.Count(p => p.EnableMultiBranching && !p.IsArchived);
                 int totalSubs = _all.Sum(p => p.SubscribedCompaniesCount);
 
-                tileTotal.Value = total.ToString();
-                tileActive.Value = active.ToString();
-                tileMultiBranch.Value = multiBranch.ToString();
-                tileSubscribers.Value = totalSubs.ToString();
+                tileTotal.Set("TOTAL PLANS", total.ToString(),
+                    $"{active} active · {archived} archived", AppTheme.Primary, "\uE9D5");
+                tileActive.Set("ACTIVE TIERS", active.ToString(),
+                    total > 0 ? $"{(double)active / total * 100:0.#}% of catalog" : "No plans yet",
+                    AppTheme.Success, "\uE73E");
+                tileMultiBranch.Set("MULTI-BRANCH", multiBranch.ToString(),
+                    "Plans with branching enabled", Color.FromArgb(139, 92, 246), "\uE716");
+                tileSubscribers.Set("SUBSCRIBED TENANTS", totalSubs.ToString(),
+                    "Businesses on a plan", Color.FromArgb(59, 130, 246), "\uE716");
 
                 filterBar.UpdateCounts(new Dictionary<string, int?>
                 {
@@ -434,7 +667,7 @@ namespace CRM.winforms
 
         private void ApplyFilter()
         {
-            string query = searchBox.Query.Trim().ToLowerInvariant();
+            string query = (searchBox.Query ?? "").Trim();
 
             _filtered = _all.Where(p =>
             {
@@ -444,10 +677,10 @@ namespace CRM.winforms
 
                 if (!string.IsNullOrWhiteSpace(query))
                 {
-                    bool matchName = p.SubscriptionName.ToLowerInvariant().Contains(query);
-                    bool matchDesc = p.Description?.ToLowerInvariant().Contains(query) ?? false;
-                    bool matchBilling = p.BillingCycle?.ToLowerInvariant().Contains(query) ?? false;
-                    bool matchDuration = p.DurationDisplay.ToLowerInvariant().Contains(query);
+                    bool matchName = (p.SubscriptionName ?? "").Contains(query, StringComparison.OrdinalIgnoreCase);
+                    bool matchDesc = (p.Description ?? "").Contains(query, StringComparison.OrdinalIgnoreCase);
+                    bool matchBilling = (p.BillingCycle ?? "").Contains(query, StringComparison.OrdinalIgnoreCase);
+                    bool matchDuration = (p.DurationDisplay ?? "").Contains(query, StringComparison.OrdinalIgnoreCase);
                     if (!matchName && !matchDesc && !matchBilling && !matchDuration) return false;
                 }
 
@@ -464,6 +697,8 @@ namespace CRM.winforms
             lblCount.Text = $"Showing {_filtered.Count} of {_all.Count} subscription plans";
         }
 
+        // ═══════════ ACTIONS ═══════════
+
         private void Dgv_CellClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.RowIndex >= _filtered.Count) return;
@@ -472,7 +707,7 @@ namespace CRM.winforms
             {
                 _menuRowIndex = e.RowIndex;
                 var cellRect = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
-                _actionsMenu.Show(dgv, new Point(cellRect.Left, cellRect.Bottom));
+                _actionsMenu.Show(dgv, new Point(cellRect.Right - _actionsMenu.Width, cellRect.Bottom));
             }
         }
 
@@ -569,11 +804,201 @@ namespace CRM.winforms
             }
         }
 
-        [DesignerCategory("Code")]
-        private sealed class SurfaceCard : WorkbenchCard { }
+        // ═══════════════════════════════════════════════════════════════
+        //  EMBEDDED KPI TILE
+        // ═══════════════════════════════════════════════════════════════
+
+        private sealed class KpiTile : Control
+        {
+            private const int Pad = 22;
+            private const int IconSize = 36;
+            private const int ChevronW = 16;
+            private const int UnitGap = 6;
+            private const int MinHeight = 132;
+
+            private const TextFormatFlags One = TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+            private const TextFormatFlags Wrapped = One | TextFormatFlags.WordBreak;
+
+            private static readonly Font[] NumFonts =
+            {
+                AppFonts.Strong(26F),
+                AppFonts.Strong(22F),
+                AppFonts.Strong(18F),
+                AppFonts.Strong(15F),
+                AppFonts.Strong(12F)
+            };
+
+            private static readonly Font UnitFont = AppFonts.Strong(11F);
+
+            private string _label = "";
+            private string _number = "0";
+            private string _sub = "";
+            private Color _accent = AppTheme.Primary;
+            private string _glyph = "";
+            private bool _hover;
+            private bool _down;
+
+            public KpiTile()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+                TabStop = true;
+                Cursor = Cursors.Hand;
+            }
+
+            public void Set(string label, string number, string sub, Color accent, string glyph)
+            {
+                _label = label;
+                _number = number;
+                _sub = sub;
+                _accent = accent;
+                _glyph = glyph;
+                AccessibleName = $"{label}: {number}. {sub}";
+                Invalidate();
+            }
+
+            public int HeightFor(int width) =>
+                string.IsNullOrEmpty(_label) ? MinHeight : Math.Max(MinHeight, Measure(width).Total);
+
+            private static int TextH(string text, Font font, int width, bool wrap)
+            {
+                if (string.IsNullOrEmpty(text)) return font.Height;
+                var size = TextRenderer.MeasureText(text, font,
+                    new Size(Math.Max(10, width - 4), int.MaxValue), wrap ? Wrapped : One);
+                return Math.Max(font.Height, size.Height) + 2;
+            }
+
+            private static bool TrySplit(string number, out string main, out string unit)
+            {
+                main = number;
+                unit = "";
+                if (string.IsNullOrWhiteSpace(number)) return false;
+
+                int sp = number.IndexOf(' ');
+                if (sp <= 0 || sp >= number.Length - 1) return false;
+
+                string head = number.Substring(0, sp);
+                if (!head.Any(char.IsDigit)) return false;
+
+                main = head;
+                unit = number.Substring(sp + 1);
+                return true;
+            }
+
+            private (Font NumFont, bool NumWrap, string Main, string Unit, int TopH, int NumH, int CapH, int Total) Measure(int width)
+            {
+                int inner = Math.Max(40, width - Pad * 2);
+                int labelW = Math.Max(40, inner - IconSize - 12 - ChevronW);
+
+                int labelH = TextH(_label, UiKit.T.SmallStrong, labelW, true);
+                int topH = Math.Max(IconSize, labelH);
+
+                bool split = TrySplit(_number, out string main, out string unit);
+                int unitW = split
+                    ? TextRenderer.MeasureText(unit, UnitFont, new Size(int.MaxValue, int.MaxValue), One).Width + UnitGap
+                    : 0;
+
+                Font numFont = NumFonts[^1];
+                bool numWrap = true;
+                foreach (var f in NumFonts)
+                {
+                    var w = TextRenderer.MeasureText(main, f, new Size(int.MaxValue, int.MaxValue), One).Width + unitW;
+                    if (w <= inner - 4) { numFont = f; numWrap = false; break; }
+                }
+
+                if (numWrap) { main = _number; unit = ""; }
+
+                int numH = TextH(main, numFont, inner, numWrap);
+                int capH = TextH(_sub, UiKit.T.Small, inner, true);
+
+                int total = Pad + topH + 14 + numH + 6 + capH + Pad;
+                return (numFont, numWrap, main, unit, topH, numH, capH, total);
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Focus(); Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var bg = new SolidBrush(AppTheme.Background))
+                    g.FillRectangle(bg, ClientRectangle);
+
+                bool loading = string.IsNullOrEmpty(_label);
+                Color accent = loading ? UiKit.T.InkFaint : _accent;
+
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius,
+                    _down && !loading ? UiKit.Wash(accent) : UiKit.T.Surface,
+                    _hover && !loading ? accent : UiKit.T.Line);
+
+                if (loading)
+                {
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad, IconSize, IconSize), 10, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad + IconSize + 12, Pad + 12, Math.Max(20, Width / 3), 12), 4, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad + 56, Math.Max(20, Width / 2), 26), 4, UiKit.T.LineSoft);
+                    return;
+                }
+
+                var m = Measure(Width);
+                int inner = Width - Pad * 2;
+
+                var iconRect = new Rectangle(Pad, Pad + (m.TopH - IconSize) / 2, IconSize, IconSize);
+                UiKit.FillRounded(g, iconRect, 10, UiKit.Wash(accent));
+                using (var f = UiKit.GlyphFont(12F))
+                    UiKit.Text(g, _glyph, f, accent, iconRect, UiKit.Center);
+
+                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(Pad + IconSize + 12, Pad, inner - IconSize - 12 - ChevronW, m.TopH),
+                    Wrapped | TextFormatFlags.VerticalCenter);
+
+                using (var cf = UiKit.GlyphFont(9F))
+                    UiKit.Text(g, "\uE76C", cf, _hover ? accent : UiKit.T.InkFaint,
+                        new Rectangle(Width - Pad - ChevronW + 2, Pad + (m.TopH - 20) / 2, ChevronW, 20), UiKit.Center);
+
+                int numTop = Pad + m.TopH + 14;
+                if (m.Unit.Length > 0)
+                {
+                    int mw = TextRenderer.MeasureText(m.Main, m.NumFont, new Size(int.MaxValue, int.MaxValue), One).Width;
+                    UiKit.Text(g, m.Main, m.NumFont, UiKit.T.Ink,
+                        new Rectangle(Pad, numTop, mw + 4, m.NumH), One | TextFormatFlags.Top);
+
+                    int uy = numTop + m.NumFont.Height - UnitFont.Height
+                             - (int)Math.Round(Descent(m.NumFont) - Descent(UnitFont));
+                    UiKit.Text(g, m.Unit, UnitFont, UiKit.T.InkMuted,
+                        new Rectangle(Pad + mw + UnitGap, uy, Math.Max(10, inner - mw - UnitGap), UnitFont.Height + 2),
+                        One | TextFormatFlags.Top);
+                }
+                else
+                {
+                    UiKit.Text(g, m.Main, m.NumFont, UiKit.T.Ink,
+                        new Rectangle(Pad, numTop, inner, m.NumH),
+                        (m.NumWrap ? Wrapped : One) | TextFormatFlags.Top);
+                }
+
+                UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkMuted,
+                    new Rectangle(Pad, numTop + m.NumH + 6, inner, m.CapH),
+                    Wrapped | TextFormatFlags.Top);
+
+                if (Focused)
+                {
+                    var ring = ClientRectangle;
+                    ring.Inflate(-1, -1);
+                    UiKit.StrokeRounded(g, ring, UiKit.T.Radius, accent, 2f);
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        //  SEGMENTED FILTER
+        // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]
-        private sealed class SegmentedFilter : Control
+        private sealed class SubscriptionsSegmentedFilter : Control
         {
             private readonly List<(string Key, int? Count)> _items = new();
             private int _selected = 0;
@@ -581,7 +1006,7 @@ namespace CRM.winforms
 
             public event EventHandler<string>? SelectionChanged;
 
-            public SegmentedFilter((string Key, int? Count)[] items)
+            public SubscriptionsSegmentedFilter((string Key, int? Count)[] items)
             {
                 _items.AddRange(items);
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
@@ -589,6 +1014,7 @@ namespace CRM.winforms
                 BackColor = UiKit.T.Surface;
                 Cursor = Cursors.Hand;
                 Font = UiKit.T.SmallStrong;
+                Height = 36;
             }
 
             public int PreferredWidth
@@ -616,11 +1042,28 @@ namespace CRM.winforms
                 Invalidate();
             }
 
+            public void SetKey(string key)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (string.Equals(_items[i].Key, key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (_selected != i)
+                        {
+                            _selected = i;
+                            Invalidate();
+                            SelectionChanged?.Invoke(this, _items[_selected].Key);
+                        }
+                        return;
+                    }
+                }
+            }
+
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
                 UiKit.Quality(g);
-                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 8, UiKit.T.LineSoft);
+                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 9, UiKit.T.LineSoft);
 
                 if (_items.Count == 0) return;
                 int segW = (Width - 4) / _items.Count;
@@ -631,9 +1074,9 @@ namespace CRM.winforms
                     bool active = i == _selected;
                     if (active)
                     {
-                        UiKit.FillRounded(g, seg, 6, UiKit.T.Surface);
+                        UiKit.FillRounded(g, seg, 7, UiKit.T.Surface);
                         using var pen = new Pen(UiKit.T.Line, 1);
-                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 6);
+                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 7);
                         g.DrawPath(pen, path);
                     }
 
@@ -641,7 +1084,7 @@ namespace CRM.winforms
                         ? $"{_items[i].Key} ({_items[i].Count.GetValueOrDefault()})"
                         : _items[i].Key;
 
-                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.InkMuted : UiKit.T.InkFaint);
+                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.Ink : UiKit.T.InkMuted);
                     UiKit.Text(g, text, UiKit.T.SmallStrong, fg, seg,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 }

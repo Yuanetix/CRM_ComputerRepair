@@ -413,7 +413,7 @@ public class RetentionController : ControllerBase
 
         if (log is null) return NotFound($"Campaign entry {id} not found.");
 
-        if (log.IsDispatched)
+        if (log.IsDispatched && log.DeliveryStatus == "Sent")
             return BadRequest($"Campaign entry {id} has already been dispatched at {log.DispatchedAt:g}.");
 
         var settings = await _engine.GetSettingsAsync(db);
@@ -427,18 +427,26 @@ public class RetentionController : ControllerBase
             ? request.CustomBody
             : log.FormattedBody;
 
+        var targetEmail = !string.IsNullOrWhiteSpace(request?.CustomRecipientEmail)
+            ? request.CustomRecipientEmail.Trim()
+            : log.RecipientEmail;
+
+        if (string.IsNullOrWhiteSpace(targetEmail))
+            return BadRequest("Recipient email address is missing.");
+
         log.Subject = subject;
         log.FormattedBody = body;
+        log.RecipientEmail = targetEmail;
 
         // Execute SMTP delivery
         var result = await _emailDelivery.SendEmailAsync(
-            log.RecipientEmail,
+            targetEmail,
             log.RecipientName,
             subject,
             body,
             settings);
 
-        log.IsDispatched = true;
+        log.IsDispatched = result.Success;
         log.DispatchedAt = DateTime.UtcNow;
         log.DispatchedByUserId = currentUserId;
         log.DeliveryStatus = result.Status;
@@ -451,14 +459,28 @@ public class RetentionController : ControllerBase
             "DispatchEmail",
             "RetentionEmailLog",
             log.RetentionEmailLogId.ToString(),
-            $"Dispatched retention email to {log.RecipientEmail} ({result.Status}). Promo: {log.PromoCode}");
+            $"Dispatched retention email to {targetEmail} ({result.Status}). Promo: {log.PromoCode}");
+
+        if (!result.Success)
+        {
+            return BadRequest(new
+            {
+                error = "SMTP Dispatch Failed",
+                message = result.ErrorMessage ?? "SMTP server rejected the email dispatch.",
+                deliveryStatus = "Failed",
+                deliveryError = result.ErrorMessage
+            });
+        }
 
         return Ok(new
         {
-            message = "Retention email dispatched successfully via SMTP.",
+            message = result.WasFallback
+                ? $"Campaign email generated and delivered to Local Outbox for {targetEmail} (Preview opened in browser). To deliver live to your real Gmail inbox, enter your 16-character Google App Password in Settings."
+                : $"Retention email dispatched successfully via SMTP to {targetEmail}.",
             logId = log.RetentionEmailLogId,
             deliveryStatus = result.Status,
-            deliveryError = result.ErrorMessage
+            outboxFilePath = result.OutboxFilePath,
+            wasFallback = result.WasFallback
         });
     }
 
@@ -473,8 +495,12 @@ public class RetentionController : ControllerBase
         var customer = await db.Customers.FindAsync(request.CustomerId);
         if (customer is null) return NotFound($"Customer {request.CustomerId} not found.");
 
-        if (string.IsNullOrWhiteSpace(customer.Email))
-            return BadRequest($"Customer {customer.FirstName} {customer.LastName} has no email address on file.");
+        var targetEmail = !string.IsNullOrWhiteSpace(request.RecipientEmail)
+            ? request.RecipientEmail.Trim()
+            : customer.Email?.Trim();
+
+        if (string.IsNullOrWhiteSpace(targetEmail))
+            return BadRequest($"Recipient email address is missing for customer {customer.FirstName} {customer.LastName}.");
 
         var settings = await _engine.GetSettingsAsync(db);
         var now = DateTime.UtcNow;
@@ -508,7 +534,7 @@ public class RetentionController : ControllerBase
 
         // Deliver via SMTP
         var delivery = await _emailDelivery.SendEmailAsync(
-            customer.Email,
+            targetEmail,
             $"{customer.FirstName} {customer.LastName}".Trim(),
             request.Subject.Trim(),
             request.Body,
@@ -518,14 +544,14 @@ public class RetentionController : ControllerBase
         {
             CustomerId = customer.CustomerId,
             RecipientName = $"{customer.FirstName} {customer.LastName}".Trim(),
-            RecipientEmail = customer.Email,
+            RecipientEmail = targetEmail,
             Subject = request.Subject.Trim(),
             FormattedBody = request.Body,
             Segment = request.Segment,
             DiscountPercent = request.DiscountPercent,
             PromoCode = promoCode,
             ValidUntil = now.AddDays(request.ValidityDays),
-            IsDispatched = true,
+            IsDispatched = delivery.Success,
             DispatchedAt = now,
             DispatchedByUserId = currentUserId,
             IsAutomated = false,
@@ -542,14 +568,28 @@ public class RetentionController : ControllerBase
             "ManualSendEmail",
             "RetentionEmailLog",
             log.RetentionEmailLogId.ToString(),
-            $"Manual retention email sent to {customer.Email} ({delivery.Status}). Overridden cooldown: {request.OverrideCooldown}");
+            $"Manual retention email to {targetEmail} ({delivery.Status}). Overridden cooldown: {request.OverrideCooldown}");
+
+        if (!delivery.Success)
+        {
+            return BadRequest(new
+            {
+                error = "SMTP Delivery Failed",
+                message = delivery.ErrorMessage ?? "SMTP server rejected the email delivery.",
+                deliveryStatus = "Failed",
+                deliveryError = delivery.ErrorMessage
+            });
+        }
 
         return Ok(new
         {
-            message = "Manual retention email dispatched successfully via SMTP.",
+            message = delivery.WasFallback
+                ? $"Retention email delivered to Local Outbox for {targetEmail} (Preview opened in browser). To deliver live to your real Gmail inbox, enter your 16-character Google App Password in Settings."
+                : $"Manual retention email dispatched successfully via SMTP to {targetEmail}.",
             logId = log.RetentionEmailLogId,
             deliveryStatus = delivery.Status,
-            deliveryError = delivery.ErrorMessage
+            outboxFilePath = delivery.OutboxFilePath,
+            wasFallback = delivery.WasFallback
         });
     }
 
@@ -671,6 +711,47 @@ public class RetentionController : ControllerBase
             $"Updated retention thresholds and SMTP settings: Inactive={s.InactiveThresholdDays}d, AtRisk={s.AtRiskThresholdDays}d, AntiFatigue={s.AntiFatigueDays}d.");
 
         return Ok(new { message = "Retention settings updated successfully." });
+    }
+
+    [HttpPost("settings/test-smtp")]
+    [Authorize(Roles = "Admin,Super Admin")]
+    public async Task<IActionResult> TestSmtp(
+        int companyId, [FromBody] TestSmtpRequest? request)
+    {
+        await using var db = await _factory.CreateAsync(companyId);
+        var s = await _engine.GetSettingsAsync(db);
+
+        var testSettings = new RetentionSettings
+        {
+            SmtpHost = !string.IsNullOrWhiteSpace(request?.Host) ? request.Host.Trim() : s.SmtpHost,
+            SmtpPort = (request?.Port.HasValue == true && request.Port.Value > 0) ? request.Port.Value : s.SmtpPort,
+            SmtpUsername = !string.IsNullOrWhiteSpace(request?.Username) ? request.Username.Trim() : s.SmtpUsername,
+            SmtpPassword = (!string.IsNullOrWhiteSpace(request?.Password) && request.Password != "******") ? request.Password : s.SmtpPassword,
+            SmtpFromEmail = !string.IsNullOrWhiteSpace(request?.FromEmail) ? request.FromEmail.Trim() : s.SmtpFromEmail,
+            SmtpFromName = !string.IsNullOrWhiteSpace(request?.FromName) ? request.FromName.Trim() : s.SmtpFromName,
+            SmtpEnableSsl = request?.EnableSsl ?? s.SmtpEnableSsl
+        };
+
+        var targetRecipient = !string.IsNullOrWhiteSpace(request?.TestRecipientEmail)
+            ? request.TestRecipientEmail.Trim()
+            : (!string.IsNullOrWhiteSpace(testSettings.SmtpFromEmail) ? testSettings.SmtpFromEmail : testSettings.SmtpUsername);
+
+        var result = await _emailDelivery.TestSmtpConnectionAsync(testSettings, targetRecipient);
+
+        if (!result.Success)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                message = result.ErrorMessage ?? "SMTP connection failed."
+            });
+        }
+
+        return Ok(new
+        {
+            success = true,
+            message = $"SMTP connection test succeeded! Test email delivered to {targetRecipient}."
+        });
     }
 
     // ═══════════════════════════════════════════════════════

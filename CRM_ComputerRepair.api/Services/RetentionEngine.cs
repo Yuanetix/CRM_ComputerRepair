@@ -360,72 +360,54 @@ public class RetentionEngine
         }
 
         var customNoteHtml = !string.IsNullOrWhiteSpace(customNotes)
-            ? $"<div style='background-color:#F8FAFC;border-left:4px solid #6366F1;padding:12px 16px;margin:18px 0;font-size:14px;color:#334155;'><strong>Special Note from Your Technician:</strong><br/>{System.Net.WebUtility.HtmlEncode(customNotes)}</div>"
+            ? $"<div style='background-color:#F8FAFC;border-left:3px solid #0F172A;padding:12px 16px;margin:20px 0;font-size:14px;color:#334155;'><strong>Special Note from Your Technician:</strong><br/>{System.Net.WebUtility.HtmlEncode(customNotes)}</div>"
             : "";
 
-        return $@"
-<!DOCTYPE html>
+        return $@"<!DOCTYPE html>
 <html>
 <head>
   <meta charset='utf-8'/>
-  <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1E293B; margin: 0; padding: 0; background-color: #F8FAFC; }}
-    .container {{ max-width: 600px; margin: 24px auto; background: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }}
-    .header {{ background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%); padding: 32px 28px; text-align: center; color: #FFFFFF; }}
-    .header h1 {{ margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }}
-    .header p {{ margin: 6px 0 0 0; opacity: 0.9; font-size: 14px; }}
-    .content {{ padding: 28px 28px; }}
-    .offer-card {{ background: #EEF2FF; border: 1px dashed #6366F1; border-radius: 8px; padding: 20px; text-align: center; margin: 24px 0; }}
-    .offer-title {{ font-size: 20px; font-weight: 700; color: #4338CA; margin: 0 0 8px 0; }}
-    .promo-code {{ display: inline-block; background: #FFFFFF; border: 1px solid #C7D2FE; padding: 6px 16px; font-size: 16px; font-weight: 700; color: #3730A3; letter-spacing: 0.05em; border-radius: 6px; margin: 8px 0; }}
-    .validity {{ font-size: 13px; color: #64748B; margin-top: 6px; }}
-    .instructions {{ background: #F1F5F9; border-radius: 8px; padding: 16px 20px; font-size: 14px; color: #334155; margin: 20px 0; }}
-    .instructions ol {{ margin: 8px 0 0 0; padding-left: 20px; }}
-    .footer {{ background: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 20px 28px; text-align: center; font-size: 12px; color: #64748B; }}
-  </style>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
+  <title>Fixory Computer Repair</title>
 </head>
-<body>
-  <div class='container'>
-    <div class='header'>
-      <h1>Fixory Computer Repair Services</h1>
-      <p>Precision Device Diagnosis & System Restoration</p>
+<body style='margin:0;padding:24px 16px;background-color:#F8FAFC;font-family:-apple-system,BlinkMacSystemFont,""Segoe UI"",Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:#1E293B;line-height:1.6;'>
+  <div style='max-width:580px;margin:0 auto;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;padding:32px 32px;'>
+    <div style='border-bottom:1px solid #E2E8F0;padding-bottom:16px;margin-bottom:24px;'>
+      <div style='font-size:18px;font-weight:700;color:#0F172A;letter-spacing:-0.01em;'>Fixory Computer Repair Services</div>
+      <div style='font-size:13px;color:#64748B;margin-top:2px;'>Device Diagnostics &bull; Maintenance &bull; Hardware Restoration</div>
     </div>
-    <div class='content'>
-      <p style='font-size:16px;'>Dear <strong>{firstName}</strong>,</p>
-      <p>{leadParagraph}</p>
 
-      <div class='offer-card'>
-        <div class='offer-title'>{headline}</div>
-        <p style='margin:8px 0;'>{offerDescription}</p>
-        <div class='promo-code'>PROMO CODE: {promoCode}</div>
-        <div class='validity'>Valid through: <strong>{expirationDate}</strong></div>
+    <div style='color:#334155;'>
+      <p style='margin:0 0 16px 0;font-size:15px;'>Dear <strong>{firstName}</strong>,</p>
+      <p style='margin:0 0 16px 0;'>{leadParagraph}</p>
+
+      <div style='background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:20px 24px;margin:24px 0;'>
+        <div style='font-size:16px;font-weight:700;color:#0F172A;margin-bottom:6px;'>{headline}</div>
+        <div style='font-size:14px;color:#475569;margin-bottom:14px;'>{offerDescription}</div>
+        <div style='display:inline-block;background:#0F172A;color:#FFFFFF;padding:6px 14px;border-radius:4px;font-size:14px;font-weight:700;letter-spacing:0.04em;'>PROMO CODE: {promoCode}</div>
+        <div style='font-size:12px;color:#64748B;margin-top:8px;'>Valid through: <strong>{expirationDate}</strong></div>
       </div>
 
       {customNoteHtml}
 
-      <div class='instructions'>
-        <strong>How to Redeem:</strong>
-        <ol>
-          <li>Bring your desktop, laptop, or affected hardware to our repair center.</li>
-          <li>Mention promo code <strong>{promoCode}</strong> upon check-in, or present this email on your phone.</li>
-          <li>Or simply reply directly to this email to reserve an express diagnosis slot.</li>
-        </ol>
+      <div style='margin:24px 0;'>
+        <div style='font-size:14px;font-weight:600;color:#0F172A;margin-bottom:8px;'>How to Redeem:</div>
+        <ul style='margin:0;padding-left:20px;font-size:14px;color:#475569;'>
+          <li style='margin-bottom:4px;'>Present promo code <strong>{promoCode}</strong> upon check-in at our repair center.</li>
+          <li style='margin-bottom:4px;'>Or reply directly to this email to reserve an express diagnosis slot.</li>
+        </ul>
       </div>
 
-      <p style='font-size:14px;color:#475569;'>
-        If you have any questions or would like to ask our technicians about your computer, feel free to reply to this email or call our workshop directly.
-      </p>
-
-      <p style='font-size:14px;margin-top:24px;'>
+      <p style='margin:28px 0 0 0;font-size:14px;color:#475569;'>
         Warm regards,<br/>
-        <strong>Fixory Service & Support Team</strong><br/>
+        <strong style='color:#0F172A;'>Fixory Repair Team</strong><br/>
         <em>Fixory Computer Repair Services</em>
       </p>
     </div>
-    <div class='footer'>
-      Fixory Computer Repair Services &bull; Hotline: (555) 019-2834 &bull; Email: support@fixorycrm.local<br/>
-      Shop Hours: Monday &ndash; Saturday, 8:00 AM &ndash; 6:00 PM<br/>
-      You are receiving this communication as a valued customer of Fixory Computer Repair.
+
+    <div style='border-top:1px solid #F1F5F9;margin-top:32px;padding-top:16px;font-size:12px;color:#94A3B8;text-align:center;'>
+      Fixory Computer Repair Services &bull; Support: (555) 019-2834 &bull; Email: support@fixorycrm.local<br/>
+      You are receiving this communication as a registered client of Fixory Computer Repair.
     </div>
   </div>
 </body>
@@ -434,27 +416,33 @@ public class RetentionEngine
 
     private static string WrapHtmlEmail(string firstName, string bodyText, decimal discountPercent, string promoCode, string expirationDate)
     {
-        return $@"
-<!DOCTYPE html>
+        // If bodyText already contains clean plain text, format paragraphs cleanly
+        string formattedContent = bodyText;
+        if (!bodyText.Contains('<') && !bodyText.Contains('>'))
+        {
+            formattedContent = string.Join("\n", bodyText
+                .Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(p => $"<p style='margin:0 0 16px 0;line-height:1.6;'>{System.Net.WebUtility.HtmlEncode(p).Replace("\r\n", "<br/>").Replace("\n", "<br/>")}</p>"));
+        }
+
+        return $@"<!DOCTYPE html>
 <html>
 <head>
   <meta charset='utf-8'/>
-  <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1E293B; background-color: #F8FAFC; margin: 0; padding: 0; }}
-    .container {{ max-width: 600px; margin: 24px auto; background: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; overflow: hidden; }}
-    .header {{ background: #4F46E5; padding: 24px; text-align: center; color: #FFFFFF; font-size: 20px; font-weight: 700; }}
-    .content {{ padding: 28px; font-size: 15px; }}
-    .footer {{ background: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 18px; text-align: center; font-size: 12px; color: #64748B; }}
-  </style>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
+  <title>Fixory Computer Repair</title>
 </head>
-<body>
-  <div class='container'>
-    <div class='header'>Fixory Computer Repair Services</div>
-    <div class='content'>
-      {bodyText}
+<body style='margin:0;padding:24px 16px;background-color:#F8FAFC;font-family:-apple-system,BlinkMacSystemFont,""Segoe UI"",Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:#1E293B;line-height:1.6;'>
+  <div style='max-width:580px;margin:0 auto;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;padding:32px 32px;'>
+    <div style='border-bottom:1px solid #E2E8F0;padding-bottom:16px;margin-bottom:24px;'>
+      <div style='font-size:18px;font-weight:700;color:#0F172A;letter-spacing:-0.01em;'>Fixory Computer Repair Services</div>
+      <div style='font-size:13px;color:#64748B;margin-top:2px;'>Quality Hardware Diagnostics &bull; Maintenance &bull; Repair Services</div>
     </div>
-    <div class='footer'>
-      Fixory Computer Repair Services &bull; Hotline: (555) 019-2834 &bull; support@fixorycrm.local
+    <div style='color:#334155;'>
+      {formattedContent}
+    </div>
+    <div style='border-top:1px solid #F1F5F9;margin-top:32px;padding-top:16px;font-size:12px;color:#94A3B8;text-align:center;'>
+      Fixory Computer Repair Services &bull; Support: (555) 019-2834 &bull; Email: support@fixorycrm.local
     </div>
   </div>
 </body>

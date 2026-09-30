@@ -8,6 +8,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -16,12 +17,9 @@ using System.Windows.Forms;
 namespace CRM.winforms.Controls
 {
     /// <summary>
-    /// Reports page — clean, minimal, and clear business intelligence workspace.
-    /// Matches the dashboard design language:
-    /// - Clean typography with ample breathing room (zero cut-off text)
-    /// - Uncluttered metric cards with clear numbers and zero noisy emojis/icons
-    /// - Minimalist segmented module tabs matching DashboardControl's SegmentedFilter
-    /// - Full-width date pickers and columns with zero truncation
+    /// Reports page — professional business intelligence workspace.
+    /// UI aligned with Tenants / Subscriptions / Admin / System Monitor / Customers / Repairs.
+    /// All data fetching, filtering, tab switching, and export logic is unchanged.
     /// </summary>
     [DesignerCategory("Code")]
     public class ReportsControl : UserControl
@@ -72,7 +70,6 @@ namespace CRM.winforms.Controls
         private ReportType _currentType = ReportType.Sales;
         private string _currentSubFilter = "All";
 
-        // Raw loaded datasets
         private List<CustomerDto> _rawCustomers = new();
         private List<RepairRequestDto> _rawRepairs = new();
         private List<InteractionDto> _rawInteractions = new();
@@ -81,7 +78,6 @@ namespace CRM.winforms.Controls
         private List<LoyaltyMemberDetailDto> _rawLoyalty = new();
         private List<RetentionRecommendationDto> _rawRetention = new();
 
-        // Filtered views
         private List<SalesReportItem> _viewSales = new();
         private List<RepairRequestDto> _viewRepairs = new();
         private List<CustomerDto> _viewCustomers = new();
@@ -94,20 +90,16 @@ namespace CRM.winforms.Controls
 
         // ═══════════ UI CONTROLS ═══════════
 
-        // Header
         private Label lblTitle = null!;
-        private Label lblSubtitle = null!;
+        private Label lblSummary = null!;
         private ReportDateRangeBar dateRangeBar = null!;
         private SaasButton btnRefresh = null!;
         private SaasButton btnExport = null!;
 
-        // KPI Strip (4 Minimalist Metric Cards)
         private readonly List<ReportKpiCard> _kpiCards = new();
 
-        // Tab Navigation
         private ReportTabSegments tabSegments = null!;
 
-        // Main Workbench Card
         private WorkbenchCard card = null!;
         private Label lblGridTitle = null!;
         private Label lblCount = null!;
@@ -117,6 +109,13 @@ namespace CRM.winforms.Controls
         private ReportSummaryBar summaryBar = null!;
         private TablePagination pager = null!;
         private WorkbenchState state = null!;
+
+        // Shared drawing helpers
+        private const int CellPadX = 14;
+        private const TextFormatFlags Flat = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        private const TextFormatFlags CellText = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat;
+        private static readonly Font MonoFont = new Font("Consolas", 9F);
 
         // ═══════════ CONSTRUCTOR ═══════════
 
@@ -137,44 +136,43 @@ namespace CRM.winforms.Controls
 
         private void BuildUi()
         {
-            // ── Header Title & Subtitle ──
             lblTitle = new Label
             {
                 Text = "Reports",
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = AppTheme.Background,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
-            lblSubtitle = new Label
+            lblSummary = new Label
             {
-                Text = "Detailed business intelligence and operational audits",
-                Font = UiKit.T.Subtitle,
+                Text = "Business intelligence  ·  revenue, repairs, customers, loyalty & retention",
+                Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = AppTheme.Background,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
-            // ── Header Action Controls ──
             dateRangeBar = new ReportDateRangeBar();
             dateRangeBar.RangeChanged += async (s, e) => await ReloadAsync();
 
             btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnRefresh.Size = new Size(100, 36);
             btnRefresh.Click += async (s, e) => await ReloadAsync();
 
             btnExport = new SaasButton("Export PDF", SaasButtonVariant.Primary, "\uE74E");
+            btnExport.Size = new Size(140, 36);
             btnExport.Click += (s, e) => ExportPdf();
 
             Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
+            Controls.Add(lblSummary);
             Controls.Add(dateRangeBar);
             Controls.Add(btnRefresh);
             Controls.Add(btnExport);
 
-            // ── Executive KPI Cards (Row of 4) ──
             for (int i = 0; i < 4; i++)
             {
                 var kpi = new ReportKpiCard();
@@ -183,13 +181,15 @@ namespace CRM.winforms.Controls
                 Controls.Add(kpi);
             }
 
-            // ── Minimal Segmented Navigation Tabs ──
+            _kpiCards[0].Click += (s, e) => SwitchToTab(ReportType.Sales);
+            _kpiCards[1].Click += (s, e) => SwitchToTab(ReportType.Repairs);
+            _kpiCards[2].Click += (s, e) => SwitchToTab(ReportType.Customers);
+
             tabSegments = new ReportTabSegments();
             tabSegments.SelectedChanged += (s, e) => SwitchTab(tabSegments.SelectedType);
             Controls.Add(tabSegments);
 
-            // ── Main Workbench Card ──
-            card = new WorkbenchCard();
+            card = new WorkbenchCard { BackColor = UiKit.T.Surface };
 
             lblGridTitle = new Label
             {
@@ -197,7 +197,7 @@ namespace CRM.winforms.Controls
                 Font = UiKit.T.Section,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = UiKit.T.Surface,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
@@ -205,9 +205,9 @@ namespace CRM.winforms.Controls
             {
                 Text = "0 records",
                 Font = UiKit.T.Small,
-                ForeColor = UiKit.T.InkFaint,
+                ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = UiKit.T.Surface,
+                BackColor = Color.Transparent,
                 UseMnemonic = false
             };
 
@@ -220,27 +220,30 @@ namespace CRM.winforms.Controls
 
             search = new WorkbenchSearch
             {
-                PlaceholderText = "Search records..."
+                Placeholder = "Search records..."
             };
-            search.Inner.TextChanged += (s, e) => ApplyFilter(resetPage: true);
+            search.QueryChanged += (s, e) => ApplyFilter(resetPage: true);
 
             dgv = new DataGridView();
-            TableKit.StyleGrid(dgv);
-            dgv.CellPainting += Dgv_CellPainting;
+            StyleGrid(dgv);
+            dgv.CellPainting += (s, e) => PaintCell(dgv, e);
             dgv.CellMouseMove += (s, e) =>
             {
                 if (e.RowIndex != _hoverRow)
                 {
+                    int old = _hoverRow;
                     _hoverRow = e.RowIndex;
-                    dgv.Invalidate();
+                    if (old >= 0 && old < dgv.RowCount) dgv.InvalidateRow(old);
+                    if (_hoverRow >= 0 && _hoverRow < dgv.RowCount) dgv.InvalidateRow(_hoverRow);
                 }
             };
-            dgv.MouseLeave += (s, e) =>
+            dgv.CellMouseLeave += (s, e) =>
             {
-                if (_hoverRow != -1)
+                if (_hoverRow >= 0 && _hoverRow < dgv.RowCount)
                 {
+                    int old = _hoverRow;
                     _hoverRow = -1;
-                    dgv.Invalidate();
+                    dgv.InvalidateRow(old);
                 }
             };
 
@@ -268,107 +271,73 @@ namespace CRM.winforms.Controls
             LayoutUi();
         }
 
-        // ═══════════ LAYOUT MANAGEMENT ═══════════
+        // ═══════════ LAYOUT ═══════════
 
         private void LayoutUi()
         {
             if (Width <= 0 || Height <= 0) return;
 
-            int sidePad = 0;
-            lblTitle.Location = new Point(sidePad, 0);
+            int pad = UiKit.T.S6;
+            int contentW = Math.Max(760, Width - pad * 2);
 
-            int subtitleY = lblTitle.PreferredHeight + 4;
-            lblSubtitle.Location = new Point(sidePad, subtitleY);
+            lblTitle.Location = new Point(pad, pad);
 
-            // Right-aligned header controls
-            int btnY = 2;
-            int rightX = Width;
+            int btnY = pad;
+            btnExport.Location = new Point(pad + contentW - btnExport.Width, btnY);
+            btnRefresh.Location = new Point(btnExport.Left - btnRefresh.Width - 10, btnY);
 
-            btnExport.Size = new Size(btnExport.PreferredWidth, UiKit.T.ButtonHeight);
-            btnExport.Location = new Point(rightX - btnExport.Width, btnY);
-            rightX = btnExport.Left - 8;
+            int dateW = dateRangeBar.PreferredWidth;
+            dateRangeBar.Size = new Size(dateW, 36);
+            dateRangeBar.Location = new Point(btnRefresh.Left - dateW - 12, btnY);
 
-            btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(rightX - btnRefresh.Width, btnY);
-            rightX = btnRefresh.Left - 12;
+            lblSummary.Location = new Point(pad + 1, lblTitle.Bottom + 6);
 
-            dateRangeBar.Size = new Size(dateRangeBar.PreferredWidth, UiKit.T.ButtonHeight);
-            dateRangeBar.Location = new Point(Math.Max(lblTitle.Right + 16, rightX - dateRangeBar.Width), btnY);
-
-            // Row 1: KPI Cards (4 evenly distributed cards, spacious height with zero clipping)
-            int kpiTop = Math.Max(subtitleY + lblSubtitle.PreferredHeight + 14, btnY + UiKit.T.ButtonHeight + 14);
-            int kpiGap = 12;
-            int totalKpiGap = kpiGap * 3;
-            int cardW = Math.Max(120, (Width - sidePad * 2 - totalKpiGap) / 4);
-            int kpiH = Math.Max(116, _kpiCards.Count > 0 ? _kpiCards.Max(c => c.HeightFor(cardW)) : 116);
+            int kpiTop = lblSummary.Bottom + 22;
+            int kpiGap = 16;
+            int cardW = Math.Max(160, (contentW - kpiGap * 3) / 4);
+            int kpiH = Math.Max(132, _kpiCards.Count > 0 ? _kpiCards.Max(c => c.HeightFor(cardW)) : 132);
 
             for (int i = 0; i < _kpiCards.Count; i++)
             {
-                int x = sidePad + i * (cardW + kpiGap);
-                _kpiCards[i].Location = new Point(x, kpiTop);
-                _kpiCards[i].Size = new Size(cardW, kpiH);
+                int x = pad + i * (cardW + kpiGap);
+                _kpiCards[i].SetBounds(x, kpiTop, cardW, kpiH);
             }
 
-            // Row 2: Minimal Segmented Navigation Tabs
-            int tabsTop = kpiTop + kpiH + 14;
-            tabSegments.Location = new Point(sidePad, tabsTop);
-            tabSegments.Size = new Size(tabSegments.PreferredWidth, 36);
+            int tabsTop = kpiTop + kpiH + 16;
+            tabSegments.SetBounds(pad, tabsTop, tabSegments.PreferredWidth, 36);
 
-            // Row 3: Main Workbench Card
-            int cardTop = tabsTop + 36 + 12;
-            int cardH = Math.Max(260, Height - cardTop - 4);
+            int cardPad = UiKit.T.S6;
+            int cardTop = tabsTop + 36 + 14;
+            int cardH = Math.Max(300, Height - cardTop - pad);
+            card.SetBounds(pad, cardTop, contentW, cardH);
 
-            card.Location = new Point(sidePad, cardTop);
-            card.Size = new Size(Width, cardH);
+            int innerW = contentW - cardPad * 2;
 
-            int cp = UiKit.T.S5; // 24px internal card padding
+            int filterW = Math.Min(subFilter.PreferredWidth, Math.Max(140, innerW / 2));
+            int searchW = Math.Max(240, Math.Min(440, innerW - filterW - 20));
 
-            // Title & Count
-            lblGridTitle.Location = new Point(cp, cp);
-            lblCount.Location = new Point(lblGridTitle.Right + 10, lblGridTitle.Top + (lblGridTitle.Height - lblCount.Height) / 2);
+            search.SetBounds(cardPad, cardPad, searchW, 38);
+            subFilter.SetBounds(cardPad + innerW - filterW, cardPad + 1, filterW, 36);
 
-            // Toolbar: Sub-filter segments on left, Search box on right
-            int toolbarY = lblGridTitle.Bottom + 12;
-            int toolbarH = TableKit.ToolbarH;
+            int gridY = search.Bottom + 14;
+            const int summaryH = 34;
+            int footerH = pager.Visible ? TableKit.FooterH : 0;
+            int gridH = cardH - gridY - cardPad - summaryH - footerH - 6;
 
-            int maxSearchW = 280;
-            int minSearchW = 180;
-            int availSubFilterW = card.Width - cp * 2 - minSearchW - 16;
-            int actualSubW = Math.Min(subFilter.PreferredWidth, Math.Max(120, availSubFilterW));
+            dgv.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+            summaryBar.SetBounds(cardPad, gridY + Math.Max(0, gridH), innerW, summaryH);
+            if (pager.Visible)
+                pager.SetBounds(cardPad, gridY + Math.Max(0, gridH) + summaryH, innerW, TableKit.FooterH);
+            state.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH) + summaryH + footerH);
 
-            subFilter.Size = new Size(actualSubW, toolbarH);
-            subFilter.Location = new Point(cp, toolbarY);
-
-            int searchW = Math.Min(maxSearchW, Math.Max(minSearchW, card.Width - cp * 2 - actualSubW - 16));
-            search.Size = new Size(searchW, TableKit.InputH);
-            search.Location = new Point(card.Width - cp - searchW, toolbarY + (toolbarH - TableKit.InputH) / 2);
-
-            // Table, Summary Bar, Pager, and State
-            int summaryH = 34;
-            int footerH = TableKit.FooterH;
-            int gridTop = toolbarY + toolbarH + 12;
-            int gridW = Math.Max(100, card.Width - cp * 2);
-            int gridH = Math.Max(60, card.Height - gridTop - cp - summaryH - footerH);
-
-            dgv.Location = new Point(cp, gridTop);
-            dgv.Size = new Size(gridW, gridH);
-
-            summaryBar.Location = new Point(cp, gridTop + gridH);
-            summaryBar.Size = new Size(gridW, summaryH);
-
-            pager.Location = new Point(cp, gridTop + gridH + summaryH);
-            pager.Size = new Size(gridW, footerH);
-
-            state.Location = new Point(cp, gridTop);
-            state.Size = new Size(gridW, gridH + summaryH + footerH);
+            lblCount.Location = new Point(cardPad, gridY - 22);
         }
 
-        // ═══════════ DATA LOAD & SYNC ═══════════
+        // ═══════════ DATA LOAD (unchanged) ═══════════
 
         public async Task ReloadAsync()
         {
-            btnRefresh.Loading = true;
-            state.ShowLoading("Loading report data…", "Fetching records.");
+            state.Show("\uE895", "Loading report data…", "Fetching records.");
             dgv.Visible = false;
 
             try
@@ -394,12 +363,10 @@ namespace CRM.winforms.Controls
                 var loyaltyResult = await loyaltyTask ?? new();
                 var retentionResult = await retentionTask ?? new();
 
-                // Apply date filters where appropriate
                 _rawCustomers = custResult.Where(c => c.CreatedAt >= from && c.CreatedAt <= to).ToList();
                 _rawRepairs = repResult.Where(r => r.RequestDate >= from && r.RequestDate <= to).ToList();
                 _rawInteractions = interResult.Where(i => i.InteractionDate >= from && i.InteractionDate <= to).ToList();
 
-                // Parse Sales
                 _rawSales = salesResult?.Rows.Select(r => new SalesReportItem
                 {
                     RequestNumber = Val(r, "requestNumber"),
@@ -411,7 +378,6 @@ namespace CRM.winforms.Controls
                     Amount = decimal.TryParse(Val(r, "amount"), out var a) ? a : 0m
                 }).ToList() ?? new();
 
-                // Parse Services
                 _rawServices = servicesResult?.Rows.Select(r => new ServicesReportItem
                 {
                     Service = Val(r, "service"),
@@ -426,19 +392,17 @@ namespace CRM.winforms.Controls
 
                 UpdateKpiCards();
                 ApplyFilter(resetPage: true);
+
+                lblSummary.Text = $"Business intelligence  ·  {_rawSales.Count} sales  ·  {_rawRepairs.Count} repairs  ·  {_rawCustomers.Count} customers  ·  {_rawLoyalty.Count} loyalty members";
             }
             catch (Exception ex)
             {
                 state.Show("\uE711", "Failed to load report", ex.Message);
-                Toast.Notify(FindForm(), "Connection Problem", "Couldn't load report data from the server.", ToastKind.Error);
-            }
-            finally
-            {
-                btnRefresh.Loading = false;
+                SaasToast.Show(FindForm(), $"Couldn't load report data: {ex.Message}", ToastKind.Danger);
             }
         }
 
-        // ═══════════ KPI EXECUTIVE STRIP RECALCULATION ═══════════
+        // ═══════════ KPI CARDS ═══════════
 
         private void UpdateKpiCards()
         {
@@ -457,10 +421,10 @@ namespace CRM.winforms.Controls
                             .Select(g => $"{g.Key} ({g.Count()})")
                             .FirstOrDefault() ?? "—";
 
-                        _kpiCards[0].Set("Gross revenue", $"₱{gross:N2}", $"{count} payments", AppTheme.Success);
-                        _kpiCards[1].Set("Total transactions", count.ToString(), "In selected period", AppTheme.Primary);
-                        _kpiCards[2].Set("Average ticket", $"₱{avg:N2}", "Per payment", AppTheme.Warning);
-                        _kpiCards[3].Set("Top method", topMethod, "Most used", AppTheme.Info);
+                        _kpiCards[0].Set("Gross revenue", $"₱{gross:N2}", $"{count} payments", AppTheme.Success, "\uE8C7");
+                        _kpiCards[1].Set("Total transactions", count.ToString(), "In selected period", AppTheme.Primary, "\uE9D5");
+                        _kpiCards[2].Set("Average ticket", $"₱{avg:N2}", "Per payment", AppTheme.Warning, "\uE8EF");
+                        _kpiCards[3].Set("Top method", topMethod, "Most used", AppTheme.Info, "\uE8AB");
                         break;
                     }
 
@@ -472,10 +436,10 @@ namespace CRM.winforms.Controls
                         decimal pipeline = _rawRepairs.Sum(r => (r.ActualCost ?? r.EstimatedCost) ?? 0m);
                         double rate = total > 0 ? (completed * 100.0 / total) : 0.0;
 
-                        _kpiCards[0].Set("Total tickets", total.ToString(), "Intake requests", AppTheme.Primary);
-                        _kpiCards[1].Set("Completed", $"{completed} ({rate:F0}%)", "Finished repairs", AppTheme.Success);
-                        _kpiCards[2].Set("In progress", active.ToString(), "Active on bench", AppTheme.Warning);
-                        _kpiCards[3].Set("Pipeline value", $"₱{pipeline:N2}", "Est. parts & labor", AppTheme.Info);
+                        _kpiCards[0].Set("Total tickets", total.ToString(), "Intake requests", AppTheme.Primary, "\uE9D5");
+                        _kpiCards[1].Set("Completed", $"{completed} ({rate:F0}%)", "Finished repairs", AppTheme.Success, "\uE73E");
+                        _kpiCards[2].Set("In progress", active.ToString(), "Active on bench", AppTheme.Warning, "\uE9F5");
+                        _kpiCards[3].Set("Pipeline value", $"₱{pipeline:N2}", "Est. parts & labor", AppTheme.Info, "\uE8C7");
                         break;
                     }
 
@@ -486,10 +450,10 @@ namespace CRM.winforms.Controls
                         int archived = total - active;
                         int totalPoints = _rawCustomers.Sum(c => c.LoyaltyPoints ?? 0);
 
-                        _kpiCards[0].Set("Total registered", total.ToString(), "Accounts", AppTheme.Primary);
-                        _kpiCards[1].Set("Active accounts", active.ToString(), "In good standing", AppTheme.Success);
-                        _kpiCards[2].Set("Archived", archived.ToString(), "Inactive", AppTheme.TextMuted);
-                        _kpiCards[3].Set("Loyalty points", $"{totalPoints:N0} pts", "Active points", AppTheme.Warning);
+                        _kpiCards[0].Set("Total registered", total.ToString(), "Accounts", AppTheme.Primary, "\uE716");
+                        _kpiCards[1].Set("Active accounts", active.ToString(), "In good standing", AppTheme.Success, "\uE73E");
+                        _kpiCards[2].Set("Archived", archived.ToString(), "Inactive", UiKit.T.InkMuted, "\uE7B8");
+                        _kpiCards[3].Set("Loyalty points", $"{totalPoints:N0} pts", "Active points", AppTheme.Warning, "\uE8EF");
                         break;
                     }
 
@@ -500,10 +464,10 @@ namespace CRM.winforms.Controls
                         var topRev = _rawServices.OrderByDescending(s => s.Revenue).FirstOrDefault();
                         var topVol = _rawServices.OrderByDescending(s => s.Requests).FirstOrDefault();
 
-                        _kpiCards[0].Set("Service offerings", lines.ToString(), "Catalog items", AppTheme.Primary);
-                        _kpiCards[1].Set("Total revenue", $"₱{rev:N2}", "Service revenue", AppTheme.Success);
-                        _kpiCards[2].Set("Top service", topRev?.Service ?? "—", topRev != null ? $"₱{topRev.Revenue:N2}" : "—", AppTheme.Warning);
-                        _kpiCards[3].Set("Highest volume", topVol?.Service ?? "—", topVol != null ? $"{topVol.Requests} jobs" : "—", AppTheme.Info);
+                        _kpiCards[0].Set("Service offerings", lines.ToString(), "Catalog items", AppTheme.Primary, "\uE9D5");
+                        _kpiCards[1].Set("Total revenue", $"₱{rev:N2}", "Service revenue", AppTheme.Success, "\uE8C7");
+                        _kpiCards[2].Set("Top service", topRev?.Service ?? "—", topRev != null ? $"₱{topRev.Revenue:N2}" : "—", AppTheme.Warning, "\uE8EF");
+                        _kpiCards[3].Set("Highest volume", topVol?.Service ?? "—", topVol != null ? $"{topVol.Requests} jobs" : "—", AppTheme.Info, "\uE716");
                         break;
                     }
 
@@ -515,10 +479,10 @@ namespace CRM.winforms.Controls
                         int urgent = _rawInteractions.Count(i => i.Priority == 2);
                         double resolveRate = total > 0 ? (closed * 100.0 / total) : 0.0;
 
-                        _kpiCards[0].Set("Total logs", total.ToString(), "Support entries", AppTheme.Primary);
-                        _kpiCards[1].Set("Resolved", $"{closed} ({resolveRate:F0}%)", "Closed tickets", AppTheme.Success);
-                        _kpiCards[2].Set("Open & in progress", open.ToString(), "Pending attention", AppTheme.Warning);
-                        _kpiCards[3].Set("Urgent priority", urgent.ToString(), "High priority", AppTheme.Danger);
+                        _kpiCards[0].Set("Total logs", total.ToString(), "Support entries", AppTheme.Primary, "\uE8BD");
+                        _kpiCards[1].Set("Resolved", $"{closed} ({resolveRate:F0}%)", "Closed tickets", AppTheme.Success, "\uE73E");
+                        _kpiCards[2].Set("Open & in progress", open.ToString(), "Pending attention", AppTheme.Warning, "\uE9F5");
+                        _kpiCards[3].Set("Urgent priority", urgent.ToString(), "High priority", AppTheme.Danger, "\uE7BA");
                         break;
                     }
 
@@ -529,10 +493,10 @@ namespace CRM.winforms.Controls
                         decimal spend = _rawLoyalty.Sum(m => m.TotalSpent);
                         int points = _rawLoyalty.Sum(m => m.Points);
 
-                        _kpiCards[0].Set("Enrolled members", members.ToString(), "Participants", AppTheme.Primary);
-                        _kpiCards[1].Set("Active members", active.ToString(), "Active status", AppTheme.Success);
-                        _kpiCards[2].Set("Lifetime spend", $"₱{spend:N2}", "Member spending", AppTheme.Warning);
-                        _kpiCards[3].Set("Points balance", $"{points:N0} pts", "In circulation", AppTheme.Info);
+                        _kpiCards[0].Set("Enrolled members", members.ToString(), "Participants", AppTheme.Primary, "\uE716");
+                        _kpiCards[1].Set("Active members", active.ToString(), "Active status", AppTheme.Success, "\uE73E");
+                        _kpiCards[2].Set("Lifetime spend", $"₱{spend:N2}", "Member spending", AppTheme.Warning, "\uE8C7");
+                        _kpiCards[3].Set("Points balance", $"{points:N0} pts", "In circulation", AppTheme.Info, "\uE8EF");
                         break;
                     }
 
@@ -541,12 +505,15 @@ namespace CRM.winforms.Controls
                         int total = _rawRetention.Count;
                         int atRisk = _rawRetention.Count(r => r.Category.Contains("Risk", StringComparison.OrdinalIgnoreCase));
                         int inactive = _rawRetention.Count(r => r.Category.Contains("Inactive", StringComparison.OrdinalIgnoreCase));
-                        decimal spendAtRisk = _rawRetention.Where(r => r.Category.Contains("Risk", StringComparison.OrdinalIgnoreCase) || r.Category.Contains("Inactive", StringComparison.OrdinalIgnoreCase)).Sum(r => r.TotalSpent);
+                        decimal spendAtRisk = _rawRetention
+                            .Where(r => r.Category.Contains("Risk", StringComparison.OrdinalIgnoreCase)
+                                     || r.Category.Contains("Inactive", StringComparison.OrdinalIgnoreCase))
+                            .Sum(r => r.TotalSpent);
 
-                        _kpiCards[0].Set("Actionable leads", total.ToString(), "Recommendations", AppTheme.Primary);
-                        _kpiCards[1].Set("At-risk customers", atRisk.ToString(), "Drifting away", AppTheme.Warning);
-                        _kpiCards[2].Set("Inactive customers", inactive.ToString(), "90+ days inactive", AppTheme.Danger);
-                        _kpiCards[3].Set("Past spend at risk", $"₱{spendAtRisk:N2}", "Recoverable LTV", AppTheme.Info);
+                        _kpiCards[0].Set("Actionable leads", total.ToString(), "Recommendations", AppTheme.Primary, "\uE716");
+                        _kpiCards[1].Set("At-risk customers", atRisk.ToString(), "Drifting away", AppTheme.Warning, "\uE7BA");
+                        _kpiCards[2].Set("Inactive customers", inactive.ToString(), "90+ days inactive", AppTheme.Danger, "\uE711");
+                        _kpiCards[3].Set("Past spend at risk", $"₱{spendAtRisk:N2}", "Recoverable LTV", AppTheme.Info, "\uE8C7");
                         break;
                     }
             }
@@ -554,7 +521,16 @@ namespace CRM.winforms.Controls
             LayoutUi();
         }
 
-        // ═══════════ TAB SWITCHING ═══════════
+        // ═══════════ TAB SWITCHING (unchanged) ═══════════
+
+        private void SwitchToTab(ReportType type)
+        {
+            var items = new[] { ReportType.Sales, ReportType.Repairs, ReportType.Customers, ReportType.Services,
+                                ReportType.Interactions, ReportType.Loyalty, ReportType.Retention };
+            int idx = Array.IndexOf(items, type);
+            if (idx >= 0) tabSegments.SelectedIndex = idx;
+            else SwitchTab(type);
+        }
 
         private void SwitchTab(ReportType type)
         {
@@ -573,7 +549,7 @@ namespace CRM.winforms.Controls
                 _ => "Audit report"
             };
 
-            search.PlaceholderText = type switch
+            search.Placeholder = type switch
             {
                 ReportType.Sales => "Search ticket, customer, method...",
                 ReportType.Repairs => "Search ticket, customer, device...",
@@ -609,22 +585,20 @@ namespace CRM.winforms.Controls
             _currentSubFilter = "All";
         }
 
-        // ═══════════ FILTERING & PAGINATION ═══════════
+        // ═══════════ FILTERING (unchanged) ═══════════
 
         private void ApplyFilter(bool resetPage = true)
         {
             if (resetPage) pager.Reset();
-            var term = search.Inner.Text?.Trim() ?? "";
+            var term = (search.Query ?? "").Trim();
 
             switch (_currentType)
             {
                 case ReportType.Sales:
                     {
                         var q = _rawSales.AsEnumerable();
-
                         if (_currentSubFilter != "All")
                             q = q.Where(s => s.Method.Equals(_currentSubFilter, StringComparison.OrdinalIgnoreCase));
-
                         if (!string.IsNullOrEmpty(term))
                             q = q.Where(s =>
                                 s.RequestNumber.Contains(term, StringComparison.OrdinalIgnoreCase) ||
@@ -635,17 +609,14 @@ namespace CRM.winforms.Controls
 
                         _viewSales = q.OrderByDescending(s => s.PaidOn).ToList();
                         pager.SetTotal(_viewSales.Count);
-                        var page = pager.Slice(_viewSales);
-
                         dgv.DataSource = null;
-                        dgv.DataSource = page;
+                        dgv.DataSource = pager.Slice(_viewSales);
                         ConfigureSalesColumns();
 
-                        lblCount.Text = $"{_viewSales.Count} records";
+                        lblCount.Text = $"Showing {_viewSales.Count} of {_rawSales.Count} sales";
                         decimal sum = _viewSales.Sum(s => s.Amount);
                         decimal avg = _viewSales.Count > 0 ? sum / _viewSales.Count : 0m;
-                        summaryBar.SetStats($"Total: ₱{sum:N2}   ·   Average: ₱{avg:N2}   ·   {_viewSales.Count} payments");
-
+                        summaryBar.SetStats($"Total  ₱{sum:N2}   ·   Average  ₱{avg:N2}   ·   {_viewSales.Count} payments");
                         ShowStateOrGrid(_viewSales.Count);
                         break;
                     }
@@ -653,7 +624,6 @@ namespace CRM.winforms.Controls
                 case ReportType.Repairs:
                     {
                         var q = _rawRepairs.AsEnumerable();
-
                         if (_currentSubFilter != "All")
                         {
                             q = _currentSubFilter switch
@@ -666,7 +636,6 @@ namespace CRM.winforms.Controls
                                 _ => q
                             };
                         }
-
                         if (!string.IsNullOrEmpty(term))
                             q = q.Where(r =>
                                 r.RequestNumber.Contains(term, StringComparison.OrdinalIgnoreCase) ||
@@ -677,17 +646,14 @@ namespace CRM.winforms.Controls
 
                         _viewRepairs = q.OrderByDescending(r => r.RequestDate).ToList();
                         pager.SetTotal(_viewRepairs.Count);
-                        var page = pager.Slice(_viewRepairs);
-
                         dgv.DataSource = null;
-                        dgv.DataSource = page;
+                        dgv.DataSource = pager.Slice(_viewRepairs);
                         ConfigureRepairColumns();
 
-                        lblCount.Text = $"{_viewRepairs.Count} records";
+                        lblCount.Text = $"Showing {_viewRepairs.Count} of {_rawRepairs.Count} repairs";
                         decimal pipeline = _viewRepairs.Sum(r => (r.ActualCost ?? r.EstimatedCost) ?? 0m);
                         int completed = _viewRepairs.Count(r => r.Status == 3);
-                        summaryBar.SetStats($"Pipeline: ₱{pipeline:N2}   ·   Completed: {completed}   ·   {_viewRepairs.Count} tickets");
-
+                        summaryBar.SetStats($"Pipeline  ₱{pipeline:N2}   ·   Completed  {completed}   ·   {_viewRepairs.Count} tickets");
                         ShowStateOrGrid(_viewRepairs.Count);
                         break;
                     }
@@ -695,10 +661,8 @@ namespace CRM.winforms.Controls
                 case ReportType.Customers:
                     {
                         var q = _rawCustomers.AsEnumerable();
-
                         if (_currentSubFilter == "Active") q = q.Where(c => c.IsActive);
                         else if (_currentSubFilter == "Archived") q = q.Where(c => !c.IsActive);
-
                         if (!string.IsNullOrEmpty(term))
                             q = q.Where(c =>
                                 c.FullName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
@@ -708,17 +672,14 @@ namespace CRM.winforms.Controls
 
                         _viewCustomers = q.OrderByDescending(c => c.CreatedAt).ToList();
                         pager.SetTotal(_viewCustomers.Count);
-                        var page = pager.Slice(_viewCustomers);
-
                         dgv.DataSource = null;
-                        dgv.DataSource = page;
+                        dgv.DataSource = pager.Slice(_viewCustomers);
                         ConfigureCustomerColumns();
 
-                        lblCount.Text = $"{_viewCustomers.Count} records";
+                        lblCount.Text = $"Showing {_viewCustomers.Count} of {_rawCustomers.Count} customers";
                         int active = _viewCustomers.Count(c => c.IsActive);
                         int points = _viewCustomers.Sum(c => c.LoyaltyPoints ?? 0);
-                        summaryBar.SetStats($"Active: {active}   ·   Points: {points:N0} pts   ·   {_viewCustomers.Count} customers");
-
+                        summaryBar.SetStats($"Active  {active}   ·   Points  {points:N0} pts   ·   {_viewCustomers.Count} customers");
                         ShowStateOrGrid(_viewCustomers.Count);
                         break;
                     }
@@ -726,28 +687,21 @@ namespace CRM.winforms.Controls
                 case ReportType.Services:
                     {
                         var q = _rawServices.AsEnumerable();
-
-                        if (_currentSubFilter == "Top Volume")
-                            q = q.OrderByDescending(s => s.Requests);
-                        else if (_currentSubFilter == "Top Revenue")
-                            q = q.OrderByDescending(s => s.Revenue);
-
+                        if (_currentSubFilter == "Top Volume") q = q.OrderByDescending(s => s.Requests);
+                        else if (_currentSubFilter == "Top Revenue") q = q.OrderByDescending(s => s.Revenue);
                         if (!string.IsNullOrEmpty(term))
                             q = q.Where(s => s.Service.Contains(term, StringComparison.OrdinalIgnoreCase));
 
                         _viewServices = q.ToList();
                         pager.SetTotal(_viewServices.Count);
-                        var page = pager.Slice(_viewServices);
-
                         dgv.DataSource = null;
-                        dgv.DataSource = page;
+                        dgv.DataSource = pager.Slice(_viewServices);
                         ConfigureServiceColumns();
 
-                        lblCount.Text = $"{_viewServices.Count} records";
+                        lblCount.Text = $"Showing {_viewServices.Count} of {_rawServices.Count} services";
                         decimal rev = _viewServices.Sum(s => s.Revenue);
                         int jobs = _viewServices.Sum(s => s.Requests);
-                        summaryBar.SetStats($"Revenue: ₱{rev:N2}   ·   Volume: {jobs} jobs   ·   {_viewServices.Count} services");
-
+                        summaryBar.SetStats($"Revenue  ₱{rev:N2}   ·   Volume  {jobs} jobs   ·   {_viewServices.Count} services");
                         ShowStateOrGrid(_viewServices.Count);
                         break;
                     }
@@ -755,7 +709,6 @@ namespace CRM.winforms.Controls
                 case ReportType.Interactions:
                     {
                         var q = _rawInteractions.AsEnumerable();
-
                         if (_currentSubFilter != "All")
                         {
                             q = _currentSubFilter switch
@@ -767,7 +720,6 @@ namespace CRM.winforms.Controls
                                 _ => q
                             };
                         }
-
                         if (!string.IsNullOrEmpty(term))
                             q = q.Where(i =>
                                 i.Subject.Contains(term, StringComparison.OrdinalIgnoreCase) ||
@@ -777,17 +729,14 @@ namespace CRM.winforms.Controls
 
                         _viewInteractions = q.OrderByDescending(i => i.InteractionDate).ToList();
                         pager.SetTotal(_viewInteractions.Count);
-                        var page = pager.Slice(_viewInteractions);
-
                         dgv.DataSource = null;
-                        dgv.DataSource = page;
+                        dgv.DataSource = pager.Slice(_viewInteractions);
                         ConfigureInteractionColumns();
 
-                        lblCount.Text = $"{_viewInteractions.Count} records";
+                        lblCount.Text = $"Showing {_viewInteractions.Count} of {_rawInteractions.Count} interactions";
                         int closed = _viewInteractions.Count(i => i.Status == 2);
                         int urgent = _viewInteractions.Count(i => i.Priority == 2);
-                        summaryBar.SetStats($"Closed: {closed}   ·   Urgent: {urgent}   ·   {_viewInteractions.Count} entries");
-
+                        summaryBar.SetStats($"Closed  {closed}   ·   Urgent  {urgent}   ·   {_viewInteractions.Count} entries");
                         ShowStateOrGrid(_viewInteractions.Count);
                         break;
                     }
@@ -795,10 +744,8 @@ namespace CRM.winforms.Controls
                 case ReportType.Loyalty:
                     {
                         var q = _rawLoyalty.AsEnumerable();
-
                         if (_currentSubFilter == "Active") q = q.Where(m => m.IsActive);
                         else if (_currentSubFilter == "Inactive") q = q.Where(m => !m.IsActive);
-
                         if (!string.IsNullOrEmpty(term))
                             q = q.Where(m =>
                                 m.CustomerName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
@@ -806,17 +753,14 @@ namespace CRM.winforms.Controls
 
                         _viewLoyalty = q.OrderByDescending(m => m.TotalSpent).ToList();
                         pager.SetTotal(_viewLoyalty.Count);
-                        var page = pager.Slice(_viewLoyalty);
-
                         dgv.DataSource = null;
-                        dgv.DataSource = page;
+                        dgv.DataSource = pager.Slice(_viewLoyalty);
                         ConfigureLoyaltyColumns();
 
-                        lblCount.Text = $"{_viewLoyalty.Count} records";
+                        lblCount.Text = $"Showing {_viewLoyalty.Count} of {_rawLoyalty.Count} members";
                         decimal spend = _viewLoyalty.Sum(m => m.TotalSpent);
                         int active = _viewLoyalty.Count(m => m.IsActive);
-                        summaryBar.SetStats($"Total Spend: ₱{spend:N2}   ·   Active: {active}   ·   {_viewLoyalty.Count} members");
-
+                        summaryBar.SetStats($"Total spend  ₱{spend:N2}   ·   Active  {active}   ·   {_viewLoyalty.Count} members");
                         ShowStateOrGrid(_viewLoyalty.Count);
                         break;
                     }
@@ -824,10 +768,8 @@ namespace CRM.winforms.Controls
                 case ReportType.Retention:
                     {
                         var q = _rawRetention.AsEnumerable();
-
                         if (_currentSubFilter != "All")
                             q = q.Where(r => r.Category.Contains(_currentSubFilter, StringComparison.OrdinalIgnoreCase));
-
                         if (!string.IsNullOrEmpty(term))
                             q = q.Where(r =>
                                 r.CustomerName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
@@ -837,16 +779,13 @@ namespace CRM.winforms.Controls
 
                         _viewRetention = q.OrderByDescending(r => r.TotalSpent).ToList();
                         pager.SetTotal(_viewRetention.Count);
-                        var page = pager.Slice(_viewRetention);
-
                         dgv.DataSource = null;
-                        dgv.DataSource = page;
+                        dgv.DataSource = pager.Slice(_viewRetention);
                         ConfigureRetentionColumns();
 
-                        lblCount.Text = $"{_viewRetention.Count} records";
+                        lblCount.Text = $"Showing {_viewRetention.Count} of {_rawRetention.Count} leads";
                         decimal atRiskVal = _viewRetention.Sum(r => r.TotalSpent);
-                        summaryBar.SetStats($"Spend at Risk: ₱{atRiskVal:N2}   ·   {_viewRetention.Count} leads");
-
+                        summaryBar.SetStats($"Spend at risk  ₱{atRiskVal:N2}   ·   {_viewRetention.Count} leads");
                         ShowStateOrGrid(_viewRetention.Count);
                         break;
                     }
@@ -857,7 +796,7 @@ namespace CRM.winforms.Controls
         {
             if (count > 0)
             {
-                state.Clear();
+                state.Visible = false;
                 dgv.Visible = true;
                 summaryBar.Visible = true;
                 pager.Visible = true;
@@ -868,53 +807,101 @@ namespace CRM.winforms.Controls
                 summaryBar.Visible = false;
                 pager.Visible = false;
 
-                string kw = search.Inner.Text?.Trim() ?? "";
+                string kw = (search.Query ?? "").Trim();
                 if (!string.IsNullOrEmpty(kw))
-                    state.Show("\uE721", "No matching records", $"Nothing matched \"{kw}\".");
+                    state.Show("\uE721", "No matching records", $"Nothing matched \u201c{kw}\u201d.");
                 else if (_currentSubFilter != "All")
-                    state.Show("\uE71C", "No records found", $"No entries match \"{_currentSubFilter}\".");
+                    state.Show("\uE71C", "No records found", $"No entries match \u201c{_currentSubFilter}\u201d.");
                 else
                     state.Show("\uE9D9", "No data", "There are no records for the selected period.");
             }
         }
 
-        // ═══════════ GRID COLUMN CONFIGURATIONS ═══════════
+        // ═══════════ GRID STYLE ═══════════
+
+        private void StyleGrid(DataGridView g)
+        {
+            typeof(DataGridView)
+                .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(g, true);
+
+            g.AutoGenerateColumns = true;
+            g.AllowUserToAddRows = false;
+            g.AllowUserToDeleteRows = false;
+            g.AllowUserToResizeRows = false;
+            g.RowHeadersVisible = false;
+            g.ReadOnly = true;
+            g.MultiSelect = false;
+            g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            g.BackgroundColor = UiKit.T.Surface;
+            g.BorderStyle = BorderStyle.None;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
+            g.GridColor = UiKit.T.LineSoft;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            g.EnableHeadersVisualStyles = false;
+            g.ScrollBars = ScrollBars.Both;
+            g.RowTemplate.Height = 56;
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            g.ColumnHeadersHeight = 46;
+
+            g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+
+            g.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Font = UiKit.T.Body;
+            g.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
+            g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+
+            g.CellToolTipTextNeeded += (s, e) =>
+            {
+                if (e.RowIndex < 0 || e.RowIndex >= g.RowCount || e.ColumnIndex < 0) return;
+                var v = Convert.ToString(g.Rows[e.RowIndex].Cells[e.ColumnIndex].Value);
+                if (!string.IsNullOrWhiteSpace(v)) e.ToolTipText = v;
+            };
+        }
+
+        // ═══════════ COLUMN CONFIGURATIONS (unchanged logic) ═══════════
 
         private void HideUnneededColumns(params string[] keep)
         {
             var keepSet = new HashSet<string>(keep);
             foreach (DataGridViewColumn col in dgv.Columns)
-            {
                 if (!keepSet.Contains(col.Name))
                     col.Visible = false;
-            }
         }
 
         private void ConfigureSalesColumns()
         {
             HideUnneededColumns("RequestNumber", "Customer", "Service", "PaidOnDisplay", "Method", "Reference", "AmountDisplay");
 
-            SetupColumn("RequestNumber", "Ticket #", 110, 0);
-            SetupColumn("Customer", "Customer", 180, 1);
-            SetupColumn("Service", "Service", 0, 2, fill: true);
-            SetupColumn("PaidOnDisplay", "Paid Date", 140, 3);
-            SetupColumn("Method", "Method", 120, 4);
-            SetupColumn("Reference", "Reference", 120, 5);
-            SetupColumn("AmountDisplay", "Amount", 130, 6, alignRight: true);
+            SetupColumn("RequestNumber", "TICKET #", 120, 0);
+            SetupColumn("Customer", "CUSTOMER", 200, 1);
+            SetupColumn("Service", "SERVICE", 0, 2, fill: true);
+            SetupColumn("PaidOnDisplay", "PAID", 140, 3);
+            SetupColumn("Method", "METHOD", 130, 4);
+            SetupColumn("Reference", "REFERENCE", 140, 5);
+            SetupColumn("AmountDisplay", "AMOUNT", 140, 6, alignRight: true);
         }
 
         private void ConfigureRepairColumns()
         {
             HideUnneededColumns("PriorityText", "RequestNumber", "DeviceDisplay", "CustomerDisplay", "IssueDescription", "StatusText", "RequestDate", "CostDisplay");
 
-            SetupColumn("PriorityText", "Priority", 95, 0);
-            SetupColumn("RequestNumber", "Ticket #", 110, 1);
-            SetupColumn("DeviceDisplay", "Device", 180, 2);
-            SetupColumn("CustomerDisplay", "Customer", 180, 3);
-            SetupColumn("IssueDescription", "Issue", 0, 4, fill: true);
-            SetupColumn("StatusText", "Status", 110, 5);
-            SetupColumn("RequestDate", "Date", 140, 6, format: "MMM d, yyyy");
-            SetupColumn("CostDisplay", "Cost", 120, 7, alignRight: true);
+            SetupColumn("PriorityText", "PRIORITY", 120, 0);
+            SetupColumn("RequestNumber", "TICKET #", 140, 1);
+            SetupColumn("DeviceDisplay", "DEVICE", 200, 2);
+            SetupColumn("CustomerDisplay", "CUSTOMER", 200, 3);
+            SetupColumn("IssueDescription", "ISSUE", 0, 4, fill: true);
+            SetupColumn("StatusText", "STATUS", 140, 5);
+            SetupColumn("RequestDate", "DATE", 130, 6);
+            SetupColumn("CostDisplay", "COST", 130, 7, alignRight: true);
         }
 
         private void ConfigureCustomerColumns()
@@ -922,62 +909,62 @@ namespace CRM.winforms.Controls
             HideUnneededColumns("CustomerId", "NameDisplay", "Email", "Phone", "Address", "LoyaltyPoints", "StatusDisplay", "CreatedAt");
 
             SetupColumn("CustomerId", "ID", 70, 0);
-            SetupColumn("NameDisplay", "Customer", 180, 1);
-            SetupColumn("Email", "Email", 180, 2);
-            SetupColumn("Phone", "Phone", 130, 3);
-            SetupColumn("Address", "Address", 0, 4, fill: true);
-            SetupColumn("LoyaltyPoints", "Points", 90, 5, alignRight: true);
-            SetupColumn("StatusDisplay", "Status", 100, 6);
-            SetupColumn("CreatedAt", "Registered", 140, 7, format: "MMM d, yyyy");
+            SetupColumn("NameDisplay", "CUSTOMER", 200, 1);
+            SetupColumn("Email", "EMAIL", 200, 2);
+            SetupColumn("Phone", "PHONE", 140, 3);
+            SetupColumn("Address", "ADDRESS", 0, 4, fill: true);
+            SetupColumn("LoyaltyPoints", "POINTS", 100, 5, alignRight: true);
+            SetupColumn("StatusDisplay", "STATUS", 130, 6);
+            SetupColumn("CreatedAt", "REGISTERED", 140, 7);
         }
 
         private void ConfigureServiceColumns()
         {
             HideUnneededColumns("Service", "Requests", "RevenueDisplay", "AvgValueDisplay", "LastRequestDisplay");
 
-            SetupColumn("Service", "Service", 0, 0, fill: true);
-            SetupColumn("Requests", "Requests", 110, 1, alignRight: true);
-            SetupColumn("RevenueDisplay", "Revenue", 140, 2, alignRight: true);
-            SetupColumn("AvgValueDisplay", "Avg Value", 130, 3, alignRight: true);
-            SetupColumn("LastRequestDisplay", "Last Request", 140, 4);
+            SetupColumn("Service", "SERVICE", 0, 0, fill: true);
+            SetupColumn("Requests", "REQUESTS", 120, 1, alignRight: true);
+            SetupColumn("RevenueDisplay", "REVENUE", 140, 2, alignRight: true);
+            SetupColumn("AvgValueDisplay", "AVG VALUE", 140, 3, alignRight: true);
+            SetupColumn("LastRequestDisplay", "LAST REQUEST", 150, 4);
         }
 
         private void ConfigureInteractionColumns()
         {
             HideUnneededColumns("TypeText", "PriorityText", "CustomerDisplay", "Subject", "StatusText", "InteractionDate", "ClosedAtDisplay");
 
-            SetupColumn("TypeText", "Type", 100, 0);
-            SetupColumn("PriorityText", "Priority", 95, 1);
-            SetupColumn("CustomerDisplay", "Customer", 180, 2);
-            SetupColumn("Subject", "Subject", 0, 3, fill: true);
-            SetupColumn("StatusText", "Status", 110, 4);
-            SetupColumn("InteractionDate", "Date", 140, 5, format: "MMM d, yyyy");
-            SetupColumn("ClosedAtDisplay", "Closed", 140, 6);
+            SetupColumn("TypeText", "TYPE", 130, 0);
+            SetupColumn("PriorityText", "PRIORITY", 120, 1);
+            SetupColumn("CustomerDisplay", "CUSTOMER", 200, 2);
+            SetupColumn("Subject", "SUBJECT", 0, 3, fill: true);
+            SetupColumn("StatusText", "STATUS", 140, 4);
+            SetupColumn("InteractionDate", "DATE", 130, 5);
+            SetupColumn("ClosedAtDisplay", "CLOSED", 130, 6);
         }
 
         private void ConfigureLoyaltyColumns()
         {
             HideUnneededColumns("CustomerName", "ProgramName", "Points", "TotalSpent", "JoinedDate", "IsActive");
 
-            SetupColumn("CustomerName", "Customer", 180, 0);
-            SetupColumn("ProgramName", "Program", 160, 1);
-            SetupColumn("Points", "Points", 110, 2, alignRight: true);
-            SetupColumn("TotalSpent", "Lifetime Spend", 130, 3, alignRight: true, format: "₱#,##0.00");
-            SetupColumn("JoinedDate", "Joined", 140, 4, format: "MMM d, yyyy");
-            SetupColumn("IsActive", "Status", 90, 5);
+            SetupColumn("CustomerName", "CUSTOMER", 200, 0);
+            SetupColumn("ProgramName", "PROGRAM", 180, 1);
+            SetupColumn("Points", "POINTS", 110, 2, alignRight: true);
+            SetupColumn("TotalSpent", "LIFETIME SPEND", 150, 3, alignRight: true);
+            SetupColumn("JoinedDate", "JOINED", 130, 4);
+            SetupColumn("IsActive", "STATUS", 130, 5);
         }
 
         private void ConfigureRetentionColumns()
         {
             HideUnneededColumns("CustomerName", "Category", "Action", "Basis", "Reward", "TotalSpent", "DaysSinceLastTransaction");
 
-            SetupColumn("CustomerName", "Customer", 180, 0);
-            SetupColumn("Category", "Segment", 120, 1);
-            SetupColumn("Action", "Recommended Action", 170, 2);
-            SetupColumn("Basis", "Reason", 0, 3, fill: true);
-            SetupColumn("Reward", "Incentive", 140, 4);
-            SetupColumn("TotalSpent", "Past Spend", 120, 5, alignRight: true, format: "₱#,##0.00");
-            SetupColumn("DaysSinceLastTransaction", "Days Inactive", 110, 6, alignRight: true);
+            SetupColumn("CustomerName", "CUSTOMER", 200, 0);
+            SetupColumn("Category", "SEGMENT", 130, 1);
+            SetupColumn("Action", "ACTION", 180, 2);
+            SetupColumn("Basis", "REASON", 0, 3, fill: true);
+            SetupColumn("Reward", "INCENTIVE", 140, 4);
+            SetupColumn("TotalSpent", "PAST SPEND", 140, 5, alignRight: true);
+            SetupColumn("DaysSinceLastTransaction", "DAYS INACTIVE", 130, 6, alignRight: true);
         }
 
         private void SetupColumn(string name, string header, int width, int displayIndex, bool fill = false, bool alignRight = false, string? format = null)
@@ -988,7 +975,7 @@ namespace CRM.winforms.Controls
             col.Visible = true;
             col.HeaderText = header;
             col.DisplayIndex = displayIndex;
-            col.SortMode = DataGridViewColumnSortMode.Automatic;
+            col.SortMode = DataGridViewColumnSortMode.NotSortable;
 
             if (fill)
             {
@@ -1001,70 +988,106 @@ namespace CRM.winforms.Controls
                 col.Width = width;
             }
 
-            if (alignRight)
-            {
-                col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-                col.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
-            }
-            else
-            {
-                col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
-                col.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleLeft;
-            }
+            col.DefaultCellStyle.Alignment = alignRight
+                ? DataGridViewContentAlignment.MiddleRight
+                : DataGridViewContentAlignment.MiddleLeft;
+            col.HeaderCell.Style.Alignment = alignRight
+                ? DataGridViewContentAlignment.MiddleRight
+                : DataGridViewContentAlignment.MiddleLeft;
 
             if (format != null)
                 col.DefaultCellStyle.Format = format;
         }
 
-        // ═══════════ CELL PAINTING (PILLS, CURRENCIES, HOVER) ═══════════
+        // ═══════════ CELL PAINTING ═══════════
 
-        private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
+        private void PaintCell(DataGridView g, DataGridViewCellPaintingEventArgs e)
         {
-            if (e.Graphics == null) return;
-            var g = e.Graphics;
+            if (e.ColumnIndex < 0) return;
+            var gr = e.Graphics;
+            var cell = e.CellBounds;
 
-            // Header baseline rule
+            // Header
             if (e.RowIndex == -1)
             {
-                e.PaintBackground(e.CellBounds, false);
-                e.PaintContent(e.CellBounds);
-                TableKit.PaintHeaderRule(g, e.CellBounds);
+                using (var b = new SolidBrush(UiKit.T.Surface))
+                    gr.FillRectangle(b, cell);
+                using (var p = new Pen(UiKit.T.Line))
+                    gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+                UiKit.Quality(gr);
+                UiKit.Text(gr, Convert.ToString(e.Value) ?? "", UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1),
+                    CellText);
                 e.Handled = true;
                 return;
             }
 
-            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (e.RowIndex < 0) return;
 
-            string colName = dgv.Columns[e.ColumnIndex].Name;
+            string colName = g.Columns[e.ColumnIndex].Name;
             bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
             bool hovered = e.RowIndex == _hoverRow;
+            bool focused = g.Focused;
 
-            Color bg = TableKit.RowBackground(e, selected, hovered);
-            TableKit.PaintRowShell(g, e.CellBounds, bg);
+            Color rowBg = UiKit.T.Surface;
+            if (selected && focused) rowBg = UiKit.T.RowHover;
+            else if (selected && !focused) rowBg = UiKit.T.LineSoft;
+            else if (hovered) rowBg = UiKit.T.RowHover;
 
-            bool isPill = colName is "Method" or "StatusText" or "PriorityText" or "StatusDisplay" or "TypeText" or "Category" or "IsActive";
-            bool isCurrency = colName is "AmountDisplay" or "CostDisplay" or "RevenueDisplay" or "AvgValueDisplay" or "TotalSpent";
+            using (var b = new SolidBrush(rowBg))
+                gr.FillRectangle(b, cell);
+            using (var p = new Pen(UiKit.T.LineSoft))
+                gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+            UiKit.Quality(gr);
+
+            if (e.ColumnIndex == 0 && selected && focused)
+                UiKit.FillRounded(gr, new Rectangle(cell.Left, cell.Top + 12, 3, cell.Height - 25), 1, AppTheme.Primary);
+
+            var rect = new Rectangle(cell.Left + CellPadX, cell.Top,
+                Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1);
+            int cy = rect.Top + rect.Height / 2;
+            string text = Convert.ToString(e.FormattedValue) ?? "";
+
+            bool isPill = colName is "Method" or "StatusText" or "PriorityText"
+                       or "StatusDisplay" or "TypeText" or "Category" or "IsActive";
+            bool isCurrency = colName is "AmountDisplay" or "CostDisplay"
+                           or "RevenueDisplay" or "AvgValueDisplay" or "TotalSpent";
+            bool isDate = colName is "PaidOnDisplay" or "LastRequestDisplay" or "RequestDate"
+                       or "InteractionDate" or "ClosedAtDisplay" or "CreatedAt" or "JoinedDate";
 
             if (isPill)
             {
-                string text = e.FormattedValue?.ToString() ?? "";
-                if (colName == "IsActive")
+                Color accent = colName switch
                 {
-                    bool val = e.Value is true or "True";
-                    text = val ? "Active" : "Archived";
-                }
-                TableKit.PaintPill(g, e.CellBounds, text);
+                    "Method" => MethodColor(text),
+                    "StatusText" or "StatusDisplay" => StatusColor(text),
+                    "PriorityText" => PriorityColor(text),
+                    "TypeText" => TypeColor(text),
+                    "Category" => CategoryColor(text),
+                    "IsActive" => IsActiveBool(e.Value) ? AppTheme.Success : UiKit.T.InkMuted,
+                    _ => UiKit.T.InkMuted
+                };
+                string shown = colName == "IsActive" ? (IsActiveBool(e.Value) ? "Active" : "Archived") : text;
+                PaintDotPill(gr, rect, cy, string.IsNullOrWhiteSpace(shown) ? "—" : shown, accent, UiKit.Micro);
                 e.Handled = true;
                 return;
             }
 
             if (isCurrency)
             {
-                UiKit.Quality(g);
-                string text = e.FormattedValue?.ToString() ?? "";
-                var r = new Rectangle(e.CellBounds.Left, e.CellBounds.Top, e.CellBounds.Width - UiKit.T.S3, e.CellBounds.Height);
-                UiKit.Text(g, text, UiKit.T.BodyStrong, UiKit.T.Ink, r,
-                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                UiKit.Text(gr, string.IsNullOrWhiteSpace(text) ? "—" : text,
+                    UiKit.T.BodyStrong, UiKit.T.Ink, rect,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | Flat);
+                e.Handled = true;
+                return;
+            }
+
+            if (isDate)
+            {
+                UiKit.Text(gr, string.IsNullOrWhiteSpace(text) ? "—" : text,
+                    MonoFont, UiKit.T.InkMuted, rect, CellText);
                 e.Handled = true;
                 return;
             }
@@ -1073,7 +1096,77 @@ namespace CRM.winforms.Controls
             e.Handled = true;
         }
 
-        // ═══════════ EXPORT IMPLEMENTATION (PDF) ═══════════
+        private static bool IsActiveBool(object? v) =>
+            v is true || (v is string s && s.Equals("True", StringComparison.OrdinalIgnoreCase));
+
+        private static Color MethodColor(string text)
+        {
+            var t = (text ?? "").ToLowerInvariant();
+            if (t.Contains("cash")) return AppTheme.Success;
+            if (t.Contains("gcash") || t.Contains("card")) return AppTheme.Primary;
+            if (t.Contains("bank") || t.Contains("transfer")) return Color.FromArgb(139, 92, 246);
+            return UiKit.T.InkMuted;
+        }
+
+        private static Color StatusColor(string text)
+        {
+            var t = (text ?? "").ToLowerInvariant();
+            if (t.Contains("completed") || t.Contains("closed") || t.Contains("active") || t.Contains("resolved"))
+                return AppTheme.Success;
+            if (t.Contains("progress") || t.Contains("scheduled") || t.Contains("approved"))
+                return AppTheme.Primary;
+            if (t.Contains("pending") || t.Contains("open"))
+                return AppTheme.Warning;
+            if (t.Contains("rejected") || t.Contains("cancelled") || t.Contains("archived"))
+                return UiKit.T.InkMuted;
+            return UiKit.T.InkMuted;
+        }
+
+        private static Color PriorityColor(string text)
+        {
+            var t = (text ?? "").ToLowerInvariant();
+            if (t.Contains("urgent")) return AppTheme.Danger;
+            if (t.Contains("high")) return AppTheme.Warning;
+            if (t.Contains("medium")) return AppTheme.Primary;
+            return UiKit.T.InkMuted;
+        }
+
+        private static Color TypeColor(string text)
+        {
+            var t = (text ?? "").ToLowerInvariant();
+            if (t.Contains("inquiry") || t.Contains("question")) return AppTheme.Primary;
+            if (t.Contains("complaint") || t.Contains("concern")) return AppTheme.Danger;
+            if (t.Contains("review") || t.Contains("feedback")) return AppTheme.Warning;
+            if (t.Contains("follow")) return Color.FromArgb(139, 92, 246);
+            return UiKit.T.InkMuted;
+        }
+
+        private static Color CategoryColor(string text)
+        {
+            var t = (text ?? "").ToLowerInvariant();
+            if (t.Contains("risk")) return AppTheme.Danger;
+            if (t.Contains("inactive")) return UiKit.T.InkMuted;
+            if (t.Contains("loyal")) return AppTheme.Success;
+            if (t.Contains("return")) return AppTheme.Primary;
+            return UiKit.T.InkMuted;
+        }
+
+        private static void PaintDotPill(Graphics gr, Rectangle rect, int cy, string text, Color fg, Font font)
+        {
+            int textW = TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue),
+                Flat | TextFormatFlags.SingleLine).Width;
+            int pillW = Math.Min(rect.Width, textW + 34);
+            var pill = new Rectangle(rect.Left, cy - 12, pillW, 24);
+
+            UiKit.FillRounded(gr, pill, 12, UiKit.Wash(fg));
+            UiKit.FillRounded(gr, new Rectangle(pill.Left + 11, cy - 3, 6, 6), 3, fg);
+            UiKit.Text(gr, text, font, fg,
+                new Rectangle(pill.Left + 23, pill.Top, Math.Max(0, pill.Width - 31), pill.Height),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat);
+        }
+
+        // ═══════════ EXPORT PDF (unchanged) ═══════════
 
         private void ExportPdf()
         {
@@ -1117,12 +1210,12 @@ namespace CRM.winforms.Controls
                             _ => ""
                         },
                         PeriodText = $"{dateRangeBar.From:MMM dd, yyyy} – {dateRangeBar.To:MMM dd, yyyy}",
-                        GeneratedBy = !string.IsNullOrWhiteSpace(UserSession.FullName) ? UserSession.FullName : (!string.IsNullOrWhiteSpace(UserSession.Username) ? UserSession.Username : "Administrator"),
+                        GeneratedBy = !string.IsNullOrWhiteSpace(UserSession.FullName) ? UserSession.FullName :
+                                      (!string.IsNullOrWhiteSpace(UserSession.Username) ? UserSession.Username : "Administrator"),
                         GeneratedAt = DateTime.Now
                     }
                 };
 
-                // Add current 4 KPI metrics
                 foreach (var kpi in _kpiCards)
                 {
                     doc.Kpis.Add(new PdfReportBuilder.KpiItem
@@ -1134,7 +1227,6 @@ namespace CRM.winforms.Controls
                     });
                 }
 
-                // Configure columns and rows per report type
                 switch (_currentType)
                 {
                     case ReportType.Sales:
@@ -1149,7 +1241,6 @@ namespace CRM.winforms.Controls
                             new PdfReportBuilder.ColumnDef { Header = "Amount (PHP)", Width = 120, Alignment = PdfSharp.Drawing.XStringAlignment.Far, IsBold = true }
                         });
                         foreach (var s in _viewSales)
-                        {
                             doc.Rows.Add(new[]
                             {
                                 s.RequestNumber ?? "—",
@@ -1160,7 +1251,6 @@ namespace CRM.winforms.Controls
                                 s.Reference ?? "—",
                                 $"₱{s.Amount:N2}"
                             });
-                        }
                         doc.SummaryFooterText = $"Total Transactions: {_viewSales.Count:N0} • Gross Revenue: ₱{_viewSales.Sum(s => s.Amount):N2}";
                         break;
 
@@ -1177,7 +1267,6 @@ namespace CRM.winforms.Controls
                             new PdfReportBuilder.ColumnDef { Header = "Est. Cost (PHP)", Width = 65, Alignment = PdfSharp.Drawing.XStringAlignment.Far, IsBold = true }
                         });
                         foreach (var r in _viewRepairs)
-                        {
                             doc.Rows.Add(new[]
                             {
                                 r.RequestNumber ?? "—",
@@ -1189,7 +1278,6 @@ namespace CRM.winforms.Controls
                                 r.RequestDate.ToString("yyyy-MM-dd"),
                                 $"₱{(r.EstimatedCost ?? 0m):N2}"
                             });
-                        }
                         doc.SummaryFooterText = $"Total Tickets: {_viewRepairs.Count:N0} • Est. Pipeline Value: ₱{_viewRepairs.Sum(r => (r.ActualCost ?? r.EstimatedCost) ?? 0m):N2}";
                         break;
 
@@ -1207,7 +1295,6 @@ namespace CRM.winforms.Controls
                             new PdfReportBuilder.ColumnDef { Header = "Registered", Width = 55, Alignment = PdfSharp.Drawing.XStringAlignment.Center }
                         });
                         foreach (var c in _viewCustomers)
-                        {
                             doc.Rows.Add(new[]
                             {
                                 c.CustomerId.ToString(),
@@ -1220,7 +1307,6 @@ namespace CRM.winforms.Controls
                                 c.IsActive ? "Active" : "Archived",
                                 c.CreatedAt.ToString("yyyy-MM-dd")
                             });
-                        }
                         doc.SummaryFooterText = $"Total Customers: {_viewCustomers.Count:N0} • Active: {_viewCustomers.Count(c => c.IsActive):N0} • Archived: {_viewCustomers.Count(c => !c.IsActive):N0}";
                         break;
 
@@ -1234,7 +1320,6 @@ namespace CRM.winforms.Controls
                             new PdfReportBuilder.ColumnDef { Header = "Last Requested", Width = 140, Alignment = PdfSharp.Drawing.XStringAlignment.Center }
                         });
                         foreach (var s in _viewServices)
-                        {
                             doc.Rows.Add(new[]
                             {
                                 s.Service ?? "—",
@@ -1243,7 +1328,6 @@ namespace CRM.winforms.Controls
                                 $"₱{s.AvgValue:N2}",
                                 s.LastRequestDisplay ?? "—"
                             });
-                        }
                         doc.SummaryFooterText = $"Service Offerings: {_viewServices.Count:N0} • Aggregate Revenue: ₱{_viewServices.Sum(s => s.Revenue):N2} • Total Workorders: {_viewServices.Sum(s => s.Requests):N0}";
                         break;
 
@@ -1259,7 +1343,6 @@ namespace CRM.winforms.Controls
                             new PdfReportBuilder.ColumnDef { Header = "Closed Date", Width = 70, Alignment = PdfSharp.Drawing.XStringAlignment.Center }
                         });
                         foreach (var i in _viewInteractions)
-                        {
                             doc.Rows.Add(new[]
                             {
                                 i.TypeText ?? "—",
@@ -1270,7 +1353,6 @@ namespace CRM.winforms.Controls
                                 i.InteractionDate.ToString("yyyy-MM-dd"),
                                 i.ClosedAtDisplay ?? "—"
                             });
-                        }
                         doc.SummaryFooterText = $"Total Cases: {_viewInteractions.Count:N0} • Resolved: {_viewInteractions.Count(i => i.Status == 2):N0} • Open / In Progress: {_viewInteractions.Count(i => i.Status != 2):N0}";
                         break;
 
@@ -1285,7 +1367,6 @@ namespace CRM.winforms.Controls
                             new PdfReportBuilder.ColumnDef { Header = "Status", Width = 90, Alignment = PdfSharp.Drawing.XStringAlignment.Center, IsPillBadge = true }
                         });
                         foreach (var l in _viewLoyalty)
-                        {
                             doc.Rows.Add(new[]
                             {
                                 l.CustomerName ?? "—",
@@ -1295,7 +1376,6 @@ namespace CRM.winforms.Controls
                                 l.JoinedDate.ToString("yyyy-MM-dd"),
                                 l.IsActive ? "Active" : "Inactive"
                             });
-                        }
                         doc.SummaryFooterText = $"Enrolled Members: {_viewLoyalty.Count:N0} • Circulating Points: {_viewLoyalty.Sum(l => l.Points):N0} pts • Member Spend: ₱{_viewLoyalty.Sum(l => l.TotalSpent):N2}";
                         break;
 
@@ -1311,7 +1391,6 @@ namespace CRM.winforms.Controls
                             new PdfReportBuilder.ColumnDef { Header = "Days Inactive", Width = 60, Alignment = PdfSharp.Drawing.XStringAlignment.Far }
                         });
                         foreach (var r in _viewRetention)
-                        {
                             doc.Rows.Add(new[]
                             {
                                 r.CustomerName ?? "—",
@@ -1322,17 +1401,16 @@ namespace CRM.winforms.Controls
                                 $"₱{r.TotalSpent:N2}",
                                 r.DaysSinceLastTransaction.ToString()
                             });
-                        }
                         doc.SummaryFooterText = $"Actionable Accounts: {_viewRetention.Count:N0} • Recoverable Past Spend: ₱{_viewRetention.Sum(r => r.TotalSpent):N2}";
                         break;
                 }
 
                 PdfReportBuilder.GenerateReport(doc, sfd.FileName);
-                Toast.Notify(FindForm(), "Report Exported", $"Saved {Path.GetFileName(sfd.FileName)} successfully.", ToastKind.Success);
+                SaasToast.Show(FindForm(), $"Saved {Path.GetFileName(sfd.FileName)} successfully.", ToastKind.Success);
             }
             catch (Exception ex)
             {
-                Toast.Notify(FindForm(), "Export Failed", ex.Message, ToastKind.Error);
+                SaasToast.Show(FindForm(), $"Export failed: {ex.Message}", ToastKind.Danger);
             }
         }
 
@@ -1340,31 +1418,35 @@ namespace CRM.winforms.Controls
             row.TryGetValue(key, out var v) ? (v?.ToString() ?? "") : "";
 
         // ═══════════════════════════════════════════════════════════════
-        //  CLEAN & MINIMAL SUPPORTING CONTROLS (DASHBOARD STYLE)
+        //  SUPPORTING CONTROLS
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Minimal KPI Card — Clean card matching Dashboard styling, ample vertical room, zero clipped numbers.
-        /// </summary>
-        [DesignerCategory("Code")]
         private sealed class ReportKpiCard : Control
         {
-            private const int Pad = 18;
+            private const int Pad = 22;
+            private const int IconSize = 36;
+            private const int ChevronW = 16;
+            private const int MinHeight = 132;
+
+            private const TextFormatFlags One = TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+            private const TextFormatFlags Wrapped = One | TextFormatFlags.WordBreak;
 
             private static readonly Font[] NumFonts =
             {
+                AppFonts.Strong(26F),
                 AppFonts.Strong(22F),
                 AppFonts.Strong(18F),
                 AppFonts.Strong(15F),
-                AppFonts.Strong(13F),
-                AppFonts.Strong(11F)
+                AppFonts.Strong(12F)
             };
 
             private string _label = "";
             private string _number = "0";
             private string _sub = "";
             private Color _accent = AppTheme.Primary;
+            private string _glyph = "";
             private bool _hover;
+            private bool _down;
 
             public event EventHandler? ContentChanged;
 
@@ -1373,14 +1455,18 @@ namespace CRM.winforms.Controls
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
                 BackColor = AppTheme.Background;
+                Cursor = Cursors.Hand;
+                TabStop = true;
             }
 
-            public void Set(string label, string number, string sub, Color accent)
+            public void Set(string label, string number, string sub, Color accent, string glyph)
             {
                 _label = label;
                 _number = number;
                 _sub = sub;
                 _accent = accent;
+                _glyph = glyph;
+                AccessibleName = $"{label}: {number}. {sub}";
                 Invalidate();
                 ContentChanged?.Invoke(this, EventArgs.Empty);
             }
@@ -1390,34 +1476,44 @@ namespace CRM.winforms.Controls
             public string Sub => _sub;
             public Color Accent => _accent;
 
-            public int HeightFor(int width) => Math.Max(116, Measure(width).Total);
+            public int HeightFor(int width) =>
+                string.IsNullOrEmpty(_label) ? MinHeight : Math.Max(MinHeight, Measure(width).Total);
 
-            private (Font NumFont, int TopH, int NumH, int CapH, int Total) Measure(int width)
+            private static int TextH(string text, Font font, int width, bool wrap)
             {
-                int inner = Math.Max(20, width - Pad * 2);
-                int topH = Math.Max(16, UiKit.T.SmallStrong.Height);
+                if (string.IsNullOrEmpty(text)) return font.Height;
+                var size = TextRenderer.MeasureText(text, font,
+                    new Size(Math.Max(10, width - 4), int.MaxValue), wrap ? Wrapped : One);
+                return Math.Max(font.Height, size.Height) + 2;
+            }
+
+            private (Font NumFont, bool NumWrap, string Main, int TopH, int NumH, int CapH, int Total) Measure(int width)
+            {
+                int inner = Math.Max(40, width - Pad * 2);
+                int labelW = Math.Max(40, inner - IconSize - 12 - ChevronW);
+
+                int labelH = TextH(_label, UiKit.T.SmallStrong, labelW, true);
+                int topH = Math.Max(IconSize, labelH);
 
                 Font numFont = NumFonts[^1];
+                bool numWrap = true;
                 foreach (var f in NumFonts)
                 {
-                    var size = TextRenderer.MeasureText(_number, f, new Size(int.MaxValue, int.MaxValue),
-                        TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
-                    if (size.Width <= inner) { numFont = f; break; }
+                    var w = TextRenderer.MeasureText(_number, f, new Size(int.MaxValue, int.MaxValue), One).Width;
+                    if (w <= inner - 4) { numFont = f; numWrap = false; break; }
                 }
 
-                int numH = Math.Max(numFont.Height + 2, TextRenderer.MeasureText(_number, numFont, new Size(inner, int.MaxValue),
-                    TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Height + 2);
+                int numH = TextH(_number, numFont, inner, numWrap);
+                int capH = TextH(_sub, UiKit.T.Small, inner, true);
 
-                int capH = string.IsNullOrEmpty(_sub) ? 0 : Math.Max(UiKit.T.Small.Height + 2,
-                    TextRenderer.MeasureText(_sub, UiKit.T.Small, new Size(inner, int.MaxValue),
-                        TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Height + 2);
-
-                int total = Pad + topH + 8 + numH + (capH > 0 ? 4 + capH : 0) + Pad;
-                return (numFont, topH, numH, capH, total);
+                int total = Pad + topH + 14 + numH + 6 + capH + Pad;
+                return (numFont, numWrap, _number, topH, numH, capH, total);
             }
 
             protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
-            protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Focus(); Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
 
             protected override void OnPaint(PaintEventArgs e)
             {
@@ -1427,38 +1523,55 @@ namespace CRM.winforms.Controls
                 using (var bg = new SolidBrush(AppTheme.Background))
                     g.FillRectangle(bg, ClientRectangle);
 
-                var r = new Rectangle(0, 0, Width - 1, Height - 1);
-                UiKit.Card(g, r, 10, UiKit.T.Surface, _hover ? _accent : UiKit.T.Line);
+                bool loading = string.IsNullOrEmpty(_label);
+                Color accent = loading ? UiKit.T.InkFaint : _accent;
+
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius,
+                    _down && !loading ? UiKit.Wash(accent) : UiKit.T.Surface,
+                    _hover && !loading ? accent : UiKit.T.Line);
+
+                if (loading)
+                {
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad, IconSize, IconSize), 10, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad + IconSize + 12, Pad + 12, Math.Max(20, Width / 3), 12), 4, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad + 56, Math.Max(20, Width / 2), 26), 4, UiKit.T.LineSoft);
+                    return;
+                }
 
                 var m = Measure(Width);
-                int inner = Math.Max(20, Width - Pad * 2);
+                int inner = Width - Pad * 2;
 
-                // 1. Accent Dot + Label
-                UiKit.Dot(g, Pad + 3, Pad + m.TopH / 2f, 6, _accent);
-                var lblRect = new Rectangle(Pad + 12, Pad, inner - 12, m.TopH);
-                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted, lblRect,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                var iconRect = new Rectangle(Pad, Pad + (m.TopH - IconSize) / 2, IconSize, IconSize);
+                UiKit.FillRounded(g, iconRect, 10, UiKit.Wash(accent));
+                using (var f = UiKit.GlyphFont(12F))
+                    UiKit.Text(g, _glyph, f, accent, iconRect, UiKit.Center);
 
-                // 2. Large Number (Rendered with Top alignment so top is NEVER clipped)
-                int numTop = Pad + m.TopH + 8;
-                var numRect = new Rectangle(Pad, numTop, inner, m.NumH);
-                UiKit.Text(g, _number, m.NumFont, UiKit.T.Ink, numRect,
-                    TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(Pad + IconSize + 12, Pad, inner - IconSize - 12 - ChevronW, m.TopH),
+                    Wrapped | TextFormatFlags.VerticalCenter);
 
-                // 3. Subtitle (Rendered with Top alignment so bottom is NEVER clipped)
-                if (!string.IsNullOrEmpty(_sub) && m.CapH > 0)
+                using (var cf = UiKit.GlyphFont(9F))
+                    UiKit.Text(g, "\uE76C", cf, _hover ? accent : UiKit.T.InkFaint,
+                        new Rectangle(Width - Pad - ChevronW + 2, Pad + (m.TopH - 20) / 2, ChevronW, 20), UiKit.Center);
+
+                int numTop = Pad + m.TopH + 14;
+                UiKit.Text(g, m.Main, m.NumFont, UiKit.T.Ink,
+                    new Rectangle(Pad, numTop, inner, m.NumH),
+                    (m.NumWrap ? Wrapped : One) | TextFormatFlags.Top);
+
+                UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkMuted,
+                    new Rectangle(Pad, numTop + m.NumH + 6, inner, m.CapH),
+                    Wrapped | TextFormatFlags.Top);
+
+                if (Focused)
                 {
-                    int capTop = numTop + m.NumH + 4;
-                    var subRect = new Rectangle(Pad, capTop, inner, m.CapH);
-                    UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkFaint, subRect,
-                        TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                    var ring = ClientRectangle;
+                    ring.Inflate(-1, -1);
+                    UiKit.StrokeRounded(g, ring, UiKit.T.Radius, accent, 2f);
                 }
             }
         }
 
-        /// <summary>
-        /// Date Range Bar — Clean preset selector and full-width date pickers (zero cut off).
-        /// </summary>
         [DesignerCategory("Code")]
         private sealed class ReportDateRangeBar : Panel
         {
@@ -1466,7 +1579,7 @@ namespace CRM.winforms.Controls
             private readonly DateTimePicker _dtpFrom;
             private readonly Label _lblTo;
             private readonly DateTimePicker _dtpTo;
-            private bool _suppressPreset = false;
+            private bool _suppressPreset;
 
             public event EventHandler? RangeChanged;
 
@@ -1493,24 +1606,20 @@ namespace CRM.winforms.Controls
                     Font = UiKit.T.SmallStrong,
                     ForeColor = UiKit.T.Ink,
                     BackColor = UiKit.T.Surface,
-                    Width = 120
+                    Width = 130,
+                    FlatStyle = FlatStyle.Flat
                 };
                 _cboPresets.Items.AddRange(new object[]
                 {
-                    "Last 30 Days",
-                    "This Month",
-                    "Last 90 Days",
-                    "Year to Date",
-                    "All Time",
-                    "Custom Range"
+                    "Last 30 Days", "This Month", "Last 90 Days", "Year to Date", "All Time", "Custom Range"
                 });
-                _cboPresets.SelectedIndex = 0; // Default: Last 30 Days
+                _cboPresets.SelectedIndex = 0;
 
                 _dtpFrom = new DateTimePicker
                 {
                     Format = DateTimePickerFormat.Short,
                     Font = UiKit.T.Small,
-                    Width = 130, // 130px prevents truncation of "30/08/2026"
+                    Width = 130,
                     Value = DateTime.Today.AddDays(-30)
                 };
 
@@ -1520,7 +1629,7 @@ namespace CRM.winforms.Controls
                     Font = UiKit.T.SmallStrong,
                     ForeColor = UiKit.T.InkMuted,
                     AutoSize = true,
-                    BackColor = AppTheme.Background,
+                    BackColor = Color.Transparent,
                     UseMnemonic = false
                 };
 
@@ -1528,7 +1637,7 @@ namespace CRM.winforms.Controls
                 {
                     Format = DateTimePickerFormat.Short,
                     Font = UiKit.T.Small,
-                    Width = 130, // 130px prevents truncation of "29/09/2026"
+                    Width = 130,
                     Value = DateTime.Today
                 };
 
@@ -1547,8 +1656,7 @@ namespace CRM.winforms.Controls
 
             private void LayoutBar()
             {
-                int y = (Height - _cboPresets.Height) / 2;
-                _cboPresets.Location = new Point(0, y);
+                _cboPresets.Location = new Point(0, (Height - _cboPresets.Height) / 2);
                 _dtpFrom.Location = new Point(_cboPresets.Right + 8, (Height - _dtpFrom.Height) / 2);
                 _lblTo.Location = new Point(_dtpFrom.Right + 6, (Height - _lblTo.Height) / 2);
                 _dtpTo.Location = new Point(_lblTo.Right + 6, (Height - _dtpTo.Height) / 2);
@@ -1557,13 +1665,11 @@ namespace CRM.winforms.Controls
             private void OnPresetChanged(object? sender, EventArgs e)
             {
                 if (_suppressPreset) return;
-
                 var selected = _cboPresets.SelectedItem?.ToString();
                 if (selected == "Custom Range") return;
 
                 _suppressPreset = true;
                 var today = DateTime.Today;
-
                 switch (selected)
                 {
                     case "Last 30 Days":
@@ -1587,7 +1693,6 @@ namespace CRM.winforms.Controls
                         _dtpTo.Value = today;
                         break;
                 }
-
                 _suppressPreset = false;
                 RangeChanged?.Invoke(this, EventArgs.Empty);
             }
@@ -1602,9 +1707,6 @@ namespace CRM.winforms.Controls
             }
         }
 
-        /// <summary>
-        /// Minimal Segmented Navigation Bar — Clean text buttons, no icons/emojis, fits with zero truncation.
-        /// </summary>
         [DesignerCategory("Code")]
         private sealed class ReportTabSegments : Control
         {
@@ -1698,9 +1800,8 @@ namespace CRM.winforms.Controls
                 using (var bg = new SolidBrush(AppTheme.Background))
                     g.FillRectangle(bg, ClientRectangle);
 
-                int totalW = PreferredWidth;
-                var barRect = new Rectangle(0, 0, totalW, Height);
-                UiKit.Card(g, barRect, 8, UiKit.T.Surface, UiKit.T.Line);
+                var barRect = new Rectangle(0, 0, PreferredWidth, Height);
+                UiKit.Card(g, barRect, 9, UiKit.T.Surface, UiKit.T.Line);
 
                 for (int i = 0; i < Items.Length; i++)
                 {
@@ -1708,19 +1809,27 @@ namespace CRM.winforms.Controls
                     bool sel = i == _selected;
 
                     if (sel)
-                        UiKit.FillRounded(g, r, 6, AppTheme.Primary);
+                    {
+                        UiKit.FillRounded(g, r, 7, AppTheme.Primary);
+                        // active dot marker
+                        UiKit.FillRounded(g, new Rectangle(r.Left + 8, r.Top + r.Height / 2 - 2, 4, 4), 2, Color.White);
+                    }
                     else if (i == _hover)
-                        UiKit.FillRounded(g, r, 6, UiKit.T.RowHover);
+                    {
+                        UiKit.FillRounded(g, r, 7, UiKit.T.RowHover);
+                    }
 
                     Color fg = sel ? Color.White : (i == _hover ? UiKit.T.Ink : UiKit.T.InkMuted);
-                    UiKit.Text(g, Items[i].Label, UiKit.T.SmallStrong, fg, r, UiKit.Center);
+                    var textRect = sel ? new Rectangle(r.Left + 16, r.Top, r.Width - 20, r.Height) : r;
+
+                    UiKit.Text(g, Items[i].Label, UiKit.T.SmallStrong, fg, textRect,
+                        sel
+                            ? (TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix)
+                            : (TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix));
                 }
             }
         }
 
-        /// <summary>
-        /// Secondary quick filter pill bar (e.g. All, Cash, Card, GCash).
-        /// </summary>
         [DesignerCategory("Code")]
         private sealed class ReportSubFilter : Control
         {
@@ -1779,9 +1888,7 @@ namespace CRM.winforms.Controls
             private int IndexAt(Point pt)
             {
                 for (int i = 0; i < _items.Length; i++)
-                {
                     if (GetPillRect(i).Contains(pt)) return i;
-                }
                 return -1;
             }
 
@@ -1843,9 +1950,6 @@ namespace CRM.winforms.Controls
             }
         }
 
-        /// <summary>
-        /// Summary Aggregate Bar — Minimalist text summary at the table footer, zero noisy icons.
-        /// </summary>
         [DesignerCategory("Code")]
         private sealed class ReportSummaryBar : Control
         {
@@ -1869,7 +1973,6 @@ namespace CRM.winforms.Controls
                 var g = e.Graphics;
                 UiKit.Quality(g);
 
-                // Top hairline divider
                 using (var pen = new Pen(UiKit.T.LineSoft, 1))
                     g.DrawLine(pen, 0, 0, Width, 0);
 

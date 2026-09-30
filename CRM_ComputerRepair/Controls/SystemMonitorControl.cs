@@ -1,8 +1,11 @@
+using CRM.winforms.Controls;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -10,26 +13,74 @@ namespace CRM.winforms
 {
     /// <summary>
     /// Super Admin use case — read the audit log of all system actions.
+    /// Flat console-style layout: no cards, no tiles, just the table.
     /// </summary>
     [DesignerCategory("Code")]
     public class SystemMonitorControl : UserControl
     {
         private readonly ApiClient _api = new ApiClient();
         private List<AuditLogDto> _all = new();
+        private List<AuditLogDto> _filtered = new();
+        private string _activeFilter = "All";
 
+        // ── Header ──
         private Label lblTitle = null!;
-        private Label lblSubtitle = null!;
-        private FlatButton btnRefresh = null!;
+        private Label lblSummary = null!;
+        private SaasButton btnRefresh = null!;
 
-        private SurfaceCard card = null!;
-        private Label lblGridTitle = null!;
+        // ── Toolbar ──
+        private WorkbenchSearch searchBox = null!;
+        private SystemSegmentedFilter filterBar = null!;
         private Label lblCount = null!;
-        private TextField search = null!;
 
+        // ── Grid ──
         private DataGridView dgv = null!;
-        private StateView state = null!;
+        private WorkbenchState emptyState = null!;
 
         private int _hoverRow = -1;
+
+        // ═══════════ SHARED DRAWING HELPERS ═══════════
+        private const int CellPadX = 16;
+        private const TextFormatFlags Flat = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        private const TextFormatFlags CellText = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat;
+
+        private static readonly Font MonoFont = new Font("Consolas", 9F);
+        private static readonly Color[] AvatarPalette =
+        {
+            Color.FromArgb(99, 102, 241),
+            Color.FromArgb(16, 185, 129),
+            Color.FromArgb(245, 158, 11),
+            Color.FromArgb(236, 72, 153),
+            Color.FromArgb(59, 130, 246),
+            Color.FromArgb(124, 58, 237)
+        };
+
+        private static int MeasureW(string text, Font font) =>
+            TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue),
+                Flat | TextFormatFlags.SingleLine).Width;
+
+        private static Color AvatarColor(string? seed)
+        {
+            if (string.IsNullOrWhiteSpace(seed)) return AvatarPalette[0];
+            int h = 0;
+            foreach (char ch in seed) h = (h * 31 + ch) & 0x7FFFFFFF;
+            return AvatarPalette[h % AvatarPalette.Length];
+        }
+
+        private static Color ActionColor(string? action)
+        {
+            var a = (action ?? "").ToLowerInvariant();
+            if (a.Contains("create") || a.Contains("add") || a.Contains("register"))
+                return AppTheme.Success;
+            if (a.Contains("update") || a.Contains("edit") || a.Contains("modify"))
+                return AppTheme.Primary;
+            if (a.Contains("archive") || a.Contains("delete") || a.Contains("remove"))
+                return AppTheme.Danger;
+            if (a.Contains("login") || a.Contains("logout"))
+                return Color.FromArgb(139, 92, 246);
+            return UiKit.T.InkMuted;
+        }
 
         public SystemMonitorControl()
         {
@@ -46,40 +97,53 @@ namespace CRM.winforms
 
         private void BuildUi()
         {
+            // ── Header ──
             lblTitle = new Label
             {
                 Text = "System Monitor",
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
 
-            lblSubtitle = new Label
+            lblSummary = new Label
             {
-                Text = "Audit log of all create, update, and archive actions",
-                Font = UiKit.T.Subtitle,
+                Text = "",
+                Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
 
-            btnRefresh = new FlatButton("Refresh", "\uE72C");
+            btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnRefresh.Size = new Size(100, 36);
             btnRefresh.Click += async (s, e) => await ReloadAsync();
 
             Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
+            Controls.Add(lblSummary);
             Controls.Add(btnRefresh);
 
-            card = new SurfaceCard();
-
-            lblGridTitle = new Label
+            // ── Toolbar ──
+            searchBox = new WorkbenchSearch
             {
-                Text = "Recent activity",
-                Font = UiKit.T.Section,
-                ForeColor = UiKit.T.Ink,
-                AutoSize = true,
-                BackColor = Color.Transparent
+                Placeholder = "Filter by user, action, entity, or details..."
+            };
+            searchBox.QueryChanged += (s, e) => ApplyFilter();
+
+            filterBar = new SystemSegmentedFilter(new (string, int?)[]
+            {
+                ("All", null),
+                ("Creates", null),
+                ("Updates", null),
+                ("Archives", null)
+            });
+            filterBar.SelectionChanged += (s, key) =>
+            {
+                _activeFilter = key;
+                ApplyFilter();
             };
 
             lblCount = new Label
@@ -91,101 +155,345 @@ namespace CRM.winforms
                 BackColor = Color.Transparent
             };
 
-            search = new TextField { PlaceholderText = "Filter by user, action or entity" };
-            search.InnerTextBox.TextChanged += (s, e) => ApplyFilter();
+            Controls.Add(searchBox);
+            Controls.Add(filterBar);
+            Controls.Add(lblCount);
 
+            // ── Grid ──
             dgv = new DataGridView();
             StyleGrid(dgv);
-            dgv.CellMouseEnter += Dgv_CellMouseEnter;
-            dgv.CellMouseLeave += Dgv_CellMouseLeave;
-            dgv.MouseLeave += (s, e) => { _hoverRow = -1; dgv.Invalidate(); };
 
-            state = new StateView { Visible = false };
+            dgv.CellMouseMove += (s, e) =>
+            {
+                if (e.RowIndex != _hoverRow)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = e.RowIndex;
+                    if (old >= 0 && old < dgv.RowCount) dgv.InvalidateRow(old);
+                    if (_hoverRow >= 0 && _hoverRow < dgv.RowCount) dgv.InvalidateRow(_hoverRow);
+                }
+            };
+            dgv.CellMouseLeave += (s, e) =>
+            {
+                if (_hoverRow >= 0 && _hoverRow < dgv.RowCount)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = -1;
+                    dgv.InvalidateRow(old);
+                }
+            };
 
-            card.Controls.Add(lblGridTitle);
-            card.Controls.Add(lblCount);
-            card.Controls.Add(search);
-            card.Controls.Add(dgv);
-            card.Controls.Add(state);
+            emptyState = new WorkbenchState { Visible = false };
+            emptyState.Show("\uE9D9", "No activity found",
+                "Nothing has been logged yet. Create or edit a customer or repair request to generate activity.");
 
-            Controls.Add(card);
+            Controls.Add(dgv);
+            Controls.Add(emptyState);
 
             Resize += (s, e) => LayoutUi();
+            LayoutUi();
+        }
+
+        // ═══════════ LAYOUT ═══════════
+
+        private void LayoutUi()
+        {
+            if (Width <= 0 || Height <= 0) return;
+
+            int pad = UiKit.T.S6;
+            int contentW = Math.Max(700, Width - pad * 2);
+
+            // ── Header ──
+            lblTitle.Location = new Point(pad, pad);
+
+            int btnY = pad;
+            btnRefresh.Location = new Point(pad + contentW - btnRefresh.Width, btnY);
+
+            lblSummary.Location = new Point(pad + 1, lblTitle.Bottom + 6);
+
+            // ── Toolbar ──
+            int toolbarY = lblSummary.Bottom + 22;
+
+            int filterW = filterBar.PreferredWidth;
+            int searchW = Math.Max(240, Math.Min(420, contentW - filterW - 20));
+
+            searchBox.SetBounds(pad, toolbarY, searchW, 38);
+            filterBar.SetBounds(pad + contentW - filterW, toolbarY + 1, filterW, 36);
+
+            // ── Count line ──
+            int countY = searchBox.Bottom + 14;
+            lblCount.Location = new Point(pad, countY);
+
+            // ── Grid ──
+            int gridY = lblCount.Bottom + 10;
+            int gridH = Math.Max(120, Height - gridY - pad);
+
+            dgv.SetBounds(pad, gridY, contentW, gridH);
+            emptyState.SetBounds(pad, gridY, contentW, gridH);
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
             UiKit.Quality(e.Graphics);
-            int y = lblSubtitle.Bottom + UiKit.T.S4;
-            using var pen = new Pen(UiKit.T.Line, 1);
-            e.Graphics.DrawLine(pen, 0, y, Width, y);
+
+            // hairline under toolbar row
+            using var pen = new Pen(UiKit.T.LineSoft, 1);
+            int y = lblCount.Bottom + 4;
+            e.Graphics.DrawLine(pen, UiKit.T.S6, y, Width - UiKit.T.S6, y);
         }
 
-        private void LayoutUi()
+        // ═══════════ GRID ═══════════
+
+        private void StyleGrid(DataGridView g)
         {
-            if (Width <= 0 || Height <= 0) return;
+            typeof(DataGridView)
+                .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(g, true);
 
-            lblTitle.Location = new Point(0, 0);
-            int subtitleY = lblTitle.PreferredHeight + 6;
-            lblSubtitle.Location = new Point(1, subtitleY);
+            g.AutoGenerateColumns = true;
+            g.AllowUserToAddRows = false;
+            g.AllowUserToDeleteRows = false;
+            g.AllowUserToResizeRows = false;
+            g.RowHeadersVisible = false;
+            g.ReadOnly = true;
+            g.MultiSelect = false;
+            g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            g.BackgroundColor = AppTheme.Background;
+            g.BorderStyle = BorderStyle.None;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
+            g.GridColor = UiKit.T.LineSoft;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            g.EnableHeadersVisualStyles = false;
+            g.ScrollBars = ScrollBars.Both;
+            g.RowTemplate.Height = 56;
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            g.ColumnHeadersHeight = 44;
 
-            btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
-            btnRefresh.Location = new Point(Width - btnRefresh.Width, 2);
+            g.ColumnHeadersDefaultCellStyle.BackColor = AppTheme.Background;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = AppTheme.Background;
+            g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
-            int cardTop = dividerY + UiKit.T.S5;
-            int cardH = Math.Max(240, Height - cardTop);
+            g.DefaultCellStyle.BackColor = AppTheme.Background;
+            g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Font = UiKit.T.Body;
+            g.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
+            g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
 
-            card.Location = new Point(0, cardTop);
-            card.Size = new Size(Width, cardH);
+            g.CellPainting += (s, e) => PaintCell(g, e);
 
-            const int cp = UiKit.T.S5;
-            lblGridTitle.Location = new Point(cp, UiKit.T.S5);
-            lblCount.Location = new Point(
-                lblGridTitle.Right + UiKit.T.S2,
-                lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
-
-            int toolbarY = lblGridTitle.Bottom + 14;
-            int searchW = Math.Min(320, Math.Max(180, card.Width - cp * 2));
-            search.Size = new Size(searchW, UiKit.T.InputHeight);
-            search.Location = new Point(card.Width - cp - searchW, toolbarY);
-
-            int gridTop = toolbarY + UiKit.T.InputHeight + 14;
-            int gridW = card.Width - cp * 2;
-            int gridH = card.Height - gridTop - cp;
-
-            if (gridW > 100 && gridH > 60)
+            g.CellToolTipTextNeeded += (s, e) =>
             {
-                dgv.Location = new Point(cp, gridTop);
-                dgv.Size = new Size(gridW, gridH);
-                state.Location = new Point(cp, gridTop);
-                state.Size = new Size(gridW, gridH);
-            }
+                if (e.RowIndex < 0 || e.RowIndex >= g.RowCount || e.ColumnIndex < 0) return;
+                switch (g.Columns[e.ColumnIndex].Name)
+                {
+                    case "WhenDisplay":
+                    case "UserDisplay":
+                    case "Action":
+                    case "EntityDisplay":
+                    case "Details":
+                        var v = Convert.ToString(g.Rows[e.RowIndex].Cells[e.ColumnIndex].Value);
+                        if (!string.IsNullOrWhiteSpace(v)) e.ToolTipText = v;
+                        break;
+                }
+            };
         }
+
+        private void PaintCell(DataGridView g, DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.ColumnIndex < 0) return;
+            var gr = e.Graphics;
+            var cell = e.CellBounds;
+
+            // ── Header row ──
+            if (e.RowIndex == -1)
+            {
+                using (var b = new SolidBrush(AppTheme.Background))
+                    gr.FillRectangle(b, cell);
+                using (var p = new Pen(UiKit.T.Line, 1))
+                    gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+                UiKit.Quality(gr);
+                UiKit.Text(gr, Convert.ToString(e.Value) ?? "", UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1),
+                    CellText);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.RowIndex < 0 || e.RowIndex >= _filtered.Count) return;
+            var item = _filtered[e.RowIndex];
+
+            bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
+            bool hovered = e.RowIndex == _hoverRow;
+            bool focused = g.Focused;
+
+            Color rowBg = AppTheme.Background;
+            if (selected && focused) rowBg = UiKit.T.RowHover;
+            else if (selected && !focused) rowBg = UiKit.T.LineSoft;
+            else if (hovered) rowBg = UiKit.T.RowHover;
+
+            using (var b = new SolidBrush(rowBg))
+                gr.FillRectangle(b, cell);
+            using (var p = new Pen(UiKit.T.LineSoft))
+                gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+            UiKit.Quality(gr);
+
+            if (e.ColumnIndex == 0 && selected && focused)
+                UiKit.FillRounded(gr, new Rectangle(cell.Left, cell.Top + 10, 3, cell.Height - 21), 1, AppTheme.Primary);
+
+            var rect = new Rectangle(cell.Left + CellPadX, cell.Top,
+                Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1);
+            int cy = rect.Top + rect.Height / 2;
+            string text = Convert.ToString(e.FormattedValue) ?? "";
+
+            switch (g.Columns[e.ColumnIndex].Name)
+            {
+                case "WhenDisplay":
+                    if (string.IsNullOrWhiteSpace(text))
+                        DrawMuted(gr, "—", rect, UiKit.T.Small, UiKit.T.InkFaint);
+                    else
+                        UiKit.Text(gr, text, MonoFont, UiKit.T.InkMuted, rect, CellText);
+                    break;
+
+                case "UserDisplay":
+                    PaintUserCell(gr, item, rect);
+                    break;
+
+                case "Action":
+                    {
+                        Color fg = ActionColor(item.Action);
+                        string txt = string.IsNullOrWhiteSpace(text) ? "—" : text;
+                        PaintDotPill(gr, rect, cy, txt, fg, UiKit.Micro);
+                        break;
+                    }
+
+                case "EntityDisplay":
+                    if (string.IsNullOrWhiteSpace(text))
+                        DrawMuted(gr, "—", rect, UiKit.T.Small, UiKit.T.InkFaint);
+                    else
+                        UiKit.Text(gr, text, UiKit.T.Body, UiKit.T.Ink, rect, CellText);
+                    break;
+
+                case "Details":
+                    if (string.IsNullOrWhiteSpace(text))
+                        DrawMuted(gr, "—", rect, UiKit.T.Small, UiKit.T.InkFaint);
+                    else
+                        UiKit.Text(gr, text, UiKit.T.Small, UiKit.T.InkMuted, rect, CellText);
+                    break;
+
+                default:
+                    return;
+            }
+
+            e.Handled = true;
+        }
+
+        private static void PaintUserCell(Graphics gr, AuditLogDto item, Rectangle rect)
+        {
+            const int av = 30;
+            string user = item.UserDisplay ?? "";
+
+            if (string.IsNullOrWhiteSpace(user))
+            {
+                DrawMuted(gr, "System", rect, UiKit.T.Small, UiKit.T.InkFaint);
+                return;
+            }
+
+            var avRect = new Rectangle(rect.Left, rect.Top + (rect.Height - av) / 2, av, av);
+            Color ac = AvatarColor(user);
+            UiKit.FillRounded(gr, avRect, 8, UiKit.Wash(ac));
+
+            string initial = user.Trim().Substring(0, 1).ToUpperInvariant();
+            UiKit.Text(gr, initial, UiKit.T.SmallStrong, ac, avRect, UiKit.Center);
+
+            int tx = avRect.Right + 10;
+            int tw = Math.Max(0, rect.Right - tx);
+            UiKit.Text(gr, user, UiKit.T.BodyStrong, UiKit.T.Ink,
+                new Rectangle(tx, rect.Top, tw, rect.Height), CellText);
+        }
+
+        private static void PaintDotPill(Graphics gr, Rectangle rect, int cy, string text, Color fg, Font font)
+        {
+            int textW = MeasureW(text, font);
+            int pillW = Math.Min(rect.Width, textW + 34);
+            var pill = new Rectangle(rect.Left, cy - 12, pillW, 24);
+
+            UiKit.FillRounded(gr, pill, 12, UiKit.Wash(fg));
+            UiKit.FillRounded(gr, new Rectangle(pill.Left + 11, cy - 3, 6, 6), 3, fg);
+            UiKit.Text(gr, text, font, fg,
+                new Rectangle(pill.Left + 23, pill.Top, Math.Max(0, pill.Width - 31), pill.Height),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat);
+        }
+
+        private static void DrawMuted(Graphics gr, string text, Rectangle rect, Font font, Color color)
+            => UiKit.Text(gr, text, font, color, rect, CellText);
+
+        // ═══════════ DATA ═══════════
 
         public async Task ReloadAsync()
         {
             try
             {
                 _all = await _api.GetAuditLogAsync(null, null, 500);
+
+                int total = _all.Count;
+                int creates = _all.Count(a => ActionMatches(a.Action, "create", "add", "register"));
+                int updates = _all.Count(a => ActionMatches(a.Action, "update", "edit", "modify"));
+                int archives = _all.Count(a => ActionMatches(a.Action, "archive", "delete", "remove"));
+                int users = _all.Select(a => a.UserDisplay ?? "").Where(s => s.Length > 0).Distinct().Count();
+
+                lblSummary.Text = $"{total} events  ·  {creates} creates  ·  {updates} updates  ·  {archives} archives  ·  {users} users";
+
+                filterBar.UpdateCounts(new Dictionary<string, int?>
+                {
+                    ["All"] = total,
+                    ["Creates"] = creates,
+                    ["Updates"] = updates,
+                    ["Archives"] = archives
+                });
+
                 ApplyFilter();
             }
             catch (Exception ex)
             {
                 _all = new List<AuditLogDto>();
+                lblSummary.Text = "Couldn't load audit log";
                 ApplyFilter();
 
-                MessageBox.Show($"Couldn't load audit log.\n\n{ex.Message}",
-                    "Connection problem", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SaasToast.Show(FindForm(),
+                    $"Couldn't load audit log: {ex.Message}",
+                    ToastKind.Danger);
             }
+        }
+
+        private static bool ActionMatches(string? action, params string[] keys)
+        {
+            var a = (action ?? "").ToLowerInvariant();
+            foreach (var k in keys)
+                if (a.Contains(k)) return true;
+            return false;
         }
 
         private void ApplyFilter()
         {
-            var term = search.Text?.Trim() ?? "";
+            var term = (searchBox.Query ?? "").Trim();
 
             IEnumerable<AuditLogDto> q = _all;
+
+            if (_activeFilter == "Creates")
+                q = q.Where(x => ActionMatches(x.Action, "create", "add", "register"));
+            else if (_activeFilter == "Updates")
+                q = q.Where(x => ActionMatches(x.Action, "update", "edit", "modify"));
+            else if (_activeFilter == "Archives")
+                q = q.Where(x => ActionMatches(x.Action, "archive", "delete", "remove"));
 
             if (!string.IsNullOrEmpty(term))
             {
@@ -197,68 +505,31 @@ namespace CRM.winforms
                     (x.Details ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
             }
 
-            var view = q.ToList();
+            _filtered = q.ToList();
 
             dgv.DataSource = null;
-            dgv.DataSource = view;
+            dgv.DataSource = _filtered;
             ConfigureColumns();
 
-            lblCount.Text = view.Count == _all.Count
-                ? $"{view.Count} {(view.Count == 1 ? "entry" : "entries")}"
-                : $"{view.Count} of {_all.Count}";
+            bool hasData = _filtered.Count > 0;
+            dgv.Visible = hasData;
+            emptyState.Visible = !hasData;
 
-            if (view.Count > 0)
+            if (!hasData)
             {
-                state.Visible = false;
-                dgv.Visible = true;
-                dgv.ClearSelection();
+                string msg = !string.IsNullOrEmpty(term)
+                    ? $"Nothing matches \u201c{term}\u201d."
+                    : "Nothing has been logged yet. Create or edit a customer or repair request to generate activity.";
+                emptyState.Show("\uE9D9", "No activity found", msg);
             }
             else
             {
-                dgv.Visible = false;
-                state.Show("\uE9D9", "No activity found",
-                    string.IsNullOrEmpty(term)
-                        ? "Nothing has been logged yet. Create or edit a customer or repair request to generate activity."
-                        : $"Nothing matches \u201c{term}\u201d.");
+                dgv.ClearSelection();
             }
-        }
 
-        private static void StyleGrid(DataGridView g)
-        {
-            g.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            g.BackgroundColor = UiKit.T.Surface;
-            g.BorderStyle = BorderStyle.None;
-            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
-            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
-            g.EnableHeadersVisualStyles = false;
-            g.GridColor = UiKit.T.LineSoft;
-            g.RowHeadersVisible = false;
-            g.AllowUserToAddRows = false;
-            g.AllowUserToDeleteRows = false;
-            g.AllowUserToResizeRows = false;
-            g.ReadOnly = true;
-            g.MultiSelect = false;
-            g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            g.ScrollBars = ScrollBars.Both;
-            g.RowTemplate.Height = UiKit.T.RowHeight;
-            g.ColumnHeadersHeight = UiKit.T.HeaderHeight;
-            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-
-            g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
-            g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
-            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
-            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
-            g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
-            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(UiKit.T.S3, 0, UiKit.T.S3, 0);
-
-            g.DefaultCellStyle.BackColor = UiKit.T.Surface;
-            g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
-            g.DefaultCellStyle.Font = UiKit.T.Body;
-            g.DefaultCellStyle.SelectionBackColor = UiKit.Wash(AppTheme.Primary);
-            g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
-            g.DefaultCellStyle.Padding = new Padding(UiKit.T.S3, 6, UiKit.T.S3, 6);
-            g.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            lblCount.Text = _filtered.Count == _all.Count
+                ? $"Showing {_filtered.Count} {(_filtered.Count == 1 ? "entry" : "entries")}"
+                : $"Showing {_filtered.Count} of {_all.Count} entries";
         }
 
         private void ConfigureColumns()
@@ -278,146 +549,126 @@ namespace CRM.winforms
                 var c = dgv.Columns[name];
                 if (c == null) return;
                 c.HeaderText = header;
-                c.SortMode = DataGridViewColumnSortMode.Automatic;
+                c.SortMode = DataGridViewColumnSortMode.NotSortable;
                 c.AutoSizeMode = fill ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None;
                 if (!fill) c.Width = width;
-                else c.MinimumWidth = 180;
+                else c.MinimumWidth = 220;
                 c.DisplayIndex = idx;
             }
 
-            Setup("WhenDisplay", "When", 180, 0);
-            Setup("UserDisplay", "User", 130, 1);
-            Setup("Action", "Action", 110, 2);
-            Setup("EntityDisplay", "Entity", 170, 3);
-            Setup("Details", "Details", 0, 4, fill: true);
-
-            var cAction = dgv.Columns["Action"];
-            if (cAction != null)
-                cAction.DefaultCellStyle.Font = UiKit.T.BodyStrong;
+            Setup("WhenDisplay", "WHEN", 190, 0);
+            Setup("UserDisplay", "USER", 180, 1);
+            Setup("Action", "ACTION", 140, 2);
+            Setup("EntityDisplay", "ENTITY", 190, 3);
+            Setup("Details", "DETAILS", 0, 4, fill: true);
         }
 
-        private void Dgv_CellMouseEnter(object? sender, DataGridViewCellEventArgs e)
-        {
-            if (e.RowIndex < 0) { _hoverRow = -1; return; }
-            _hoverRow = e.RowIndex;
-            dgv.InvalidateRow(e.RowIndex);
-        }
-
-        private void Dgv_CellMouseLeave(object? sender, DataGridViewCellEventArgs e)
-        {
-            if (e.RowIndex < 0) return;
-            _hoverRow = -1;
-            dgv.InvalidateRow(e.RowIndex);
-        }
-
-        // ═══════════ NESTED UI ═══════════
+        // ═══════════════════════════════════════════════════════════════
+        //  SEGMENTED FILTER
+        // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]
-        private sealed class SurfaceCard : Panel
+        private sealed class SystemSegmentedFilter : Control
         {
-            public SurfaceCard()
-            {
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = AppTheme.Background;
-            }
+            private readonly List<(string Key, int? Count)> _items = new();
+            private int _selected = 0;
+            private int _hover = -1;
 
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                UiKit.Quality(e.Graphics);
-                using (var b = new SolidBrush(AppTheme.Background))
-                    e.Graphics.FillRectangle(b, ClientRectangle);
-                UiKit.Card(e.Graphics, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
-                base.OnPaint(e);
-            }
-        }
+            public event EventHandler<string>? SelectionChanged;
 
-        [DesignerCategory("Code")]
-        private sealed class FlatButton : Control
-        {
-            private readonly string _glyph;
-            private bool _hover, _down;
-
-            public FlatButton(string text, string glyph)
+            public SystemSegmentedFilter((string Key, int? Count)[] items)
             {
-                _glyph = glyph;
-                Text = text;
+                _items.AddRange(items);
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                        | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
                 BackColor = AppTheme.Background;
                 Cursor = Cursors.Hand;
-                Font = UiKit.T.BodyStrong;
-                TabStop = true;
+                Font = UiKit.T.SmallStrong;
+                Height = 36;
             }
 
-            public int PreferredWidth => UiKit.Measure(Text, UiKit.T.BodyStrong).Width + 56;
-
-            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
-            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
-            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
-            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
-
-            protected override void OnPaint(PaintEventArgs e)
+            public int PreferredWidth
             {
-                var g = e.Graphics;
-                UiKit.Quality(g);
-                using (var b = new SolidBrush(AppTheme.Background))
-                    g.FillRectangle(b, ClientRectangle);
-
-                Color bg = _down ? AppTheme.PrimaryActive : _hover ? AppTheme.PrimaryHover : AppTheme.Primary;
-                UiKit.FillRounded(g, ClientRectangle, 8, bg);
-
-                UiKit.Text(g, _glyph, new Font("Segoe MDL2 Assets", 10F), Color.White,
-                    new Rectangle(16, 0, 18, Height),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-
-                UiKit.Text(g, Text, UiKit.T.BodyStrong, Color.White,
-                    new Rectangle(36, 0, Width - 46, Height),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-            }
-        }
-
-        [DesignerCategory("Code")]
-        private sealed class StateView : Control
-        {
-            private string _glyph = "";
-            private string _title = "";
-            private string _message = "";
-
-            public StateView()
-            {
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = UiKit.T.Surface;
+                get
+                {
+                    int total = 16;
+                    foreach (var item in _items)
+                    {
+                        string text = item.Count.HasValue ? $"{item.Key} ({item.Count})" : item.Key;
+                        var sz = TextRenderer.MeasureText(text, Font);
+                        total += Math.Max(104, sz.Width + 28);
+                    }
+                    return Math.Max(330, total);
+                }
             }
 
-            public void Show(string glyph, string title, string message)
+            public void UpdateCounts(Dictionary<string, int?> counts)
             {
-                _glyph = glyph; _title = title; _message = message;
-                Visible = true; BringToFront(); Invalidate();
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (counts.TryGetValue(_items[i].Key, out var c))
+                        _items[i] = (_items[i].Key, c);
+                }
+                Invalidate();
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
                 UiKit.Quality(g);
-                using (var b = new SolidBrush(UiKit.T.Surface))
-                    g.FillRectangle(b, ClientRectangle);
+                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 9, UiKit.T.LineSoft);
 
-                int cy = Height / 2 - 40;
-                var circle = new Rectangle(Width / 2 - 26, cy, 52, 52);
-                UiKit.FillRounded(g, circle, 26, UiKit.T.LineSoft);
-                UiKit.Text(g, _glyph, UiKit.T.GlyphLarge, UiKit.T.InkFaint, circle,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
 
-                UiKit.Text(g, _title, UiKit.T.Section, UiKit.T.Ink,
-                    new Rectangle(0, circle.Bottom + UiKit.T.S4, Width, 24),
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var seg = new Rectangle(2 + i * segW, 2, segW, Height - 4);
+                    bool active = i == _selected;
+                    if (active)
+                    {
+                        UiKit.FillRounded(g, seg, 7, AppTheme.Background);
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 7);
+                        g.DrawPath(pen, path);
+                    }
 
-                int msgW = Math.Min(420, Width - UiKit.T.S6 * 2);
-                UiKit.Text(g, _message, UiKit.T.Body, UiKit.T.InkMuted,
-                    new Rectangle((Width - msgW) / 2, circle.Bottom + UiKit.T.S4 + 28, msgW, 60),
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.WordBreak);
+                    string text = _items[i].Count.HasValue
+                        ? $"{_items[i].Key} ({_items[i].Count.GetValueOrDefault()})"
+                        : _items[i].Key;
+
+                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.Ink : UiKit.T.InkMuted);
+                    UiKit.Text(g, text, UiKit.T.SmallStrong, fg, seg,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx != _hover) { _hover = idx; Invalidate(); }
+                base.OnMouseMove(e);
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                _hover = -1; Invalidate(); base.OnMouseLeave(e);
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx >= 0 && idx < _items.Count && idx != _selected)
+                {
+                    _selected = idx;
+                    Invalidate();
+                    SelectionChanged?.Invoke(this, _items[_selected].Key);
+                }
+                base.OnMouseClick(e);
             }
         }
     }

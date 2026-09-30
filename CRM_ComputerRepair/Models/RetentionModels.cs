@@ -136,16 +136,29 @@ namespace CRM.winforms
         public string? DeliveryError { get; set; }
     }
 
+    public class DispatchResultDto
+    {
+        public bool Success { get; set; }
+        public string? Message { get; set; }
+        public string DeliveryStatus { get; set; } = "Sent";
+        public string? OutboxFilePath { get; set; }
+        public bool WasFallback { get; set; }
+    }
+
     public class ManualSendResultDto
     {
         public bool Success { get; set; }
         public bool InCooldown { get; set; }
         public string? Message { get; set; }
+        public string? OutboxFilePath { get; set; }
+        public bool WasFallback { get; set; }
+        public string DeliveryStatus { get; set; } = "Sent";
     }
 
     public class SendManualRetentionEmailRequestDto
     {
         public int CustomerId { get; set; }
+        public string? RecipientEmail { get; set; }
         public int Segment { get; set; }
         public string Subject { get; set; } = "";
         public string Body { get; set; } = "";
@@ -153,6 +166,18 @@ namespace CRM.winforms
         public string? PromoCode { get; set; }
         public int ValidityDays { get; set; } = 14;
         public bool OverrideCooldown { get; set; } = false;
+    }
+
+    public class TestSmtpSettingsRequestDto
+    {
+        public string? Host { get; set; }
+        public int? Port { get; set; }
+        public string? Username { get; set; }
+        public string? Password { get; set; }
+        public string? FromEmail { get; set; }
+        public string? FromName { get; set; }
+        public bool? EnableSsl { get; set; }
+        public string? TestRecipientEmail { get; set; }
     }
 
     public class RetentionTemplateDto

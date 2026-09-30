@@ -423,15 +423,34 @@ namespace CRM.winforms
 
             try
             {
-                await _api.DispatchRetentionEmailAsync(_request.CampaignEmailLogId.Value);
+                var dispatchResult = await _api.DispatchRetentionEmailAsync(_request.CampaignEmailLogId.Value);
                 StateChanged = true;
 
-                lblDispatchStatus.Text = "Retention email has been dispatched via SMTP.";
+                if (!string.IsNullOrWhiteSpace(dispatchResult.OutboxFilePath) && File.Exists(dispatchResult.OutboxFilePath))
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = dispatchResult.OutboxFilePath,
+                            UseShellExecute = true
+                        });
+                    }
+                    catch { }
+                }
+
+                lblDispatchStatus.Text = dispatchResult.WasFallback
+                    ? "Email generated & delivered to Local Outbox preview."
+                    : "Retention email has been dispatched via SMTP.";
                 lblDispatchStatus.ForeColor = AppTheme.Success;
                 btnDispatch.Text = "Dispatched";
 
+                string notice = dispatchResult.WasFallback
+                    ? $"Retention email delivered to Local Outbox for {_request.CustomerEmail} and opened in your browser!\n\nNote: To deliver directly to your real Gmail inbox, enter your 16-character Google App Password in Settings > SMTP Configuration."
+                    : $"Retention email has been successfully dispatched via SMTP to {_request.CustomerEmail}.";
+
                 MessageBox.Show(
-                    $"Retention email has been successfully dispatched via SMTP to {_request.CustomerEmail}.",
+                    notice,
                     "Email Dispatched",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);

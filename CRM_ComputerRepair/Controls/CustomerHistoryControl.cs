@@ -8,8 +8,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Drawing.Text;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -17,9 +17,8 @@ namespace CRM.winforms
 {
     /// <summary>
     /// Professional Customer History 360° Dossier for Staff.
-    /// Provides complete timeline and record of all computer repairs,
-    /// customer inquiries & concerns, and scheduled follow-up outreaches for any customer.
-    /// Designed to match the Customer List UI for strict SaaS consistency.
+    /// Timeline of repairs, interactions, and follow-ups for any customer.
+    /// UI aligned with Customers / Repairs / Subscriptions / Admin / System Monitor.
     /// </summary>
     [DesignerCategory("Code")]
     public class CustomerHistoryControl : UserControl
@@ -33,20 +32,25 @@ namespace CRM.winforms
         // ═══════════ HEADER CONTROLS ═══════════
 
         private Label lblTitle = null!;
-        private Label lblSubtitle = null!;
-        private ComboBox cmbCustomer = null!;
+        private Label lblSummary = null!;
+        private WorkbenchSearch cmbCustomer = null!;   // read: original was ComboBox; see picker note below
+        private ComboBox customerPicker = null!;
         private SaasButton btnReload = null!;
         private SaasButton btnAdd = null!;
 
-        // ═══════════ METRIC STRIP ═══════════
+        // ═══════════ KPI TILES ═══════════
 
-        private MetricStrip strip = null!;
+        private KpiTile tileRepairs = null!;
+        private KpiTile tileActiveBench = null!;
+        private KpiTile tileInteractions = null!;
+        private KpiTile tileFollowUps = null!;
+        private readonly List<KpiTile> _tiles = new();
 
         // ═══════════ WORKBENCH CARD ═══════════
 
-        private SurfaceCard card = null!;
+        private WorkbenchCard card = null!;
 
-        // Customer Profile Banner (Top of Card)
+        // ── Dossier banner (flat, no border) ──
         private Panel pnlDossier = null!;
         private Label lblAvatar = null!;
         private Label lblFullName = null!;
@@ -59,18 +63,17 @@ namespace CRM.winforms
         private SaasButton btnLogInteraction = null!;
         private SaasButton btnScheduleFollowUp = null!;
 
-        // Toolbar
-        private Label lblGridTitle = null!;
+        // ── Toolbar ──
         private Label lblCount = null!;
-        private SegmentedFilter segments = null!;
-        private SearchBox search = null!;
+        private HistorySegmentedFilter filterBar = null!;
+        private WorkbenchSearch searchBox = null!;
 
-        // Grids
+        // ── Grids ──
         private DataGridView dgvRepairs = null!;
         private DataGridView dgvInteractions = null!;
         private DataGridView dgvFollowUps = null!;
 
-        private StateView state = null!;
+        private WorkbenchState emptyState = null!;
         private TablePagination pager = null!;
 
         private const string ColActions = "colActions";
@@ -79,9 +82,37 @@ namespace CRM.winforms
         private ContextMenuStrip _followUpsMenu = null!;
         private int _menuRowIndex = -1;
         private int _hoverRow = -1;
-        private readonly ToolTip _tips = new ToolTip { InitialDelay = 500, ReshowDelay = 200 };
 
         public event EventHandler<string>? ActionRequested;
+
+        // ═══════════ SHARED DRAWING HELPERS ═══════════
+        private const int CellPadX = 14;
+        private const TextFormatFlags Flat = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        private const TextFormatFlags CellText = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat;
+
+        private static readonly Font MonoFont = new Font("Consolas", 9F);
+        private static readonly Color[] AvatarPalette =
+        {
+            Color.FromArgb(99, 102, 241),
+            Color.FromArgb(16, 185, 129),
+            Color.FromArgb(245, 158, 11),
+            Color.FromArgb(236, 72, 153),
+            Color.FromArgb(59, 130, 246),
+            Color.FromArgb(124, 58, 237)
+        };
+
+        private static int MeasureW(string text, Font font) =>
+            TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue),
+                Flat | TextFormatFlags.SingleLine).Width;
+
+        private static Color AvatarColor(string? seed)
+        {
+            if (string.IsNullOrWhiteSpace(seed)) return AvatarPalette[0];
+            int h = 0;
+            foreach (char ch in seed) h = (h * 31 + ch) & 0x7FFFFFFF;
+            return AvatarPalette[h % AvatarPalette.Length];
+        }
 
         // ═══════════ CONSTRUCTOR ═══════════
 
@@ -103,36 +134,37 @@ namespace CRM.winforms
 
         private async Task InitializeAsync()
         {
-            state.ShowLoading("Loading customers…", "Fetching the customer list for the dossier picker.");
+            emptyState.Show("\uE77B", "Loading customers",
+                "Fetching the customer list for the dossier picker…");
             try
             {
                 _allCustomers = await _api.GetCustomersAsync() ?? new List<CustomerDto>();
                 PopulateCustomerDropdown();
 
                 if (_currentHistory == null && _allCustomers.Count > 0)
-                {
-                    cmbCustomer.SelectedIndex = 1; // Select first real customer
-                }
+                    customerPicker.SelectedIndex = 1;
             }
             catch (Exception ex)
             {
-                state.Show("\uE783", "Failed to Load Customers", ex.Message);
+                emptyState.Show("\uE783", "Failed to load customers", ex.Message);
             }
         }
 
         private void PopulateCustomerDropdown()
         {
-            cmbCustomer.Items.Clear();
-            cmbCustomer.Items.Add("— Select a Customer Dossier —");
+            customerPicker.Items.Clear();
+            customerPicker.Items.Add("— Select a customer dossier —");
 
             foreach (var c in _allCustomers.OrderBy(x => x.FullName))
             {
-                string contact = !string.IsNullOrWhiteSpace(c.Phone) ? c.Phone : (!string.IsNullOrWhiteSpace(c.Email) ? c.Email : "No contact");
-                cmbCustomer.Items.Add($"{c.FullName} ({contact})");
+                string contact = !string.IsNullOrWhiteSpace(c.Phone)
+                    ? c.Phone
+                    : (!string.IsNullOrWhiteSpace(c.Email) ? c.Email : "No contact");
+                customerPicker.Items.Add($"{c.FullName} ({contact})");
             }
 
-            if (cmbCustomer.Items.Count > 0)
-                cmbCustomer.SelectedIndex = 0;
+            if (customerPicker.Items.Count > 0)
+                customerPicker.SelectedIndex = 0;
         }
 
         public async Task LoadCustomerAsync(int customerId)
@@ -145,13 +177,9 @@ namespace CRM.winforms
 
             int idx = _allCustomers.OrderBy(x => x.FullName).ToList().FindIndex(c => c.CustomerId == customerId);
             if (idx >= 0)
-            {
-                cmbCustomer.SelectedIndex = idx + 1;
-            }
+                customerPicker.SelectedIndex = idx + 1;
             else
-            {
                 await FetchAndDisplayHistory(customerId);
-            }
         }
 
         // ═══════════ UI BUILD ═══════════
@@ -165,19 +193,21 @@ namespace CRM.winforms
                 Font = UiKit.T.Title,
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
 
-            lblSubtitle = new Label
+            lblSummary = new Label
             {
-                Text = "Comprehensive 360° timeline of repairs, interactions, and follow-ups",
-                Font = UiKit.T.Subtitle,
+                Text = "360° timeline of repairs, interactions, and follow-ups",
+                Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
 
-            cmbCustomer = new ComboBox
+            customerPicker = new ComboBox
             {
                 Font = UiKit.T.Body,
                 DropDownStyle = ComboBoxStyle.DropDown,
@@ -185,18 +215,17 @@ namespace CRM.winforms
                 AutoCompleteSource = AutoCompleteSource.ListItems,
                 DropDownWidth = 540,
                 Width = 360,
-                Height = UiKit.T.ButtonHeight,
                 BackColor = UiKit.T.Surface,
                 ForeColor = UiKit.T.Ink,
                 FlatStyle = FlatStyle.Flat
             };
-            cmbCustomer.Items.Add("Loading registered customers...");
-            cmbCustomer.SelectedIndex = 0;
-            cmbCustomer.SelectedIndexChanged += async (s, e) =>
+            customerPicker.Items.Add("Loading registered customers...");
+            customerPicker.SelectedIndex = 0;
+            customerPicker.SelectedIndexChanged += async (s, e) =>
             {
-                if (cmbCustomer.SelectedIndex > 0 && cmbCustomer.SelectedIndex - 1 < _allCustomers.Count)
+                if (customerPicker.SelectedIndex > 0 && customerPicker.SelectedIndex - 1 < _allCustomers.Count)
                 {
-                    var cust = _allCustomers.OrderBy(c => c.FullName).ToList()[cmbCustomer.SelectedIndex - 1];
+                    var cust = _allCustomers.OrderBy(c => c.FullName).ToList()[customerPicker.SelectedIndex - 1];
                     await FetchAndDisplayHistory(cust.CustomerId);
                 }
                 else
@@ -204,39 +233,34 @@ namespace CRM.winforms
                     ClearDossierDisplay();
                 }
             };
-            cmbCustomer.KeyDown += async (s, e) =>
+            customerPicker.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
                     e.Handled = true;
                     e.SuppressKeyPress = true;
-                    int foundIdx = cmbCustomer.FindStringExact(cmbCustomer.Text.Trim());
-                    if (foundIdx < 0) foundIdx = cmbCustomer.FindString(cmbCustomer.Text.Trim());
-                    if (foundIdx > 0)
-                    {
-                        cmbCustomer.SelectedIndex = foundIdx;
-                    }
+                    int foundIdx = customerPicker.FindStringExact(customerPicker.Text.Trim());
+                    if (foundIdx < 0) foundIdx = customerPicker.FindString(customerPicker.Text.Trim());
+                    if (foundIdx > 0) customerPicker.SelectedIndex = foundIdx;
                 }
             };
-            cmbCustomer.Leave += async (s, e) =>
+            customerPicker.Leave += (s, e) =>
             {
-                if (cmbCustomer.SelectedIndex <= 0 && !string.IsNullOrWhiteSpace(cmbCustomer.Text))
+                if (customerPicker.SelectedIndex <= 0 && !string.IsNullOrWhiteSpace(customerPicker.Text))
                 {
-                    int foundIdx = cmbCustomer.FindStringExact(cmbCustomer.Text.Trim());
-                    if (foundIdx < 0) foundIdx = cmbCustomer.FindString(cmbCustomer.Text.Trim());
-                    if (foundIdx > 0)
-                    {
-                        cmbCustomer.SelectedIndex = foundIdx;
-                    }
+                    int foundIdx = customerPicker.FindStringExact(customerPicker.Text.Trim());
+                    if (foundIdx < 0) foundIdx = customerPicker.FindString(customerPicker.Text.Trim());
+                    if (foundIdx > 0) customerPicker.SelectedIndex = foundIdx;
                 }
             };
 
             btnReload = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnReload.Size = new Size(100, 36);
             btnReload.Click += async (s, e) =>
             {
-                if (cmbCustomer.SelectedIndex > 0 && cmbCustomer.SelectedIndex - 1 < _allCustomers.Count)
+                if (customerPicker.SelectedIndex > 0 && customerPicker.SelectedIndex - 1 < _allCustomers.Count)
                 {
-                    var cust = _allCustomers.OrderBy(c => c.FullName).ToList()[cmbCustomer.SelectedIndex - 1];
+                    var cust = _allCustomers.OrderBy(c => c.FullName).ToList()[customerPicker.SelectedIndex - 1];
                     await FetchAndDisplayHistory(cust.CustomerId);
                 }
                 else
@@ -244,67 +268,60 @@ namespace CRM.winforms
                     await InitializeAsync();
                 }
             };
-            _tips.SetToolTip(btnReload, "Refresh history (F5)");
 
             btnAdd = new SaasButton("Intake repair", SaasButtonVariant.Primary, "\uE710");
+            btnAdd.Size = new Size(150, 36);
             btnAdd.Click += (s, e) => OpenIntakeRepairDialog();
-            _tips.SetToolTip(btnAdd, "Intake repair for this customer (Ctrl+N)");
 
             Controls.Add(lblTitle);
-            Controls.Add(lblSubtitle);
-            Controls.Add(cmbCustomer);
+            Controls.Add(lblSummary);
+            Controls.Add(customerPicker);
             Controls.Add(btnReload);
             Controls.Add(btnAdd);
 
-            // ── Metric strip (4 Interactive KPI Tiles) ──
-            strip = new MetricStrip();
-            strip.AddItem("Total Repairs", 0, AppTheme.Primary);
-            strip.AddItem("Active Bench", 1, AppTheme.Primary);
-            strip.AddItem("Interactions", 2, AppTheme.Warning);
-            strip.AddItem("Follow-Ups", 3, AppTheme.Success);
-            strip.SelectionChanged += (s, e) =>
-            {
-                int? sel = strip.SelectedStatus;
-                if (sel == 0 || sel == 1)
-                    segments.FireSelectIndex(0);
-                else if (sel == 2)
-                    segments.FireSelectIndex(1);
-                else if (sel == 3)
-                    segments.FireSelectIndex(2);
-            };
-            Controls.Add(strip);
+            // ── KPI Tiles (map to segments) ──
+            tileRepairs = AddTile("TOTAL REPAIRS", "0", "All repair tickets for this customer", AppTheme.Primary, "\uE9D5");
+            tileRepairs.Click += (s, e) => SelectSegment(0);
+
+            tileActiveBench = AddTile("ACTIVE BENCH", "0", "Open tickets still in progress", Color.FromArgb(59, 130, 246), "\uE9F5");
+            tileActiveBench.Click += (s, e) => SelectSegment(0);
+
+            tileInteractions = AddTile("INTERACTIONS", "0", "Inquiries, concerns, reviews", AppTheme.Warning, "\uE8BD");
+            tileInteractions.Click += (s, e) => SelectSegment(1);
+
+            tileFollowUps = AddTile("FOLLOW-UPS", "0", "Scheduled and completed outreaches", AppTheme.Success, "\uE823");
+            tileFollowUps.Click += (s, e) => SelectSegment(2);
 
             // ── Workbench Card ──
-            card = new SurfaceCard();
+            card = new WorkbenchCard { BackColor = UiKit.T.Surface };
 
-            // Customer Profile Dossier Banner
+            // ── Dossier banner (flat) ──
             pnlDossier = new Panel
             {
                 BackColor = Color.Transparent,
-                Height = 74
+                Height = 84
             };
+            pnlDossier.Paint += Dossier_Paint;
 
             lblAvatar = new Label
             {
                 Text = "C",
                 Font = AppFonts.Strong(14F),
                 ForeColor = Color.White,
-                BackColor = AppTheme.Primary,
+                BackColor = Color.Transparent,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Size = new Size(42, 42),
-                Location = new Point(0, 8)
+                Size = new Size(46, 46)
             };
-            lblAvatar.Paint += (s, e) => UiHelpers.ApplyRoundedRegion(lblAvatar, 21);
+            lblAvatar.Paint += Avatar_Paint;
             pnlDossier.Controls.Add(lblAvatar);
 
             lblFullName = new Label
             {
-                Text = "Select a customer from the dropdown above",
-                Font = UiKit.T.Section,
+                Text = "Select a customer from the picker",
+                Font = AppFonts.Strong(13F),
                 ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(lblAvatar.Right + 12, 6)
+                BackColor = Color.Transparent
             };
             pnlDossier.Controls.Add(lblFullName);
 
@@ -313,23 +330,23 @@ namespace CRM.winforms
                 Text = "#0",
                 Font = UiKit.T.SmallStrong,
                 ForeColor = UiKit.T.InkMuted,
-                BackColor = UiKit.T.LineSoft,
-                Padding = new Padding(6, 2, 6, 2),
+                BackColor = Color.Transparent,
                 AutoSize = true,
                 Visible = false
             };
+            lblCustomerIdBadge.Paint += Badge_Paint;
             pnlDossier.Controls.Add(lblCustomerIdBadge);
 
             lblLoyaltyBadge = new Label
             {
                 Text = "★ 0 pts",
                 Font = UiKit.T.SmallStrong,
-                ForeColor = Color.FromArgb(0xB4, 0x53, 0x09),
-                BackColor = Color.FromArgb(0xFE, 0xF3, 0xC7),
-                Padding = new Padding(6, 2, 6, 2),
+                ForeColor = Color.FromArgb(180, 83, 9),
+                BackColor = Color.Transparent,
                 AutoSize = true,
                 Visible = false
             };
+            lblLoyaltyBadge.Paint += Badge_Paint;
             pnlDossier.Controls.Add(lblLoyaltyBadge);
 
             lblContactInfo = new Label
@@ -338,70 +355,58 @@ namespace CRM.winforms
                 Font = UiKit.T.Small,
                 ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = Color.Transparent,
-                Location = new Point(lblAvatar.Right + 12, lblFullName.Bottom + 4)
+                BackColor = Color.Transparent
             };
             pnlDossier.Controls.Add(lblContactInfo);
 
-            btnCallCustomer = new SaasButton("Call", SaasButtonVariant.Secondary, "\uE717");
+            btnCallCustomer = new SaasButton("Call", SaasButtonVariant.Secondary, "\uE717") { Visible = false };
             btnCallCustomer.Click += OnCallCustomer;
-            btnCallCustomer.Visible = false;
             pnlDossier.Controls.Add(btnCallCustomer);
 
-            btnEmailCustomer = new SaasButton("Email", SaasButtonVariant.Secondary, "\uE715");
+            btnEmailCustomer = new SaasButton("Email", SaasButtonVariant.Secondary, "\uE715") { Visible = false };
             btnEmailCustomer.Click += OnEmailCustomer;
-            btnEmailCustomer.Visible = false;
             pnlDossier.Controls.Add(btnEmailCustomer);
 
-            btnIntakeRepair = new SaasButton("+ Intake repair", SaasButtonVariant.Primary, "\uE710");
+            btnIntakeRepair = new SaasButton("+ Intake repair", SaasButtonVariant.Primary, "\uE710") { Visible = false };
             btnIntakeRepair.Click += (s, e) => OpenIntakeRepairDialog();
-            btnIntakeRepair.Visible = false;
             pnlDossier.Controls.Add(btnIntakeRepair);
 
-            btnLogInteraction = new SaasButton("+ Interaction", SaasButtonVariant.Secondary, "\uE8BD");
+            btnLogInteraction = new SaasButton("+ Interaction", SaasButtonVariant.Secondary, "\uE8BD") { Visible = false };
             btnLogInteraction.Click += (s, e) => OpenLogInteractionDialog();
-            btnLogInteraction.Visible = false;
             pnlDossier.Controls.Add(btnLogInteraction);
 
-            btnScheduleFollowUp = new SaasButton("+ Follow-up", SaasButtonVariant.Secondary, "\uE823");
+            btnScheduleFollowUp = new SaasButton("+ Follow-up", SaasButtonVariant.Secondary, "\uE823") { Visible = false };
             btnScheduleFollowUp.Click += (s, e) => OpenScheduleFollowUpDialog();
-            btnScheduleFollowUp.Visible = false;
             pnlDossier.Controls.Add(btnScheduleFollowUp);
 
             card.Controls.Add(pnlDossier);
 
-            // Toolbar
-            lblGridTitle = new Label
+            // ── Toolbar ──
+            searchBox = new WorkbenchSearch
             {
-                Text = "Repair Requests",
-                Font = UiKit.T.Section,
-                ForeColor = UiKit.T.Ink,
-                AutoSize = true,
-                BackColor = Color.Transparent
+                Placeholder = "Search history records..."
             };
+            searchBox.QueryChanged += (s, e) => ApplySearch();
+
+            filterBar = new HistorySegmentedFilter(new (string, int?)[]
+            {
+                ("Repairs", 0),
+                ("Interactions", 1),
+                ("Follow-Ups", 2)
+            });
+            filterBar.SelectionChanged += (s, tag) => SetActiveSegment(tag ?? 0);
 
             lblCount = new Label
             {
                 Text = "",
                 Font = UiKit.T.Small,
-                ForeColor = UiKit.T.InkFaint,
+                ForeColor = UiKit.T.InkMuted,
                 AutoSize = true,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
 
-            segments = new SegmentedFilter(new (string, int?)[]
-            {
-                ("Repair Requests", 0),
-                ("Customer Interactions", 1),
-                ("Scheduled Follow-Ups", 2)
-            });
-            segments.SelectionChanged += (s, e) => SetActiveSegment(segments.Selected ?? 0);
-
-            search = new SearchBox { PlaceholderText = "Search history... (Ctrl+F)" };
-            search.Inner.TextChanged += (s, e) => ApplySearch();
-            _tips.SetToolTip(search, "Search records (Ctrl+F, Esc to clear)");
-
-            // Grids
+            // ── Grids ──
             dgvRepairs = MakeGrid();
             dgvInteractions = MakeGrid();
             dgvFollowUps = MakeGrid();
@@ -411,37 +416,41 @@ namespace CRM.winforms
             HookGridEvents(dgvInteractions, 1);
             HookGridEvents(dgvFollowUps, 2);
 
-            state = new StateView { Visible = true };
-            state.Show("\uE77B", "Customer Service Dossier", "Select a customer from the dropdown above to load their complete repair tickets, inquiries, and follow-up history.");
+            emptyState = new WorkbenchState { Visible = true };
+            emptyState.Show("\uE77B", "Customer service dossier",
+                "Select a customer from the picker to load their complete repair tickets, inquiries, and follow-up history.");
 
             pager = new TablePagination();
             pager.PageChanged += (s, e) => ApplySearch(resetPage: false);
 
-            card.Controls.Add(lblGridTitle);
+            card.Controls.Add(searchBox);
+            card.Controls.Add(filterBar);
             card.Controls.Add(lblCount);
-            card.Controls.Add(segments);
-            card.Controls.Add(search);
             card.Controls.Add(dgvRepairs);
             card.Controls.Add(dgvInteractions);
             card.Controls.Add(dgvFollowUps);
-            card.Controls.Add(state);
+            card.Controls.Add(emptyState);
             card.Controls.Add(pager);
 
             Controls.Add(card);
 
             Resize += (s, e) => LayoutUi();
+            LayoutUi();
         }
 
-        // ═══════════ HAIRLINE UNDER HEADER ═══════════
-
-        protected override void OnPaint(PaintEventArgs e)
+        private KpiTile AddTile(string label, string number, string sub, Color accent, string glyph)
         {
-            base.OnPaint(e);
-            UiKit.Quality(e.Graphics);
+            var t = new KpiTile();
+            t.Set(label, number, sub, accent, glyph);
+            _tiles.Add(t);
+            Controls.Add(t);
+            return t;
+        }
 
-            int y = lblSubtitle.Bottom + UiKit.T.S4;
-            using var pen = new Pen(UiKit.T.Line, 1);
-            e.Graphics.DrawLine(pen, 0, y, Width, y);
+        private void SelectSegment(int index)
+        {
+            filterBar.SetKey(index);
+            SetActiveSegment(index);
         }
 
         // ═══════════ KEYBOARD ═══════════
@@ -458,21 +467,12 @@ namespace CRM.winforms
                     return true;
 
                 case Keys.Control | Keys.F:
-                    search.Inner.Focus();
-                    search.Inner.SelectAll();
+                    searchBox.Focus();
                     return true;
 
                 case Keys.Control | Keys.N:
                     OpenIntakeRepairDialog();
                     return true;
-
-                case Keys.Escape:
-                    if (search.Inner.Text.Length > 0)
-                    {
-                        search.Inner.Clear();
-                        return true;
-                    }
-                    break;
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
@@ -483,98 +483,143 @@ namespace CRM.winforms
         {
             if (Width <= 0 || Height <= 0) return;
 
-            // ── Header ──
-            lblTitle.Location = new Point(0, 0);
-            int subtitleY = lblTitle.PreferredHeight + 6;
-            lblSubtitle.Location = new Point(1, subtitleY);
+            int pad = UiKit.T.S6;
+            int contentW = Math.Max(760, Width - pad * 2);
 
-            // Right header controls: [cmbCustomer] [btnReload] [btnAdd]
-            btnAdd.Size = new Size(btnAdd.PreferredWidth, UiKit.T.ButtonHeight);
-            btnAdd.Location = new Point(Width - btnAdd.Width, 2);
+            // Header
+            lblTitle.Location = new Point(pad, pad);
 
-            btnReload.Size = new Size(btnReload.PreferredWidth, UiKit.T.ButtonHeight);
-            btnReload.Location = new Point(btnAdd.Left - btnReload.Width - UiKit.T.S2, 2);
+            int btnY = pad;
+            btnAdd.Location = new Point(pad + contentW - btnAdd.Width, btnY);
+            btnReload.Location = new Point(btnAdd.Left - btnReload.Width - 10, btnY);
 
-            int cmbW = Math.Min(380, Math.Max(260, btnReload.Left - lblTitle.Right - UiKit.T.S4));
-            cmbCustomer.Size = new Size(cmbW, UiKit.T.ButtonHeight);
-            cmbCustomer.Location = new Point(btnReload.Left - cmbW - UiKit.T.S2, 2 + (UiKit.T.ButtonHeight - cmbCustomer.Height) / 2);
+            int pickerW = Math.Max(280, Math.Min(380, btnReload.Left - pad - 340));
+            customerPicker.Size = new Size(pickerW, 34);
+            customerPicker.Location = new Point(btnReload.Left - pickerW - 10, btnY + 1);
 
-            int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
+            lblSummary.Location = new Point(pad + 1, lblTitle.Bottom + 6);
 
-            // ── Metric strip ──
-            int stripTop = dividerY + UiKit.T.S5;
-            int stripH = Math.Max(UiKit.T.StripHeight, strip.PreferredContentHeight());
-            strip.Location = new Point(0, stripTop);
-            strip.Size = new Size(Width, stripH);
+            int y = lblSummary.Bottom + 22;
 
-            // ── Workbench card ──
-            int cardTop = stripTop + stripH + UiKit.T.S5;
-            int cardHeight = Math.Max(240, Height - cardTop);
+            // KPI tiles
+            int tileCols = contentW >= 1100 ? 4 : contentW >= 760 ? 2 : 1;
+            int tileGap = 16;
+            int tileW = (contentW - (tileCols - 1) * tileGap) / tileCols;
 
-            card.Location = new Point(0, cardTop);
-            card.Size = new Size(Width, cardHeight);
+            int rowMaxH = 0;
+            for (int i = 0; i < _tiles.Count; i++)
+            {
+                int col = i % tileCols;
+                if (col == 0 && i > 0)
+                {
+                    y += rowMaxH + tileGap;
+                    rowMaxH = 0;
+                }
+                int tx = pad + col * (tileW + tileGap);
+                int th = _tiles[i].HeightFor(tileW);
+                _tiles[i].SetBounds(tx, y, tileW, th);
+                rowMaxH = Math.Max(rowMaxH, th);
+            }
+            y += rowMaxH + 24;
 
-            const int cp = UiKit.T.S5;
+            // Card
+            int cardPad = UiKit.T.S6;
+            int cardH = Math.Max(340, Height - y - pad);
+            card.SetBounds(pad, y, contentW, cardH);
 
-            // Dossier Profile Banner
-            int dossierH = 74;
-            pnlDossier.Location = new Point(cp, cp);
-            pnlDossier.Size = new Size(card.Width - cp * 2, dossierH);
+            int innerW = contentW - cardPad * 2;
 
-            lblAvatar.Location = new Point(0, (dossierH - lblAvatar.Height) / 2);
-            lblFullName.Location = new Point(lblAvatar.Right + 12, 10);
-            lblCustomerIdBadge.Location = new Point(lblFullName.Right + 8, 12);
-            lblLoyaltyBadge.Location = new Point(lblCustomerIdBadge.Right + 6, 12);
+            // Dossier banner
+            pnlDossier.SetBounds(cardPad, cardPad, innerW, 84);
 
-            lblContactInfo.Location = new Point(lblAvatar.Right + 12, lblFullName.Bottom + 6);
+            // Dossier layout
+            lblAvatar.Location = new Point(0, (pnlDossier.Height - lblAvatar.Height) / 2);
+            lblFullName.Location = new Point(lblAvatar.Right + 14, 14);
+            lblCustomerIdBadge.Location = new Point(lblFullName.Right + 10, lblFullName.Top + 4);
+            lblLoyaltyBadge.Location = new Point(lblCustomerIdBadge.Right + 8, lblFullName.Top + 4);
+            lblContactInfo.Location = new Point(lblAvatar.Right + 14, lblFullName.Bottom + 6);
 
-            // Dossier action buttons (right-to-left)
-            int btnX = pnlDossier.Width;
+            // Right-aligned action buttons inside the dossier
+            int btnRight = pnlDossier.Width;
             foreach (var b in new[] { btnScheduleFollowUp, btnLogInteraction, btnIntakeRepair, btnEmailCustomer, btnCallCustomer })
             {
                 if (!b.Visible) continue;
-                b.Size = new Size(b.PreferredWidth, UiKit.T.ButtonHeight - 4);
-                btnX -= b.Width + UiKit.T.S2;
-                b.Location = new Point(btnX, (dossierH - b.Height) / 2);
+                b.Size = new Size(b.PreferredWidth, 32);
+                btnRight -= b.Width + 8;
+                b.Location = new Point(btnRight, (pnlDossier.Height - b.Height) / 2);
             }
 
-            // Hairline separator inside card
-            int toolbarY = pnlDossier.Bottom + 16;
+            // Toolbar row
+            int toolbarY = pnlDossier.Bottom + 18;
 
-            lblGridTitle.Location = new Point(cp, toolbarY);
-            lblCount.Location = new Point(lblGridTitle.Right + UiKit.T.S2,
-                                          lblGridTitle.Top + lblGridTitle.PreferredHeight - lblCount.PreferredHeight - 2);
+            int filterW = filterBar.PreferredWidth;
+            int searchW = Math.Max(240, Math.Min(440, innerW - filterW - 20));
 
-            int filterY = lblGridTitle.Bottom + TableKit.ToolbarGap;
+            searchBox.SetBounds(cardPad, toolbarY, searchW, 38);
+            filterBar.SetBounds(cardPad + innerW - filterW, toolbarY + 1, filterW, 36);
 
-            segments.Size = new Size(segments.PreferredWidth, TableKit.ToolbarH);
-            segments.Location = new Point(cp, filterY);
+            int gridY = searchBox.Bottom + 14;
+            int footerH = pager.Visible ? TableKit.FooterH : 0;
+            int gridH = cardH - (gridY - (cardPad)) - cardPad - 26 - footerH;
+            // gridY is in card coords; use card height relative to card top
+            gridH = card.Height - gridY - cardPad - 26 - footerH;
 
-            int searchW = TableKit.SearchWidth(card.Width, segments.Width);
-            search.Size = new Size(searchW, TableKit.InputH);
-            search.Location = new Point(card.Width - cp - searchW, filterY + (TableKit.ToolbarH - TableKit.InputH) / 2);
+            var gridBounds = new Rectangle(cardPad, gridY, innerW, Math.Max(120, gridH));
 
-            int gridTop = filterY + TableKit.ToolbarH + TableKit.ToolbarGap;
-            int gridW = card.Width - cp * 2;
-            int gridH = card.Height - gridTop - cp - TableKit.FooterH;
+            dgvRepairs.SetBounds(gridBounds.X, gridBounds.Y, gridBounds.Width, gridBounds.Height);
+            dgvInteractions.SetBounds(gridBounds.X, gridBounds.Y, gridBounds.Width, gridBounds.Height);
+            dgvFollowUps.SetBounds(gridBounds.X, gridBounds.Y, gridBounds.Width, gridBounds.Height);
+            emptyState.SetBounds(gridBounds.X, gridBounds.Y, gridBounds.Width, gridBounds.Height);
 
-            pager.Location = new Point(cp, gridTop + Math.Max(0, gridH));
-            pager.Size = new Size(gridW, TableKit.FooterH);
+            if (pager.Visible)
+                pager.SetBounds(cardPad, gridBounds.Bottom, innerW, TableKit.FooterH);
 
-            if (gridW > 100 && gridH > 60)
-            {
-                dgvRepairs.Location = new Point(cp, gridTop);
-                dgvRepairs.Size = new Size(gridW, gridH);
+            lblCount.Location = new Point(cardPad, gridY - 22);
+        }
 
-                dgvInteractions.Location = new Point(cp, gridTop);
-                dgvInteractions.Size = new Size(gridW, gridH);
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            UiKit.Quality(e.Graphics);
 
-                dgvFollowUps.Location = new Point(cp, gridTop);
-                dgvFollowUps.Size = new Size(gridW, gridH);
+            // hairline under the picker row
+            int y = lblSummary.Bottom + 14;
+            using var pen = new Pen(UiKit.T.LineSoft, 1);
+            e.Graphics.DrawLine(pen, UiKit.T.S6, y, Width - UiKit.T.S6, y);
+        }
 
-                state.Location = new Point(cp, gridTop);
-                state.Size = new Size(gridW, gridH + TableKit.FooterH);
-            }
+        // ═══════════ DOSSIER BANNER PAINT ═══════════
+
+        private void Avatar_Paint(object? sender, PaintEventArgs e)
+        {
+            UiKit.Quality(e.Graphics);
+            var lbl = (Label)sender!;
+            var bg = AvatarColor(lblFullName.Text);
+            UiKit.FillRounded(e.Graphics, new Rectangle(0, 0, lbl.Width - 1, lbl.Height - 1), 23, bg);
+            UiKit.Text(e.Graphics, lbl.Text, lbl.Font, Color.White,
+                new Rectangle(0, 0, lbl.Width, lbl.Height), UiKit.Center);
+        }
+
+        private void Badge_Paint(object? sender, PaintEventArgs e)
+        {
+            UiKit.Quality(e.Graphics);
+            var lbl = (Label)sender!;
+            Color bg = lbl == lblLoyaltyBadge
+                ? Color.FromArgb(254, 243, 199)
+                : UiKit.T.LineSoft;
+
+            var r = new Rectangle(0, 0, lbl.Width - 1, lbl.Height - 1);
+            UiKit.FillRounded(e.Graphics, r, r.Height / 2, bg);
+            UiKit.Text(e.Graphics, lbl.Text, lbl.Font, lbl.ForeColor, r, UiKit.Center);
+        }
+
+        private void Dossier_Paint(object? sender, PaintEventArgs e)
+        {
+            UiKit.Quality(e.Graphics);
+
+            // hairline above and below the dossier to separate it from the toolbar
+            using var pen = new Pen(UiKit.T.LineSoft, 1);
+            e.Graphics.DrawLine(pen, 0, pnlDossier.Height - 1, pnlDossier.Width, pnlDossier.Height - 1);
         }
 
         // ═══════════ SEGMENTS & TABS ═══════════
@@ -584,23 +629,6 @@ namespace CRM.winforms
             dgvRepairs.Visible = (index == 0);
             dgvInteractions.Visible = (index == 1);
             dgvFollowUps.Visible = (index == 2);
-
-            lblGridTitle.Text = index switch
-            {
-                0 => "Repair Requests",
-                1 => "Customer Interactions",
-                2 => "Scheduled Follow-Ups",
-                _ => "History Records"
-            };
-
-            // Sync metric strip highlight
-            strip.SelectIndex(index switch
-            {
-                0 => 0,
-                1 => 2,
-                2 => 3,
-                _ => 0
-            });
 
             ApplySearch();
             LayoutUi();
@@ -612,7 +640,7 @@ namespace CRM.winforms
         {
             _currentHistory = null;
             lblAvatar.Text = "C";
-            lblFullName.Text = "Select a customer from the dropdown above";
+            lblFullName.Text = "Select a customer from the picker";
             lblCustomerIdBadge.Visible = false;
             lblLoyaltyBadge.Visible = false;
             lblContactInfo.Text = "No customer dossier selected";
@@ -623,49 +651,48 @@ namespace CRM.winforms
             btnLogInteraction.Visible = false;
             btnScheduleFollowUp.Visible = false;
 
-            strip.SetValue(0, 0);
-            strip.SetValue(1, 0);
-            strip.SetValue(2, 0);
-            strip.SetValue(3, 0);
+            tileRepairs.Set("TOTAL REPAIRS", "0", "All repair tickets for this customer", AppTheme.Primary, "\uE9D5");
+            tileActiveBench.Set("ACTIVE BENCH", "0", "Open tickets still in progress", Color.FromArgb(59, 130, 246), "\uE9F5");
+            tileInteractions.Set("INTERACTIONS", "0", "Inquiries, concerns, reviews", AppTheme.Warning, "\uE8BD");
+            tileFollowUps.Set("FOLLOW-UPS", "0", "Scheduled and completed outreaches", AppTheme.Success, "\uE823");
 
             dgvRepairs.Rows.Clear();
             dgvInteractions.Rows.Clear();
             dgvFollowUps.Rows.Clear();
 
-            state.Show("\uE77B", "Customer Service Dossier", "Select a customer from the dropdown above to load their complete repair tickets, inquiries, and follow-up history.");
-            state.Visible = true;
+            emptyState.Show("\uE77B", "Customer service dossier",
+                "Select a customer from the picker to load their complete repair tickets, inquiries, and follow-up history.");
+            emptyState.Visible = true;
             dgvRepairs.Visible = false;
             dgvInteractions.Visible = false;
             dgvFollowUps.Visible = false;
+
+            Invalidate();
         }
 
         private async Task FetchAndDisplayHistory(int customerId)
         {
-            state.ShowLoading("Loading history…", "Fetching this customer's dossier.");
+            emptyState.Show("\uE77B", "Loading history…", "Fetching this customer's dossier.");
+            emptyState.Visible = true;
             dgvRepairs.Visible = false;
             dgvInteractions.Visible = false;
             dgvFollowUps.Visible = false;
+
             try
             {
                 var data = await _api.GetCustomerHistoryAsync(customerId);
                 if (data == null)
                 {
-                    state.Show("\uE77B", "Customer Not Found", $"No history records found for customer #{customerId}.");
-                    state.Visible = true;
-                    dgvRepairs.Visible = false;
-                    dgvInteractions.Visible = false;
-                    dgvFollowUps.Visible = false;
+                    emptyState.Show("\uE77B", "Customer not found",
+                        $"No history records found for customer #{customerId}.");
                     return;
                 }
 
                 _currentHistory = data;
 
-                // Initials
                 string initials = "C";
-                if (!string.IsNullOrWhiteSpace(data.FirstName))
-                    initials = data.FirstName[0].ToString().ToUpper();
-                if (!string.IsNullOrWhiteSpace(data.LastName))
-                    initials += data.LastName[0].ToString().ToUpper();
+                if (!string.IsNullOrWhiteSpace(data.FirstName)) initials = data.FirstName[0].ToString().ToUpper();
+                if (!string.IsNullOrWhiteSpace(data.LastName)) initials += data.LastName[0].ToString().ToUpper();
                 lblAvatar.Text = initials;
 
                 lblFullName.Text = data.FullName;
@@ -678,9 +705,9 @@ namespace CRM.winforms
                 string phone = !string.IsNullOrWhiteSpace(data.Phone) ? data.Phone : "No phone";
                 string email = !string.IsNullOrWhiteSpace(data.Email) ? data.Email : "No email";
                 string address = !string.IsNullOrWhiteSpace(data.FullAddress)
-                    ? $" · {data.FullAddress}"
-                    : (!string.IsNullOrWhiteSpace(data.Address) ? $" · {data.Address}" : "");
-                string since = $" · Member since {data.CreatedAt:MMM yyyy}";
+                    ? $"  ·  {data.FullAddress}"
+                    : (!string.IsNullOrWhiteSpace(data.Address) ? $"  ·  {data.Address}" : "");
+                string since = $"  ·  Member since {data.CreatedAt:MMM yyyy}";
                 lblContactInfo.Text = $"{phone}  ·  {email}{address}{since}";
 
                 btnCallCustomer.Visible = !string.IsNullOrWhiteSpace(data.Phone);
@@ -689,23 +716,40 @@ namespace CRM.winforms
                 btnLogInteraction.Visible = true;
                 btnScheduleFollowUp.Visible = true;
 
-                // Metrics
                 int activeJobs = data.Repairs.Count(r => r.Status != 3 && r.Status != 4);
-                strip.SetValue(0, data.Repairs.Count);
-                strip.SetValue(1, activeJobs);
-                strip.SetValue(2, data.Interactions.Count);
-                strip.SetValue(3, data.FollowUps.Count);
+                int totalRepairs = data.Repairs.Count;
+
+                tileRepairs.Set("TOTAL REPAIRS", totalRepairs.ToString(),
+                    "All repair tickets for this customer", AppTheme.Primary, "\uE9D5");
+                tileActiveBench.Set("ACTIVE BENCH", activeJobs.ToString(),
+                    "Open tickets still in progress", Color.FromArgb(59, 130, 246), "\uE9F5");
+                tileInteractions.Set("INTERACTIONS", data.Interactions.Count.ToString(),
+                    "Inquiries, concerns, reviews", AppTheme.Warning, "\uE8BD");
+                tileFollowUps.Set("FOLLOW-UPS", data.FollowUps.Count.ToString(),
+                    "Scheduled and completed outreaches", AppTheme.Success, "\uE823");
+
+                lblSummary.Text =
+                    $"{data.FullName}  ·  {totalRepairs} repairs  ·  {activeJobs} on bench  ·  {data.Interactions.Count} interactions  ·  {data.FollowUps.Count} follow-ups";
+
+                filterBar.UpdateCounts(
+                    (0, totalRepairs),
+                    (1, data.Interactions.Count),
+                    (2, data.FollowUps.Count));
 
                 ApplySearch();
                 LayoutUi();
             }
             catch (Exception ex)
             {
-                state.Show("\uE783", "Failed to Load History", ex.Message);
-                state.Visible = true;
+                emptyState.Show("\uE783", "Failed to load history", ex.Message);
+                emptyState.Visible = true;
                 dgvRepairs.Visible = false;
                 dgvInteractions.Visible = false;
                 dgvFollowUps.Visible = false;
+
+                SaasToast.Show(FindForm(),
+                    $"Couldn't load customer history: {ex.Message}",
+                    ToastKind.Danger);
             }
         }
 
@@ -716,14 +760,14 @@ namespace CRM.winforms
             if (resetPage) pager.Reset();
             if (_currentHistory == null)
             {
-                state.Visible = true;
+                emptyState.Visible = true;
                 return;
             }
 
-            string q = search.Inner.Text.Trim();
-            int selectedTab = segments.Selected ?? 0;
+            string q = (searchBox.Query ?? "").Trim();
+            int selectedTab = filterBar.SelectedTag ?? 0;
 
-            if (selectedTab == 0) // Repairs
+            if (selectedTab == 0)
             {
                 var repairs = _currentHistory.Repairs.AsEnumerable();
                 if (!string.IsNullOrEmpty(q))
@@ -739,33 +783,32 @@ namespace CRM.winforms
                 var list = repairs.ToList();
                 pager.SetTotal(list.Count);
                 var page = pager.Slice(list);
-                lblCount.Text = TableKit.FormatCount(list.Count, _currentHistory.Repairs.Count);
+                lblCount.Text = $"Showing {list.Count} of {_currentHistory.Repairs.Count} repairs";
 
                 dgvRepairs.Rows.Clear();
                 foreach (var r in page)
                 {
                     int idx = dgvRepairs.Rows.Add(
-                        r.PriorityText,
-                        r.RequestNumber,
-                        r.DeviceModel,
-                        r.IssueDescription,
-                        r.StatusText,
+                        r.PriorityText, r.RequestNumber, r.DeviceModel,
+                        r.IssueDescription, r.StatusText,
                         r.RequestDate.ToString("MMM d, yyyy"),
-                        r.CostDisplay,
-                        ""
-                    );
+                        r.CostDisplay, "");
                     dgvRepairs.Rows[idx].Tag = r;
                 }
                 dgvRepairs.ClearSelection();
 
                 bool hasData = list.Count > 0;
                 dgvRepairs.Visible = hasData;
-                state.Visible = !hasData;
-                if (hasData) state.Clear();
+                emptyState.Visible = !hasData;
+
+                if (hasData) emptyState.Clear();
                 else
-                    state.Show("\uE9D9", "No Repair Requests", string.IsNullOrEmpty(q) ? "This customer has no recorded repair orders yet." : $"No repair requests match \"{q}\".");
+                    emptyState.Show("\uE9D9", "No repair requests",
+                        string.IsNullOrEmpty(q)
+                            ? "This customer has no recorded repair orders yet."
+                            : $"No repair requests match \u201c{q}\u201d.");
             }
-            else if (selectedTab == 1) // Interactions
+            else if (selectedTab == 1)
             {
                 var interactions = _currentHistory.Interactions.AsEnumerable();
                 if (!string.IsNullOrEmpty(q))
@@ -781,31 +824,30 @@ namespace CRM.winforms
                 var list = interactions.ToList();
                 pager.SetTotal(list.Count);
                 var page = pager.Slice(list);
-                lblCount.Text = TableKit.FormatCount(list.Count, _currentHistory.Interactions.Count);
+                lblCount.Text = $"Showing {list.Count} of {_currentHistory.Interactions.Count} interactions";
 
                 dgvInteractions.Rows.Clear();
                 foreach (var i in page)
                 {
                     int idx = dgvInteractions.Rows.Add(
-                        i.TypeText,
-                        i.Subject,
-                        i.Notes,
-                        i.StatusText,
-                        i.InteractionDate.ToString("MMM d, yyyy"),
-                        ""
-                    );
+                        i.TypeText, i.Subject, i.Notes, i.StatusText,
+                        i.InteractionDate.ToString("MMM d, yyyy"), "");
                     dgvInteractions.Rows[idx].Tag = i;
                 }
                 dgvInteractions.ClearSelection();
 
                 bool hasData = list.Count > 0;
                 dgvInteractions.Visible = hasData;
-                state.Visible = !hasData;
-                if (hasData) state.Clear();
+                emptyState.Visible = !hasData;
+
+                if (hasData) emptyState.Clear();
                 else
-                    state.Show("\uE8BD", "No Interactions", string.IsNullOrEmpty(q) ? "No inquiries, complaints, or reviews logged for this customer." : $"No interactions match \"{q}\".");
+                    emptyState.Show("\uE8BD", "No interactions",
+                        string.IsNullOrEmpty(q)
+                            ? "No inquiries, complaints, or reviews logged for this customer."
+                            : $"No interactions match \u201c{q}\u201d.");
             }
-            else if (selectedTab == 2) // Follow-Ups
+            else
             {
                 var followUps = _currentHistory.FollowUps.AsEnumerable();
                 if (!string.IsNullOrEmpty(q))
@@ -820,109 +862,170 @@ namespace CRM.winforms
                 var list = followUps.ToList();
                 pager.SetTotal(list.Count);
                 var page = pager.Slice(list);
-                lblCount.Text = TableKit.FormatCount(list.Count, _currentHistory.FollowUps.Count);
+                lblCount.Text = $"Showing {list.Count} of {_currentHistory.FollowUps.Count} follow-ups";
 
                 dgvFollowUps.Rows.Clear();
                 foreach (var f in page)
                 {
                     int idx = dgvFollowUps.Rows.Add(
-                        f.ChannelText,
-                        f.Subject,
-                        f.Notes,
-                        f.StatusText,
-                        f.ScheduledAt.ToString("MMM d, HH:mm"),
-                        ""
-                    );
+                        f.ChannelText, f.Subject, f.Notes, f.StatusText,
+                        f.ScheduledAt.ToString("MMM d, HH:mm"), "");
                     dgvFollowUps.Rows[idx].Tag = f;
                 }
                 dgvFollowUps.ClearSelection();
 
                 bool hasData = list.Count > 0;
                 dgvFollowUps.Visible = hasData;
-                state.Visible = !hasData;
-                if (hasData) state.Clear();
+                emptyState.Visible = !hasData;
+
+                if (hasData) emptyState.Clear();
                 else
-                    state.Show("\uE823", "No Follow-Ups", string.IsNullOrEmpty(q) ? "No scheduled or completed follow-ups for this customer." : $"No follow-up tasks match \"{q}\".");
+                    emptyState.Show("\uE823", "No follow-ups",
+                        string.IsNullOrEmpty(q)
+                            ? "No scheduled or completed follow-ups for this customer."
+                            : $"No follow-up tasks match \u201c{q}\u201d.");
             }
         }
 
-        // ═══════════ GRID INITIALIZATION & STYLING ═══════════
+        // ═══════════ GRID INIT & STYLING ═══════════
 
         private static DataGridView MakeGrid()
         {
             var g = new DataGridView();
-            TableKit.StyleGrid(g);
+            typeof(DataGridView)
+                .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(g, true);
+
+            g.AutoGenerateColumns = false;
+            g.AllowUserToAddRows = false;
+            g.AllowUserToDeleteRows = false;
+            g.AllowUserToResizeRows = false;
+            g.RowHeadersVisible = false;
+            g.ReadOnly = true;
+            g.MultiSelect = false;
+            g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            g.BackgroundColor = UiKit.T.Surface;
+            g.BorderStyle = BorderStyle.None;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
+            g.GridColor = UiKit.T.LineSoft;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            g.EnableHeadersVisualStyles = false;
+            g.ScrollBars = ScrollBars.Both;
+            g.RowTemplate.Height = 56;
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            g.ColumnHeadersHeight = 46;
+
+            g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
+            g.ColumnHeadersDefaultCellStyle.ForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
+            g.ColumnHeadersDefaultCellStyle.Font = UiKit.T.SmallStrong;
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+
+            g.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            g.DefaultCellStyle.ForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Font = UiKit.T.Body;
+            g.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
+            g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
+            g.DefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
+            g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+
+            g.CellToolTipTextNeeded += (s, e) =>
+            {
+                if (e.RowIndex < 0 || e.RowIndex >= g.RowCount || e.ColumnIndex < 0) return;
+                var v = Convert.ToString(g.Rows[e.RowIndex].Cells[e.ColumnIndex].Value);
+                if (!string.IsNullOrWhiteSpace(v)) e.ToolTipText = v;
+            };
+
             return g;
         }
 
         private void InitGridColumns()
         {
-            // ── Repairs Grid Columns ──
-            dgvRepairs.AutoGenerateColumns = false;
+            void AddText(DataGridView g, string name, string header, int width, bool fill = false)
+            {
+                var c = new DataGridViewTextBoxColumn
+                {
+                    Name = name,
+                    HeaderText = header,
+                    Width = width,
+                    SortMode = DataGridViewColumnSortMode.NotSortable
+                };
+                if (fill)
+                {
+                    c.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                    c.MinimumWidth = 200;
+                }
+                g.Columns.Add(c);
+            }
+
+            // Repairs
             dgvRepairs.Columns.Clear();
-            var colRepPriority = new DataGridViewTextBoxColumn { Name = "Priority", HeaderText = "Priority", Width = 105 };
-            var colRepTicket = new DataGridViewTextBoxColumn { Name = "Ticket", HeaderText = "Ticket #", Width = 120 };
-            var colRepDevice = new DataGridViewTextBoxColumn { Name = "Device", HeaderText = "Device Model", Width = 220 };
-            var colRepIssue = new DataGridViewTextBoxColumn { Name = "Issue", HeaderText = "Issue Description", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 200 };
-            var colRepStatus = new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", Width = 120 };
-            var colRepDate = new DataGridViewTextBoxColumn { Name = "Date", HeaderText = "Intake Date", Width = 140 };
-            var colRepCost = new DataGridViewTextBoxColumn { Name = "Cost", HeaderText = "Cost", Width = 110 };
-            colRepCost.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            colRepCost.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
-            var colRepActions = new DataGridViewTextBoxColumn { Name = ColActions, HeaderText = "", Width = TableKit.ActionWidth };
+            AddText(dgvRepairs, "Priority", "PRIORITY", 120);
+            AddText(dgvRepairs, "Ticket", "TICKET", 140);
+            AddText(dgvRepairs, "Device", "DEVICE", 220);
+            AddText(dgvRepairs, "Issue", "ISSUE & NOTES", 0, true);
+            AddText(dgvRepairs, "Status", "STATUS", 140);
+            AddText(dgvRepairs, "Date", "INTAKE", 130);
+            AddText(dgvRepairs, "Cost", "COST", 110);
+            dgvRepairs.Columns["Cost"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            dgvRepairs.Columns["Cost"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+            dgvRepairs.Columns.Add(ActionsCol());
 
-            dgvRepairs.Columns.AddRange(colRepPriority, colRepTicket, colRepDevice, colRepIssue, colRepStatus, colRepDate, colRepCost, colRepActions);
-
-            // ── Interactions Grid Columns ──
-            dgvInteractions.AutoGenerateColumns = false;
+            // Interactions
             dgvInteractions.Columns.Clear();
-            var colIntType = new DataGridViewTextBoxColumn { Name = "Type", HeaderText = "Type", Width = 120 };
-            var colIntSubject = new DataGridViewTextBoxColumn { Name = "Subject", HeaderText = "Subject", Width = 220 };
-            var colIntNotes = new DataGridViewTextBoxColumn { Name = "Notes", HeaderText = "Conversation Notes", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 200 };
-            var colIntStatus = new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", Width = 120 };
-            var colIntDate = new DataGridViewTextBoxColumn { Name = "Date", HeaderText = "Date Logged", Width = 140 };
-            var colIntActions = new DataGridViewTextBoxColumn { Name = ColActions, HeaderText = "", Width = TableKit.ActionWidth };
+            AddText(dgvInteractions, "Type", "TYPE", 130);
+            AddText(dgvInteractions, "Subject", "SUBJECT", 220);
+            AddText(dgvInteractions, "Notes", "NOTES", 0, true);
+            AddText(dgvInteractions, "Status", "STATUS", 140);
+            AddText(dgvInteractions, "Date", "LOGGED", 130);
+            dgvInteractions.Columns.Add(ActionsCol());
 
-            dgvInteractions.Columns.AddRange(colIntType, colIntSubject, colIntNotes, colIntStatus, colIntDate, colIntActions);
-
-            // ── Follow-Ups Grid Columns ──
-            dgvFollowUps.AutoGenerateColumns = false;
+            // Follow-Ups
             dgvFollowUps.Columns.Clear();
-            var colFUpChannel = new DataGridViewTextBoxColumn { Name = "Channel", HeaderText = "Channel", Width = 110 };
-            var colFUpSubject = new DataGridViewTextBoxColumn { Name = "Subject", HeaderText = "Follow-Up Objective", Width = 220 };
-            var colFUpNotes = new DataGridViewTextBoxColumn { Name = "Notes", HeaderText = "Notes & Plan", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 200 };
-            var colFUpStatus = new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", Width = 120 };
-            var colFUpScheduled = new DataGridViewTextBoxColumn { Name = "Scheduled", HeaderText = "Scheduled For", Width = 150 };
-            var colFUpActions = new DataGridViewTextBoxColumn { Name = ColActions, HeaderText = "", Width = TableKit.ActionWidth };
+            AddText(dgvFollowUps, "Channel", "CHANNEL", 120);
+            AddText(dgvFollowUps, "Subject", "SUBJECT", 220);
+            AddText(dgvFollowUps, "Notes", "NOTES & PLAN", 0, true);
+            AddText(dgvFollowUps, "Status", "STATUS", 140);
+            AddText(dgvFollowUps, "Scheduled", "SCHEDULED", 150);
+            dgvFollowUps.Columns.Add(ActionsCol());
+        }
 
-            dgvFollowUps.Columns.AddRange(colFUpChannel, colFUpSubject, colFUpNotes, colFUpStatus, colFUpScheduled, colFUpActions);
-
-            // Consistent sorting across all history tabs (matches the workbench lists).
-            foreach (var grid in new[] { dgvRepairs, dgvInteractions, dgvFollowUps })
-                foreach (DataGridViewColumn c in grid.Columns)
-                    c.SortMode = c.Name == ColActions
-                        ? DataGridViewColumnSortMode.NotSortable
-                        : DataGridViewColumnSortMode.Automatic;
+        private static DataGridViewButtonColumn ActionsCol()
+        {
+            var btn = new DataGridViewButtonColumn
+            {
+                Name = ColActions,
+                HeaderText = "",
+                Text = "",
+                UseColumnTextForButtonValue = true,
+                Width = 56,
+                MinimumWidth = 56,
+                FlatStyle = FlatStyle.Flat,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+                SortMode = DataGridViewColumnSortMode.NotSortable
+            };
+            btn.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            btn.DefaultCellStyle.BackColor = UiKit.T.Surface;
+            btn.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
+            btn.DefaultCellStyle.Padding = new Padding(0);
+            return btn;
         }
 
         private void HookGridEvents(DataGridView dgv, int tabType)
         {
-            dgv.CellPainting += Dgv_CellPainting;
+            dgv.CellPainting += (s, e) => PaintCell(dgv, e);
+
             dgv.CellClick += (s, e) =>
             {
                 if (e.RowIndex < 0 || e.RowIndex >= dgv.RowCount) return;
-                if (dgv.Columns[e.ColumnIndex].Name == ColActions)
-                {
-                    _menuRowIndex = e.RowIndex;
-                    var r = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
-                    var menu = tabType switch
-                    {
-                        0 => _repairsMenu,
-                        1 => _interactionsMenu,
-                        _ => _followUpsMenu
-                    };
-                    menu.Show(dgv, new Point(r.Right - 180, r.Bottom));
-                }
+                if (e.ColumnIndex < 0) return;
+                if (dgv.Columns[e.ColumnIndex].Name != ColActions) return;
+
+                _menuRowIndex = e.RowIndex;
+                var r = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
+                var menu = tabType switch { 0 => _repairsMenu, 1 => _interactionsMenu, _ => _followUpsMenu };
+                menu.Show(dgv, new Point(r.Right - menu.Width, r.Bottom));
             };
 
             dgv.CellDoubleClick += (s, e) =>
@@ -930,32 +1033,31 @@ namespace CRM.winforms
                 if (e.RowIndex < 0 || e.RowIndex >= dgv.RowCount) return;
                 var row = dgv.Rows[e.RowIndex];
 
-                if (tabType == 0 && row.Tag is CustomerHistoryRepairDto rDto)
-                    OpenEditRepairDialog(rDto);
-                else if (tabType == 1 && row.Tag is CustomerHistoryInteractionDto iDto)
-                    OpenEditInteractionDialog(iDto);
-                else if (tabType == 2 && row.Tag is CustomerHistoryFollowUpDto fDto)
-                    OpenEditFollowUpDialog(fDto);
+                if (tabType == 0 && row.Tag is CustomerHistoryRepairDto rDto) OpenEditRepairDialog(rDto);
+                else if (tabType == 1 && row.Tag is CustomerHistoryInteractionDto iDto) OpenEditInteractionDialog(iDto);
+                else if (tabType == 2 && row.Tag is CustomerHistoryFollowUpDto fDto) OpenEditFollowUpDialog(fDto);
             };
 
-            dgv.CellMouseEnter += (s, e) =>
+            dgv.CellMouseMove += (s, e) =>
             {
-                if (e.RowIndex < 0) return;
-                _hoverRow = e.RowIndex;
-                dgv.InvalidateRow(e.RowIndex);
-                if (e.ColumnIndex >= 0 && dgv.Columns[e.ColumnIndex].Name == ColActions)
-                    dgv.Cursor = Cursors.Hand;
+                if (e.RowIndex != _hoverRow)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = e.RowIndex;
+                    if (old >= 0 && old < dgv.RowCount) dgv.InvalidateRow(old);
+                    if (_hoverRow >= 0 && _hoverRow < dgv.RowCount) dgv.InvalidateRow(_hoverRow);
+                }
             };
 
             dgv.CellMouseLeave += (s, e) =>
             {
-                if (e.RowIndex < 0) return;
-                _hoverRow = -1;
-                dgv.InvalidateRow(e.RowIndex);
-                dgv.Cursor = Cursors.Default;
+                if (_hoverRow >= 0 && _hoverRow < dgv.RowCount)
+                {
+                    int old = _hoverRow;
+                    _hoverRow = -1;
+                    dgv.InvalidateRow(old);
+                }
             };
-
-            dgv.MouseLeave += (s, e) => { _hoverRow = -1; dgv.Invalidate(); };
 
             dgv.KeyDown += (s, e) =>
             {
@@ -963,54 +1065,44 @@ namespace CRM.winforms
                 if (dgv.CurrentRow == null) return;
 
                 _menuRowIndex = dgv.CurrentRow.Index;
+
                 if (e.KeyCode == Keys.Enter)
                 {
                     var row = dgv.CurrentRow;
                     if (tabType == 0 && row.Tag is CustomerHistoryRepairDto rDto)
-                    {
-                        OpenEditRepairDialog(rDto);
-                        e.Handled = true;
-                        return;
-                    }
+                    { OpenEditRepairDialog(rDto); e.Handled = true; return; }
                     if (tabType == 1 && row.Tag is CustomerHistoryInteractionDto iDto)
-                    {
-                        OpenEditInteractionDialog(iDto);
-                        e.Handled = true;
-                        return;
-                    }
+                    { OpenEditInteractionDialog(iDto); e.Handled = true; return; }
                     if (tabType == 2 && row.Tag is CustomerHistoryFollowUpDto fDto)
-                    {
-                        OpenEditFollowUpDialog(fDto);
-                        e.Handled = true;
-                        return;
-                    }
+                    { OpenEditFollowUpDialog(fDto); e.Handled = true; return; }
                 }
 
                 var r = dgv.GetRowDisplayRectangle(_menuRowIndex, true);
-                var menu = tabType switch
-                {
-                    0 => _repairsMenu,
-                    1 => _interactionsMenu,
-                    _ => _followUpsMenu
-                };
-                menu.Show(dgv, new Point(r.Right - 180, r.Bottom));
+                var menu = tabType switch { 0 => _repairsMenu, 1 => _interactionsMenu, _ => _followUpsMenu };
+                menu.Show(dgv, new Point(r.Right - menu.Width, r.Bottom));
                 e.Handled = true;
             };
         }
 
         // ═══════════ CELL PAINTING ═══════════
 
-        private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
+        private void PaintCell(DataGridView dgv, DataGridViewCellPaintingEventArgs e)
         {
-            if (e.Graphics == null || sender is not DataGridView dgv) return;
+            if (e.ColumnIndex < 0) return;
             var g = e.Graphics;
+            var cell = e.CellBounds;
 
-            // Header Row
             if (e.RowIndex == -1)
             {
-                e.PaintBackground(e.CellBounds, false);
-                e.PaintContent(e.CellBounds);
-                TableKit.PaintHeaderRule(g, e.CellBounds);
+                using (var b = new SolidBrush(UiKit.T.Surface))
+                    g.FillRectangle(b, cell);
+                using (var p = new Pen(UiKit.T.Line))
+                    g.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+                UiKit.Quality(g);
+                UiKit.Text(g, Convert.ToString(e.Value) ?? "", UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1),
+                    CellText);
                 e.Handled = true;
                 return;
             }
@@ -1020,82 +1112,91 @@ namespace CRM.winforms
             string col = dgv.Columns[e.ColumnIndex].Name;
             bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
             bool hovered = e.RowIndex == _hoverRow;
+            bool focused = dgv.Focused;
 
-            Color bg = TableKit.RowBackground(e, selected, hovered);
+            Color rowBg = UiKit.T.Surface;
+            if (selected && focused) rowBg = UiKit.T.RowHover;
+            else if (selected && !focused) rowBg = UiKit.T.LineSoft;
+            else if (hovered) rowBg = UiKit.T.RowHover;
 
-            TableKit.PaintRowShell(g, e.CellBounds, bg);
+            using (var b = new SolidBrush(rowBg))
+                g.FillRectangle(b, cell);
+            using (var p = new Pen(UiKit.T.LineSoft))
+                g.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
 
             UiKit.Quality(g);
-            var r = e.CellBounds;
-            string text = e.FormattedValue?.ToString() ?? "";
 
-            // Actions Meatball Column
+            if (e.ColumnIndex == 0 && selected && focused)
+                UiKit.FillRounded(g, new Rectangle(cell.Left, cell.Top + 12, 3, cell.Height - 25), 1, AppTheme.Primary);
+
+            var rect = new Rectangle(cell.Left + CellPadX, cell.Top,
+                Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1);
+            int cy = rect.Top + rect.Height / 2;
+            string text = Convert.ToString(e.FormattedValue) ?? "";
+
             if (col == ColActions)
             {
-                TableKit.PaintActionCell(g, r, hovered);
+                int size = 30;
+                var btn = new Rectangle(rect.Right - size, cy - size / 2, size, size);
+                bool hot = hovered;
+
+                UiKit.FillRounded(g, btn, 8, hot ? UiKit.Wash(AppTheme.Primary) : Color.Transparent);
+
+                int dotR = 2, dotGap = 6, dotY = cy - dotR;
+                int startX = btn.Left + (btn.Width / 2) - dotGap;
+                using (var b = new SolidBrush(hot ? AppTheme.Primary : UiKit.T.InkMuted))
+                {
+                    g.FillEllipse(b, startX - dotR, dotY, dotR * 2, dotR * 2);
+                    g.FillEllipse(b, startX - dotR + dotGap, dotY, dotR * 2, dotR * 2);
+                    g.FillEllipse(b, startX - dotR + dotGap * 2, dotY, dotR * 2, dotR * 2);
+                }
                 e.Handled = true;
                 return;
             }
 
-            // Priority — always a pill (matches the Repairs workbench).
             if (col == "Priority")
             {
-                if (text == "Urgent" || text == "High" || text == "Medium")
+                Color accent = text switch
                 {
-                    Color accent = text switch
-                    {
-                        "Urgent" => AppTheme.Danger,
-                        "High" => AppTheme.Warning,
-                        _ => AppTheme.Primary
-                    };
-                    var size = UiKit.Measure(text, UiKit.T.SmallStrong);
-                    var pill = new Rectangle(r.Left + UiKit.T.S3, r.Top + (r.Height - 22) / 2,
-                        Math.Max(56, size.Width + 20), 22);
-                    UiKit.FillRounded(g, pill, UiKit.T.PillRadius, UiKit.Wash(accent));
-                    UiKit.Text(g, text, UiKit.T.SmallStrong, accent, pill,
-                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-                }
-                else
-                {
-                    TableKit.PaintPill(g, r, text);
-                }
-
+                    "Urgent" => AppTheme.Danger,
+                    "High" => AppTheme.Warning,
+                    "Medium" => AppTheme.Primary,
+                    _ => UiKit.T.InkMuted
+                };
+                PaintDotPill(g, rect, cy, string.IsNullOrWhiteSpace(text) ? "Low" : text, accent, UiKit.Micro);
                 e.Handled = true;
                 return;
             }
 
-            // Status Pill
             if (col == "Status")
             {
                 Color accent = text switch
                 {
                     "Completed" or "Closed" => AppTheme.Success,
-                    "In Progress" or "Scheduled" => AppTheme.Primary,
+                    "In Progress" or "Scheduled" => Color.FromArgb(59, 130, 246),
                     "Pending" or "Open" => AppTheme.Warning,
                     "Approved" => AppTheme.Primary,
                     "Rejected" or "Cancelled" => AppTheme.Danger,
                     _ => UiKit.T.InkMuted
                 };
-
-                var size = UiKit.Measure(text, UiKit.T.SmallStrong);
-                int pillW = Math.Max(56, size.Width + 20);
-                int pillH = 22;
-                var pill = new Rectangle(r.Left + UiKit.T.S3, r.Top + (r.Height - pillH) / 2, pillW, pillH);
-
-                UiKit.FillRounded(g, pill, UiKit.T.PillRadius, UiKit.Wash(accent));
-                UiKit.Text(g, text, UiKit.T.SmallStrong, accent, pill,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-
+                PaintDotPill(g, rect, cy, text, accent, UiKit.Micro);
                 e.Handled = true;
                 return;
             }
 
-            // Cost Display
+            if (col == "Date" || col == "Scheduled")
+            {
+                UiKit.Text(g, text, MonoFont, UiKit.T.InkMuted, rect, CellText);
+                e.Handled = true;
+                return;
+            }
+
             if (col == "Cost")
             {
-                UiKit.Text(g, text, UiKit.T.BodyStrong, UiKit.T.Ink,
-                    new Rectangle(r.Left, r.Top, r.Width - UiKit.T.S3, r.Height),
-                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                var textRect = new Rectangle(rect.Left, rect.Top, rect.Width, rect.Height);
+                UiKit.Text(g, string.IsNullOrWhiteSpace(text) ? "—" : text,
+                    UiKit.T.BodyStrong, UiKit.T.Ink, textRect,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | Flat);
                 e.Handled = true;
                 return;
             }
@@ -1104,45 +1205,57 @@ namespace CRM.winforms
             e.Handled = true;
         }
 
+        private static void PaintDotPill(Graphics gr, Rectangle rect, int cy, string text, Color fg, Font font)
+        {
+            int textW = MeasureW(text, font);
+            int pillW = Math.Min(rect.Width, textW + 34);
+            var pill = new Rectangle(rect.Left, cy - 12, pillW, 24);
+
+            UiKit.FillRounded(gr, pill, 12, UiKit.Wash(fg));
+            UiKit.FillRounded(gr, new Rectangle(pill.Left + 11, cy - 3, 6, 6), 3, fg);
+            UiKit.Text(gr, text, font, fg,
+                new Rectangle(pill.Left + 23, pill.Top, Math.Max(0, pill.Width - 31), pill.Height),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat);
+        }
+
         // ═══════════ CONTEXT MENUS ═══════════
 
         private void BuildMenus()
         {
-            _repairsMenu = TableKit.MakeMenu();
-            _repairsMenu.Items.Add("Edit Repair Order...", null, (s, e) =>
+            _repairsMenu = MakeMenu();
+            _repairsMenu.Items.Add("Edit repair order…").Click += (s, e) =>
             {
                 if (_menuRowIndex >= 0 && _menuRowIndex < dgvRepairs.RowCount &&
                     dgvRepairs.Rows[_menuRowIndex].Tag is CustomerHistoryRepairDto dto)
-                {
                     OpenEditRepairDialog(dto);
-                }
-            });
-            _repairsMenu.Items.Add("Open in Repair Workbench", null, (s, e) => ActionRequested?.Invoke(this, "repairs"));
-            TableKit.StyleMenuItems(_repairsMenu);
+            };
+            _repairsMenu.Items.Add("Open in repair workbench").Click += (s, e) => ActionRequested?.Invoke(this, "repairs");
 
-            _interactionsMenu = TableKit.MakeMenu();
-            _interactionsMenu.Items.Add("View / Edit Interaction...", null, (s, e) =>
+            _interactionsMenu = MakeMenu();
+            _interactionsMenu.Items.Add("View / edit interaction…").Click += (s, e) =>
             {
                 if (_menuRowIndex >= 0 && _menuRowIndex < dgvInteractions.RowCount &&
                     dgvInteractions.Rows[_menuRowIndex].Tag is CustomerHistoryInteractionDto dto)
-                {
                     OpenEditInteractionDialog(dto);
-                }
-            });
-            _interactionsMenu.Items.Add("Open in Interactions Workbench", null, (s, e) => ActionRequested?.Invoke(this, "interactions"));
-            TableKit.StyleMenuItems(_interactionsMenu);
+            };
+            _interactionsMenu.Items.Add("Open in interactions workbench").Click += (s, e) => ActionRequested?.Invoke(this, "interactions");
 
-            _followUpsMenu = TableKit.MakeMenu();
-            _followUpsMenu.Items.Add("View / Edit Follow-Up...", null, (s, e) =>
+            _followUpsMenu = MakeMenu();
+            _followUpsMenu.Items.Add("View / edit follow-up…").Click += (s, e) =>
             {
                 if (_menuRowIndex >= 0 && _menuRowIndex < dgvFollowUps.RowCount &&
                     dgvFollowUps.Rows[_menuRowIndex].Tag is CustomerHistoryFollowUpDto dto)
-                {
                     OpenEditFollowUpDialog(dto);
-                }
-            });
-            _followUpsMenu.Items.Add("Open in Follow-Ups Workbench", null, (s, e) => ActionRequested?.Invoke(this, "follow-ups"));
-            TableKit.StyleMenuItems(_followUpsMenu);
+            };
+            _followUpsMenu.Items.Add("Open in follow-ups workbench").Click += (s, e) => ActionRequested?.Invoke(this, "follow-ups");
+        }
+
+        private static ContextMenuStrip MakeMenu()
+        {
+            var m = new ContextMenuStrip { ShowImageMargin = false, Font = UiKit.T.Body };
+            m.Renderer = new QuietMenuRenderer();
+            return m;
         }
 
         // ═══════════ MODALS & ACTIONS ═══════════
@@ -1151,11 +1264,8 @@ namespace CRM.winforms
         {
             int custId = _currentHistory?.CustomerId ?? 0;
             using var dlg = new RepairRequestFormDialog(null, custId, _allCustomers);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-            {
-                if (_currentHistory != null)
-                    _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
-            }
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK && _currentHistory != null)
+                _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
         }
 
         private void OpenEditRepairDialog(CustomerHistoryRepairDto rDto)
@@ -1177,11 +1287,8 @@ namespace CRM.winforms
                 CompletionDate = rDto.CompletionDate
             };
             using var dlg = new RepairRequestFormDialog(repairDto, repairDto.CustomerId, _allCustomers);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-            {
-                if (_currentHistory != null)
-                    _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
-            }
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK && _currentHistory != null)
+                _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
         }
 
         private void OpenLogInteractionDialog()
@@ -1189,7 +1296,7 @@ namespace CRM.winforms
             if (_currentHistory == null) return;
             var prefill = new InteractionDto { CustomerId = _currentHistory.CustomerId };
             using var dlg = new InteractionFormDialog(prefill, null, _allCustomers);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK)
                 _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
         }
 
@@ -1210,11 +1317,8 @@ namespace CRM.winforms
                 InteractionDate = iDto.InteractionDate
             };
             using var dlg = new InteractionFormDialog(interDto, null, _allCustomers);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-            {
-                if (_currentHistory != null)
-                    _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
-            }
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK && _currentHistory != null)
+                _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
         }
 
         private void OpenScheduleFollowUpDialog()
@@ -1226,7 +1330,7 @@ namespace CRM.winforms
                 ScheduledAt = DateTime.Today.AddDays(1).AddHours(10)
             };
             using var dlg = new FollowUpFormDialog(prefill, _allCustomers);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK)
                 _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
         }
 
@@ -1247,11 +1351,8 @@ namespace CRM.winforms
                 CompletedAt = fDto.CompletedAt
             };
             using var dlg = new FollowUpFormDialog(fuDto, _allCustomers);
-            if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
-            {
-                if (_currentHistory != null)
-                    _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
-            }
+            if (dlg.ShowModal(FindForm()) == DialogResult.OK && _currentHistory != null)
+                _ = FetchAndDisplayHistory(_currentHistory.CustomerId);
         }
 
         private void OnCallCustomer(object? sender, EventArgs e)
@@ -1264,7 +1365,8 @@ namespace CRM.winforms
             }
             catch
             {
-                MessageBox.Show($"Phone: {_currentHistory.Phone} (Copied to clipboard)", "Customer Contact", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"Phone: {_currentHistory.Phone} (Copied to clipboard)",
+                    "Customer contact", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 
@@ -1278,27 +1380,333 @@ namespace CRM.winforms
             }
             catch
             {
-                MessageBox.Show($"Email: {_currentHistory.Email} (Copied to clipboard)", "Customer Contact", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"Email: {_currentHistory.Email} (Copied to clipboard)",
+                    "Customer contact", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 
         // ═══════════════════════════════════════════════════════════════
-        //  NESTED UI COMPONENTS (Matching CustomerListControl)
+        //  EMBEDDED KPI TILE (matches Companies / Subscriptions / Admin)
+        // ═══════════════════════════════════════════════════════════════
+
+        private sealed class KpiTile : Control
+        {
+            private const int Pad = 22;
+            private const int IconSize = 36;
+            private const int ChevronW = 16;
+            private const int MinHeight = 132;
+
+            private const TextFormatFlags One = TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+            private const TextFormatFlags Wrapped = One | TextFormatFlags.WordBreak;
+
+            private static readonly Font[] NumFonts =
+            {
+                AppFonts.Strong(26F),
+                AppFonts.Strong(22F),
+                AppFonts.Strong(18F),
+                AppFonts.Strong(15F),
+                AppFonts.Strong(12F)
+            };
+
+            private string _label = "";
+            private string _number = "0";
+            private string _sub = "";
+            private Color _accent = AppTheme.Primary;
+            private string _glyph = "";
+            private bool _hover;
+            private bool _down;
+
+            public KpiTile()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+                TabStop = true;
+                Cursor = Cursors.Hand;
+            }
+
+            public void Set(string label, string number, string sub, Color accent, string glyph)
+            {
+                _label = label;
+                _number = number;
+                _sub = sub;
+                _accent = accent;
+                _glyph = glyph;
+                AccessibleName = $"{label}: {number}. {sub}";
+                Invalidate();
+            }
+
+            public int HeightFor(int width) =>
+                string.IsNullOrEmpty(_label) ? MinHeight : Math.Max(MinHeight, Measure(width).Total);
+
+            private static int TextH(string text, Font font, int width, bool wrap)
+            {
+                if (string.IsNullOrEmpty(text)) return font.Height;
+                var size = TextRenderer.MeasureText(text, font,
+                    new Size(Math.Max(10, width - 4), int.MaxValue), wrap ? Wrapped : One);
+                return Math.Max(font.Height, size.Height) + 2;
+            }
+
+            private (Font NumFont, bool NumWrap, string Main, int TopH, int NumH, int CapH, int Total) Measure(int width)
+            {
+                int inner = Math.Max(40, width - Pad * 2);
+                int labelW = Math.Max(40, inner - IconSize - 12 - ChevronW);
+
+                int labelH = TextH(_label, UiKit.T.SmallStrong, labelW, true);
+                int topH = Math.Max(IconSize, labelH);
+
+                Font numFont = NumFonts[^1];
+                bool numWrap = true;
+                foreach (var f in NumFonts)
+                {
+                    var w = TextRenderer.MeasureText(_number, f, new Size(int.MaxValue, int.MaxValue), One).Width;
+                    if (w <= inner - 4) { numFont = f; numWrap = false; break; }
+                }
+
+                int numH = TextH(_number, numFont, inner, numWrap);
+                int capH = TextH(_sub, UiKit.T.Small, inner, true);
+
+                int total = Pad + topH + 14 + numH + 6 + capH + Pad;
+                return (numFont, numWrap, _number, topH, numH, capH, total);
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = _down = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnMouseDown(MouseEventArgs e) { _down = true; Focus(); Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+
+                using (var bg = new SolidBrush(AppTheme.Background))
+                    g.FillRectangle(bg, ClientRectangle);
+
+                bool loading = string.IsNullOrEmpty(_label);
+                Color accent = loading ? UiKit.T.InkFaint : _accent;
+
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius,
+                    _down && !loading ? UiKit.Wash(accent) : UiKit.T.Surface,
+                    _hover && !loading ? accent : UiKit.T.Line);
+
+                if (loading)
+                {
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad, IconSize, IconSize), 10, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad + IconSize + 12, Pad + 12, Math.Max(20, Width / 3), 12), 4, UiKit.T.LineSoft);
+                    UiKit.FillRounded(g, new Rectangle(Pad, Pad + 56, Math.Max(20, Width / 2), 26), 4, UiKit.T.LineSoft);
+                    return;
+                }
+
+                var m = Measure(Width);
+                int inner = Width - Pad * 2;
+
+                var iconRect = new Rectangle(Pad, Pad + (m.TopH - IconSize) / 2, IconSize, IconSize);
+                UiKit.FillRounded(g, iconRect, 10, UiKit.Wash(accent));
+                using (var f = UiKit.GlyphFont(12F))
+                    UiKit.Text(g, _glyph, f, accent, iconRect, UiKit.Center);
+
+                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(Pad + IconSize + 12, Pad, inner - IconSize - 12 - ChevronW, m.TopH),
+                    Wrapped | TextFormatFlags.VerticalCenter);
+
+                using (var cf = UiKit.GlyphFont(9F))
+                    UiKit.Text(g, "\uE76C", cf, _hover ? accent : UiKit.T.InkFaint,
+                        new Rectangle(Width - Pad - ChevronW + 2, Pad + (m.TopH - 20) / 2, ChevronW, 20), UiKit.Center);
+
+                int numTop = Pad + m.TopH + 14;
+                UiKit.Text(g, m.Main, m.NumFont, UiKit.T.Ink,
+                    new Rectangle(Pad, numTop, inner, m.NumH),
+                    (m.NumWrap ? Wrapped : One) | TextFormatFlags.Top);
+
+                UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkMuted,
+                    new Rectangle(Pad, numTop + m.NumH + 6, inner, m.CapH),
+                    Wrapped | TextFormatFlags.Top);
+
+                if (Focused)
+                {
+                    var ring = ClientRectangle;
+                    ring.Inflate(-1, -1);
+                    UiKit.StrokeRounded(g, ring, UiKit.T.Radius, accent, 2f);
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        //  SEGMENTED FILTER (int? tag; parallel List<int?> for safe null)
         // ═══════════════════════════════════════════════════════════════
 
         [DesignerCategory("Code")]
-        private sealed class SurfaceCard : WorkbenchCard { }
-        [DesignerCategory("Code")]
-        private sealed class MetricStrip : WorkbenchMetrics { }
-        [DesignerCategory("Code")]
-        private sealed class SegmentedFilter : WorkbenchSegments<int?>
+        private sealed class HistorySegmentedFilter : Control
         {
-            public SegmentedFilter((string, int?)[] items) : base(items) { }
-        }
-        [DesignerCategory("Code")]
-        private sealed class SearchBox : WorkbenchSearch { }
-        [DesignerCategory("Code")]
-        private sealed class StateView : WorkbenchState { }
+            private readonly List<(string Key, int? Tag)> _items = new();
+            private readonly List<int?> _counts = new();
+            private int _selected = 0;
+            private int _hover = -1;
 
+            public event EventHandler<int?>? SelectionChanged;
+
+            public HistorySegmentedFilter((string Key, int? Tag)[] items)
+            {
+                foreach (var it in items)
+                {
+                    _items.Add(it);
+                    _counts.Add(null);
+                }
+
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = UiKit.T.Surface;
+                Cursor = Cursors.Hand;
+                Font = UiKit.T.SmallStrong;
+                Height = 36;
+            }
+
+            public int? SelectedTag => _items.Count > 0 && _selected < _items.Count ? _items[_selected].Tag : null;
+
+            public int PreferredWidth
+            {
+                get
+                {
+                    int total = 16;
+                    foreach (var item in _items)
+                    {
+                        string text = Display(item);
+                        var sz = TextRenderer.MeasureText(text, Font);
+                        total += Math.Max(104, sz.Width + 28);
+                    }
+                    return Math.Max(330, total);
+                }
+            }
+
+            public void UpdateCounts(params (int? Tag, int? Count)[] pairs)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    _counts[i] = null;
+                    foreach (var p in pairs)
+                    {
+                        if (Nullable.Equals(_items[i].Tag, p.Tag))
+                        {
+                            _counts[i] = p.Count;
+                            break;
+                        }
+                    }
+                }
+                Invalidate();
+            }
+
+            public void SetKey(int? tag)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (Nullable.Equals(_items[i].Tag, tag))
+                    {
+                        if (_selected != i)
+                        {
+                            _selected = i;
+                            Invalidate();
+                        }
+                        return;
+                    }
+                }
+            }
+
+            private string Display((string Key, int? Tag) item)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (Nullable.Equals(_items[i].Tag, item.Tag))
+                    {
+                        if (_counts[i].HasValue)
+                            return $"{item.Key} ({_counts[i]!.Value})";
+                        return item.Key;
+                    }
+                }
+                return item.Key;
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+                UiKit.FillRounded(g, new Rectangle(0, 0, Width, Height), 9, UiKit.T.LineSoft);
+
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var seg = new Rectangle(2 + i * segW, 2, segW, Height - 4);
+                    bool active = i == _selected;
+                    if (active)
+                    {
+                        UiKit.FillRounded(g, seg, 7, UiKit.T.Surface);
+                        using var pen = new Pen(UiKit.T.Line, 1);
+                        using var path = UiKit.Rounded(new Rectangle(seg.X, seg.Y, seg.Width - 1, seg.Height - 1), 7);
+                        g.DrawPath(pen, path);
+                    }
+
+                    string text = Display(_items[i]);
+                    Color fg = active ? UiKit.T.Ink : (i == _hover ? UiKit.T.Ink : UiKit.T.InkMuted);
+                    UiKit.Text(g, text, UiKit.T.SmallStrong, fg, seg,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx != _hover) { _hover = idx; Invalidate(); }
+                base.OnMouseMove(e);
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                _hover = -1; Invalidate(); base.OnMouseLeave(e);
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                if (_items.Count == 0) return;
+                int segW = (Width - 4) / _items.Count;
+                int idx = Math.Clamp((e.X - 2) / Math.Max(1, segW), 0, _items.Count - 1);
+                if (idx >= 0 && idx < _items.Count && idx != _selected)
+                {
+                    _selected = idx;
+                    Invalidate();
+                    SelectionChanged?.Invoke(this, _items[_selected].Tag);
+                }
+                base.OnMouseClick(e);
+            }
+        }
+
+        [DesignerCategory("Code")]
+        private sealed class QuietMenuRenderer : ToolStripProfessionalRenderer
+        {
+            public QuietMenuRenderer() : base(new Colors()) { RoundedEdges = false; }
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                var r = new Rectangle(4, 0, e.Item.Width - 8, e.Item.Height);
+                if (e.Item.Selected) UiKit.FillRounded(e.Graphics, r, 6, UiKit.T.RowHover);
+            }
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                using var pen = new Pen(UiKit.T.LineSoft, 1);
+                int y = e.Item.Height / 2;
+                e.Graphics.DrawLine(pen, 8, y, e.Item.Width - 8, y);
+            }
+            private sealed class Colors : ProfessionalColorTable
+            {
+                public override Color ToolStripDropDownBackground => UiKit.T.Surface;
+                public override Color MenuBorder => UiKit.T.Line;
+                public override Color MenuItemBorder => UiKit.T.Surface;
+                public override Color ImageMarginGradientBegin => UiKit.T.Surface;
+                public override Color ImageMarginGradientMiddle => UiKit.T.Surface;
+                public override Color ImageMarginGradientEnd => UiKit.T.Surface;
+            }
+        }
     }
 }

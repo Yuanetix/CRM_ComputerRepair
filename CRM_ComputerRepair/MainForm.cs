@@ -21,6 +21,8 @@ namespace CRM.winforms
         private ProfileMenuControl? _profileMenu;
         private BellMenuControl? _bellMenu;
         private Label _lblMeta = null!;
+        private readonly ApiClient _api = new();
+        private readonly System.Windows.Forms.Timer _syncPollTimer = new();
 
         private sealed record PageMeta(string Title, string Subtitle, string Group);
 
@@ -42,6 +44,7 @@ namespace CRM.winforms
             ["user-accounts"] = new("User Accounts", "Staff logins and roles", "Admin"),
             ["admin-accounts"] = new("Admin Accounts", "Administrators of the workspace", "Admin"),
             ["system-monitor"] = new("System Monitor", "Health and audit trail", "Admin"),
+            ["branching"] = new("Branch Management", "Multi-branch store synchronization, branch routing and regional operations", "Manage"),
         };
 
         public MainForm()
@@ -53,9 +56,11 @@ namespace CRM.winforms
 
             topBar.ProfileClicked += TopBar_ProfileClicked;
             topBar.BellClicked += TopBar_BellClicked;
+            topBar.SyncClicked += TopBar_SyncClicked;
             topBar.BrandClicked += (s, e) => NavigateTo("dashboard");
 
             this.Load += MainForm_Load;
+            this.FormClosed += (s, e) => _syncPollTimer.Stop();
         }
 
         private void MainForm_Load(object? sender, EventArgs e)
@@ -74,9 +79,61 @@ namespace CRM.winforms
 
             this.Text = $"Fixory — CRM for Computer Repair  ·  {displayUser} ({UserSession.Role})";
 
-            NavigateTo("dashboard");
+            string defaultKey = sidebar.KeysInOrder.Contains("dashboard") ? "dashboard" : (sidebar.KeysInOrder.FirstOrDefault() ?? "dashboard");
+            NavigateTo(defaultKey);
             Toast.Notify(this, $"Welcome back, {displayUser}.",
                 "Press Ctrl+K to jump anywhere.", ToastKind.Info);
+
+            _syncPollTimer.Interval = 12000;
+            _syncPollTimer.Tick += async (s, e) => await RefreshSyncStatusAsync();
+            _syncPollTimer.Start();
+            _ = RefreshSyncStatusAsync();
+        }
+
+        private async Task RefreshSyncStatusAsync()
+        {
+            try
+            {
+                var status = await _api.GetCloudSyncStatusAsync();
+                if (status != null && !IsDisposed && topBar != null)
+                {
+                    string tip = status.IsCloudOnline
+                        ? $"MonsterASP Cloud Database: Online\r\nServer: {status.CloudHost}\r\nDatabase: {status.CloudDatabase}\r\nStatus: {status.StatusMessage}\r\nLast Sync: {(status.LastSyncTimeUtc.HasValue ? status.LastSyncTimeUtc.Value.ToLocalTime().ToString("g") : "Never")}\r\nClick to sync now."
+                        : $"MonsterASP Cloud Database: Offline\r\n{status.StatusMessage}\r\nAll changes are safely stored in your local database and will automatically sync when reconnected.\r\nClick to retry connection.";
+
+                    topBar.UpdateSyncStatus(status.IsCloudOnline, status.PendingCount, false, tip);
+                }
+            }
+            catch { }
+        }
+
+        private async void TopBar_SyncClicked(object? sender, EventArgs e)
+        {
+            topBar.UpdateSyncStatus(false, 0, isSyncing: true, "Synchronizing with MonsterASP Cloud Database...");
+            try
+            {
+                var res = await _api.TriggerCloudSyncNowAsync();
+                if (res != null)
+                {
+                    if (res.Status?.IsCloudOnline == true)
+                    {
+                        Toast.Notify(this, "Cloud Synchronized",
+                            res.SyncedCount > 0 ? $"Pushed {res.SyncedCount} offline updates to MonsterASP cloud." : "Local and Cloud databases are in sync.",
+                            ToastKind.Success);
+                    }
+                    else
+                    {
+                        Toast.Notify(this, "Operating in Offline Mode",
+                            "MonsterASP cloud is currently unreachable. Changes are safely stored in local database.",
+                            ToastKind.Warning);
+                    }
+                }
+                await RefreshSyncStatusAsync();
+            }
+            catch (Exception ex)
+            {
+                Toast.Notify(this, "Sync Check", ex.Message, ToastKind.Warning);
+            }
         }
 
         private void BuildStatusMeta()
@@ -271,6 +328,8 @@ namespace CRM.winforms
                 page = new AdminAccountsControl { Dock = DockStyle.Fill };
             else if (key == "system-monitor")
                 page = new SystemMonitorControl { Dock = DockStyle.Fill };
+            else if (key == "branching")
+                page = new BranchingControl { Dock = DockStyle.Fill };
             else
                 page = new PlaceholderControl(GetPageTitle(key)) { Dock = DockStyle.Fill };
 
