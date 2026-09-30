@@ -285,12 +285,21 @@ public static class DatabaseSeeder
 
     private static async Task<List<LoyaltyProgram>> SeedLoyaltyProgramsAsync(MasterCrmDbContext master)
     {
+        // 1. Ensure any legacy programs are assigned to Company 1
+        var legacy = await master.LoyaltyPrograms.Where(p => p.CompanyId == null).ToListAsync();
+        foreach (var leg in legacy)
+            leg.CompanyId = 1;
+        if (legacy.Count > 0)
+            await master.SaveChangesAsync();
+
         var programs = new List<LoyaltyProgram>();
 
-        if (!await master.LoyaltyPrograms.AnyAsync(p => p.ProgramName == "Fixory Rewards Club"))
+        // 2. Company 1 (Fixory) programs
+        if (!await master.LoyaltyPrograms.AnyAsync(p => p.CompanyId == 1 && p.ProgramName == "Fixory Rewards Club"))
         {
             var p = new LoyaltyProgram
             {
+                CompanyId = 1,
                 ProgramName = "Fixory Rewards Club",
                 Description =
                     "Customers with at least 3 completed repairs and \u20b11,500 in total spending " +
@@ -317,10 +326,11 @@ public static class DatabaseSeeder
             programs.Add(p);
         }
 
-        if (!await master.LoyaltyPrograms.AnyAsync(p => p.ProgramName == "VIP Service Club"))
+        if (!await master.LoyaltyPrograms.AnyAsync(p => p.CompanyId == 1 && p.ProgramName == "VIP Service Club"))
         {
             var p = new LoyaltyProgram
             {
+                CompanyId = 1,
                 ProgramName = "VIP Service Club",
                 Description =
                     "High-value customers (\u20b110,000+ lifetime spend) get a FREE service " +
@@ -347,10 +357,11 @@ public static class DatabaseSeeder
             programs.Add(p);
         }
 
-        if (!await master.LoyaltyPrograms.AnyAsync(p => p.ProgramName == "Monthly Visitor Boost"))
+        if (!await master.LoyaltyPrograms.AnyAsync(p => p.CompanyId == 1 && p.ProgramName == "Monthly Visitor Boost"))
         {
             var p = new LoyaltyProgram
             {
+                CompanyId = 1,
                 ProgramName = "Monthly Visitor Boost",
                 Description =
                     "Customers visiting 2+ times within 60 days earn a 1.5\u00d7 points multiplier " +
@@ -377,21 +388,66 @@ public static class DatabaseSeeder
             programs.Add(p);
         }
 
-        await master.SaveChangesAsync();
-
-        // Reload seeded program ids (fresh or existing).
-        var names = programs.Select(p => p.ProgramName).ToList();
-        if (names.Count == 0)
+        // 3. For every other company in Master DB, ensure it has its OWN distinct loyalty programs!
+        var otherCompanies = await master.Companies.AsNoTracking().Where(c => c.CompanyId != 1).ToListAsync();
+        foreach (var comp in otherCompanies)
         {
-            names = new List<string>
+            bool hasPrograms = await master.LoyaltyPrograms.AnyAsync(p => p.CompanyId == comp.CompanyId);
+            if (!hasPrograms)
             {
-                "Fixory Rewards Club", "VIP Service Club", "Monthly Visitor Boost"
-            };
+                var p1 = new LoyaltyProgram
+                {
+                    CompanyId = comp.CompanyId,
+                    ProgramName = $"{comp.CompanyName} Rewards Club",
+                    Description = $"Earn 1 loyalty point per \u20b11 spent. Unlock 10% off your next repair after 3 completed visits and \u20b11,500 total spending.",
+                    PointsPerPeso = 1,
+                    DiscountPercentage = 10,
+                    MinimumSpend = 500,
+                    StartDate = DateTime.UtcNow.AddMonths(-3),
+                    EndDate = DateTime.UtcNow.AddMonths(9),
+                    PointsValidityDays = 365,
+                    RedeemPointsRequired = 500,
+                    MinTransactions = 3,
+                    MinTotalSpent = 1500,
+                    MaxInactiveDays = 120,
+                    RewardType = LoyaltyRewardType.DiscountPercent,
+                    RewardValue = 10,
+                    MaxRedemptionsPerCustomer = 4,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+                master.LoyaltyPrograms.Add(p1);
+                programs.Add(p1);
+
+                var p2 = new LoyaltyProgram
+                {
+                    CompanyId = comp.CompanyId,
+                    ProgramName = $"{comp.CompanyName} VIP Care Tier",
+                    Description = $"Exclusive tier for frequent clients (\u20b18,000+ lifetime spend). Entitled to a free annual maintenance diagnostic.",
+                    PointsPerPeso = 2,
+                    DiscountPercentage = 0,
+                    MinimumSpend = 8000,
+                    StartDate = DateTime.UtcNow.AddMonths(-6),
+                    EndDate = DateTime.UtcNow.AddMonths(6),
+                    PointsValidityDays = 365,
+                    RedeemPointsRequired = 1500,
+                    MinTransactions = 5,
+                    MinTotalSpent = 8000,
+                    MaxInactiveDays = 365,
+                    RewardType = LoyaltyRewardType.FreeService,
+                    RewardValue = 1200,
+                    MaxRedemptionsPerCustomer = 1,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+                master.LoyaltyPrograms.Add(p2);
+                programs.Add(p2);
+            }
         }
 
-        return await master.LoyaltyPrograms.AsNoTracking()
-            .Where(p => names.Contains(p.ProgramName))
-            .ToListAsync();
+        await master.SaveChangesAsync();
+
+        return await master.LoyaltyPrograms.AsNoTracking().ToListAsync();
     }
 
     // ═══════════════════════ Tenant ═══════════════════════
@@ -1189,6 +1245,7 @@ public static class DatabaseSeeder
             .ToHashSet();
 
         var toAdd = new List<CustomerLoyaltyAccount>();
+        var rng = new Random(42);
 
         foreach (var tdb in tenantDatabases)
         {
@@ -1203,9 +1260,9 @@ public static class DatabaseSeeder
                     .Where(p => p.IsPaid && !p.IsVoid)
                     .ToListAsync();
 
-                var rng = new Random(3000 + tdb.CompanyId);
+                var companyPrograms = programs.Where(p => p.CompanyId == tdb.CompanyId).ToList();
 
-                foreach (var program in programs)
+                foreach (var program in companyPrograms)
                 {
                     foreach (var cust in customers)
                     {

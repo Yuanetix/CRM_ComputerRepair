@@ -29,6 +29,8 @@ builder.Services
         options.Password.RequireNonAlphanumeric = false;
         options.Password.RequiredLength = 6;
         options.User.RequireUniqueEmail = true;
+        options.SignIn.RequireConfirmedAccount = false;
+        options.SignIn.RequireConfirmedEmail = false;
     })
     .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<MasterCrmDbContext>()
@@ -36,28 +38,70 @@ builder.Services
 
 // ─── JWT authentication ───
 var jwtSection = builder.Configuration.GetSection("Jwt");
-var signingKey = new SymmetricSecurityKey(
-    Encoding.UTF8.GetBytes(jwtSection["Key"] ?? string.Empty));
+var rawKey = jwtSection["Key"] ?? "Fixory-CRM-Signing-Key-Change-Me-2026-9F4C2B71DE73AA91E0F75";
+if (Encoding.UTF8.GetByteCount(rawKey) < 32)
+{
+    throw new InvalidOperationException("Jwt:Key must be at least 256 bits (32 bytes) long.");
+}
+var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(rawKey));
 
 builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
     .AddJwtBearer(options =>
     {
+        options.RequireHttpsMetadata = false; // Allows both HTTP (5213) and HTTPS (7042) in development
+        options.SaveToken = true;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtSection["Issuer"],
-            ValidAudience = jwtSection["Audience"],
+            ValidIssuer = jwtSection["Issuer"] ?? "Fixory",
+            ValidAudience = jwtSection["Audience"] ?? "FixoryClient",
             IssuerSigningKey = signingKey,
             RoleClaimType = System.Security.Claims.ClaimTypes.Role,
-            NameClaimType = System.Security.Claims.ClaimTypes.NameIdentifier
+            NameClaimType = System.Security.Claims.ClaimTypes.NameIdentifier,
+            ClockSkew = TimeSpan.Zero
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                if (context.Exception is SecurityTokenExpiredException)
+                {
+                    context.Response.Headers.Append("Token-Expired", "true");
+                }
+                return Task.CompletedTask;
+            }
         };
     });
 
-builder.Services.AddAuthorization();
+// ─── Authorization Policies (using AddAuthorizationBuilder) ───
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("SuperAdminOnly", policy => policy.RequireRole("Super Admin"))
+    .AddPolicy("AdminOnly", policy => policy.RequireRole("Admin", "Super Admin"))
+    .AddPolicy("ManagerOnly", policy => policy.RequireRole("Manager", "Admin", "Super Admin"))
+    .AddPolicy("StaffOnly", policy => policy.RequireRole("Staff", "Manager", "Admin", "Super Admin"));
+
+// ─── CORS ───
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
+// ─── Routing ───
+builder.Services.AddRouting(options => options.LowercaseUrls = true);
 
 // ─── Tenant services ───
 builder.Services.AddScoped<ITenantDatabaseResolver, TenantDatabaseResolver>();
@@ -68,6 +112,7 @@ builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<IAuditWriter, AuditWriter>();
 builder.Services.AddScoped<IEmailDeliveryService, SmtpEmailDeliveryService>();
 builder.Services.AddScoped<RetentionEngine>();
+builder.Services.AddHttpContextAccessor();
 
 // ─── Controllers ───
 builder.Services.AddControllers()
@@ -75,9 +120,11 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.ReferenceHandler =
             System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
 
 // ─── OpenAPI ───
+builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
@@ -99,15 +146,47 @@ await using (var scope = app.Services.CreateAsyncScope())
 // ─── Global exception handler ───
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
+// ─── CORS (Must be before Routing & Auth) ───
+app.UseCors("AllowAll");
+
+// ─── HTTPS Redirection (Production only to avoid local dev 307 redirect issues) ───
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+app.UseRouting();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+// ─── OpenAPI spec endpoint ───
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+// ─── Root & Health check endpoints ───
+app.MapGet("/", () => Results.Ok(new
+{
+    status = "Online",
+    service = "Fixory CRM Computer Repair API",
+    version = "1.0.0",
+    environment = app.Environment.EnvironmentName,
+    endpoints = new
+    {
+        health = "/health",
+        openapi = "/openapi/v1.json"
+    },
+    timestamp = DateTime.UtcNow
+}));
 
-app.UseAuthentication();
-app.UseAuthorization();
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "Healthy",
+    service = "Fixory CRM Computer Repair API",
+    timestamp = DateTime.UtcNow
+}));
 
 app.MapControllers();
 

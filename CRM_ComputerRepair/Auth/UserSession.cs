@@ -12,6 +12,9 @@ namespace CRM.winforms.Auth
         public static string Email { get; set; } = "";
         public static string Role { get; set; } = "";
         public static int CompanyId { get; set; } = 1;
+        public static string CompanyName { get; set; } = "";
+        public static bool HasAcceptedTerms { get; set; }
+        public static System.DateTime? TermsAcceptedAt { get; set; }
         public static string Token { get; set; } = "";
 
         /// <summary>
@@ -62,6 +65,9 @@ namespace CRM.winforms.Auth
             Email = "";
             Role = "";
             CompanyId = 1;
+            CompanyName = "";
+            HasAcceptedTerms = false;
+            TermsAcceptedAt = null;
             Token = "";
             LogoutRequested = false;
         }

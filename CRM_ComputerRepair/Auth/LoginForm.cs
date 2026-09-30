@@ -687,6 +687,9 @@ namespace CRM.winforms.Auth
                 UserSession.Email = result.Email;
                 UserSession.Role = result.Role;
                 UserSession.CompanyId = result.CompanyId > 0 ? result.CompanyId : companyId;
+                UserSession.CompanyName = result.CompanyName ?? "";
+                UserSession.HasAcceptedTerms = result.HasAcceptedTerms;
+                UserSession.TermsAcceptedAt = result.TermsAcceptedAt;
                 UserSession.Token = result.Token;
 
                 DialogResult = DialogResult.OK;

@@ -16,6 +16,10 @@ public class Company
     public string? Country { get; set; } = "Philippines";
     public int? SubscriptionId { get; set; }
     public bool IsActive { get; set; } = true;
+    public bool HasAcceptedTerms { get; set; } = false;
+    public DateTime? TermsAcceptedAt { get; set; }
+    public string? TermsAcceptedByUserId { get; set; }
+    public int? AcceptedTermsId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 

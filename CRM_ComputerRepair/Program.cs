@@ -35,6 +35,23 @@ namespace CRM.winforms
                     return;
                 }
 
+                // 2b. Initial Terms & Conditions acceptance check for new/tenant companies
+                // When a new company logs in using credentials created by the Super Admin,
+                // they must initially review and accept the Super Admin's Terms & Conditions before proceeding.
+                if (!string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase) &&
+                    !UserSession.HasAcceptedTerms)
+                {
+                    using (var termsDlg = new CRM.winforms.Forms.TermsAgreementDialog())
+                    {
+                        if (termsDlg.ShowDialog() != DialogResult.OK)
+                        {
+                            // Declined or closed without accepting -> clear session and return to login screen
+                            UserSession.Clear();
+                            continue;
+                        }
+                    }
+                }
+
                 // 3. Run the main form; it signals logout via UserSession
                 Application.Run(new MainForm());
 

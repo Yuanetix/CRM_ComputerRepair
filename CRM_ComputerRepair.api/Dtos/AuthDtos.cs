@@ -24,5 +24,8 @@ public class LoginResponse
     public string Role { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public int CompanyId { get; set; } = 1;
+    public string CompanyName { get; set; } = string.Empty;
+    public bool HasAcceptedTerms { get; set; }
+    public DateTime? TermsAcceptedAt { get; set; }
     public string Token { get; set; } = string.Empty;
 }

@@ -337,8 +337,16 @@ namespace CRM.winforms
             {
                 Name = "colStatus",
                 HeaderText = "STATUS",
-                Width = 130,
-                MinimumWidth = 120
+                Width = 115,
+                MinimumWidth = 105
+            });
+
+            g.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                Name = "colTerms",
+                HeaderText = "TERMS & CONDITIONS",
+                Width = 145,
+                MinimumWidth = 130
             });
 
             g.Columns.Add(new DataGridViewTextBoxColumn
@@ -380,6 +388,21 @@ namespace CRM.winforms
                     string txt = item.IsActive ? "ACTIVE" : "DEACTIVATED";
 
                     var pill = new Rectangle(e.CellBounds.Left + 8, e.CellBounds.Top + (e.CellBounds.Height - 22) / 2, 94, 22);
+                    UiKit.FillRounded(stateG, pill, 11, bg);
+                    UiKit.Text(stateG, txt, UiKit.MicroStrong, fg, pill, UiKit.Center);
+                    e.Handled = true;
+                }
+                else if (e.ColumnIndex == g.Columns["colTerms"]!.Index)
+                {
+                    e.PaintBackground(e.CellBounds, true);
+                    var stateG = e.Graphics;
+                    UiKit.Quality(stateG);
+
+                    Color bg = item.HasAcceptedTerms ? Color.FromArgb(235, 248, 238) : Color.FromArgb(254, 243, 235);
+                    Color fg = item.HasAcceptedTerms ? AppTheme.Success : Color.FromArgb(196, 92, 0);
+                    string txt = item.HasAcceptedTerms ? "ACCEPTED" : "PENDING";
+
+                    var pill = new Rectangle(e.CellBounds.Left + 8, e.CellBounds.Top + (e.CellBounds.Height - 22) / 2, 100, 22);
                     UiKit.FillRounded(stateG, pill, 11, bg);
                     UiKit.Text(stateG, txt, UiKit.MicroStrong, fg, pill, UiKit.Center);
                     e.Handled = true;

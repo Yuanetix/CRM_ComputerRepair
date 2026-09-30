@@ -183,6 +183,16 @@ namespace CRM.winforms
                     };
                     page = staffDash;
                 }
+                else if (string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase))
+                {
+                    var superDash = new SuperAdminDashboardControl { Dock = DockStyle.Fill };
+                    superDash.ActionRequested += (s, targetKey) =>
+                    {
+                        if (!string.IsNullOrEmpty(targetKey))
+                            NavigateTo(targetKey);
+                    };
+                    page = superDash;
+                }
                 else
                 {
                     var dashboard = new DashboardControl { Dock = DockStyle.Fill };
@@ -268,6 +278,8 @@ namespace CRM.winforms
 
             if (key == "dashboard" && string.Equals(UserSession.Role, "Staff", StringComparison.OrdinalIgnoreCase))
                 topBar.SetPage("Operations Dashboard", "Daily repair queue, pending follow-ups, and active tickets");
+            else if (key == "dashboard" && string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase))
+                topBar.SetPage("Platform Dashboard", "Multi-tenant company overview, active subscriptions, and system health");
             else if (Pages.TryGetValue(key, out var meta))
                 topBar.SetPage(meta.Title, meta.Subtitle);
             else

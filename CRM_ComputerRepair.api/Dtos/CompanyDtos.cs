@@ -15,6 +15,8 @@ public class CompanyDetailDto
     public string? PostalCode { get; set; }
     public string? Country { get; set; } = "Philippines";
     public bool IsActive { get; set; } = true;
+    public bool HasAcceptedTerms { get; set; } = false;
+    public DateTime? TermsAcceptedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 

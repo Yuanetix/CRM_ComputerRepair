@@ -105,7 +105,7 @@ namespace CRM.winforms
             AddInfoRow(pnlAdmin, "Name", !string.IsNullOrWhiteSpace(_company.AdminFullName) ? _company.AdminFullName : "—", 12);
             AddInfoRow(pnlAdmin, "Username", !string.IsNullOrWhiteSpace(_company.AdminUsername) ? _company.AdminUsername : "—", 50);
             AddInfoRow(pnlAdmin, "Email", !string.IsNullOrWhiteSpace(_company.AdminEmail) ? _company.AdminEmail : "—", 88, valHeight: 32);
-            AddInfoRow(pnlAdmin, "Users", $"{_company.TotalUsersCount} user(s)", 126);
+            AddInfoRow(pnlAdmin, "Terms", _company.TermsStatusDisplay, 126);
             pnlBody.Controls.Add(pnlAdmin);
             y += 191;
 

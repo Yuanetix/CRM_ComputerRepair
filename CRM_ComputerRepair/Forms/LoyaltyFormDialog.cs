@@ -1,3 +1,4 @@
+using CRM.winforms.Auth;
 using CRM.winforms.Controls;
 using CRM.winforms.Forms;
 using System;
@@ -20,6 +21,7 @@ namespace CRM.winforms
         private readonly ApiClient _api = new ApiClient();
         private readonly LoyaltyProgramDto? _editing;
         private readonly bool _isEditMode;
+        private readonly int _targetCompanyId;
 
         private Label lblProgramName = null!;
         private Label lblDescription = null!;
@@ -56,10 +58,11 @@ namespace CRM.winforms
         private SaasButton btnSave = null!;
         private SaasButton btnCancel = null!;
 
-        public LoyaltyFormDialog(LoyaltyProgramDto? existing)
+        public LoyaltyFormDialog(LoyaltyProgramDto? existing, int? companyId = null)
         {
             _editing = existing;
             _isEditMode = existing != null;
+            _targetCompanyId = existing?.CompanyId ?? companyId ?? (UserSession.CompanyId > 0 ? UserSession.CompanyId : 1);
 
             BuildCard(
                 _isEditMode ? "Edit Loyalty Program" : "Add Loyalty Program",
@@ -240,6 +243,7 @@ namespace CRM.winforms
             {
                 var dto = new LoyaltyProgramDto
                 {
+                    CompanyId = _targetCompanyId,
                     ProgramName = inpProgramName.Text.Trim(),
                     Description = inpDescription.Text.Trim(),
                     PointsPerPeso = (int)numPoints.Value,

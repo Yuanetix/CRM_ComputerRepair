@@ -23,11 +23,26 @@ public class LoyaltyProgramsController : ControllerBase
         _factory = factory;
     }
 
+    private int ResolveCompanyId(int? queryCompanyId)
+    {
+        if (queryCompanyId.HasValue && queryCompanyId.Value > 0)
+        {
+            if (User.IsInRole("Super Admin"))
+                return queryCompanyId.Value;
+        }
+
+        return UserSessionHelper.GetCompanyId(HttpContext);
+    }
+
     // ── Programs ──
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] bool? activeOnly = null)
+    public async Task<IActionResult> GetAll([FromQuery] bool? activeOnly = null, [FromQuery] int? companyId = null)
     {
-        var query = _db.LoyaltyPrograms.AsNoTracking();
+        int targetCompanyId = ResolveCompanyId(companyId);
+
+        var query = _db.LoyaltyPrograms.AsNoTracking()
+            .Where(x => x.CompanyId == targetCompanyId || (targetCompanyId == 1 && x.CompanyId == null));
+
         if (activeOnly == true)
             query = query.Where(x => x.IsActive);
 
@@ -44,7 +59,13 @@ public class LoyaltyProgramsController : ControllerBase
         var item = await _db.LoyaltyPrograms.AsNoTracking()
             .FirstOrDefaultAsync(x => x.LoyaltyProgramId == id);
 
-        return item is null ? NotFound() : Ok(item);
+        if (item is null) return NotFound();
+
+        int targetCompanyId = ResolveCompanyId(null);
+        if (!User.IsInRole("Super Admin") && item.CompanyId.HasValue && item.CompanyId.Value != targetCompanyId)
+            return NotFound();
+
+        return Ok(item);
     }
 
     [HttpPost]
@@ -52,8 +73,11 @@ public class LoyaltyProgramsController : ControllerBase
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
+        int targetCompanyId = ResolveCompanyId(null);
+
         var program = new LoyaltyProgram
         {
+            CompanyId = targetCompanyId,
             ProgramName = request.ProgramName.Trim(),
             Description = request.Description?.Trim() ?? "",
             PointsPerPeso = request.PointsPerPeso,
@@ -93,6 +117,10 @@ public class LoyaltyProgramsController : ControllerBase
 
         if (item is null) return NotFound();
 
+        int targetCompanyId = ResolveCompanyId(null);
+        if (!User.IsInRole("Super Admin") && item.CompanyId.HasValue && item.CompanyId.Value != targetCompanyId)
+            return Forbid();
+
         item.ProgramName = request.ProgramName.Trim();
         item.Description = request.Description?.Trim() ?? "";
         item.PointsPerPeso = request.PointsPerPeso;
@@ -112,6 +140,9 @@ public class LoyaltyProgramsController : ControllerBase
         item.MaxRedemptionsPerCustomer = request.MaxRedemptionsPerCustomer;
         item.IsActive = request.IsActive;
 
+        if (!item.CompanyId.HasValue)
+            item.CompanyId = targetCompanyId;
+
         await _db.SaveChangesAsync();
         return Ok(item);
     }
@@ -123,6 +154,10 @@ public class LoyaltyProgramsController : ControllerBase
             .FirstOrDefaultAsync(x => x.LoyaltyProgramId == id);
 
         if (item is null) return NotFound();
+
+        int targetCompanyId = ResolveCompanyId(null);
+        if (!User.IsInRole("Super Admin") && item.CompanyId.HasValue && item.CompanyId.Value != targetCompanyId)
+            return Forbid();
 
         item.IsActive = false;
         await _db.SaveChangesAsync();
@@ -139,7 +174,10 @@ public class LoyaltyProgramsController : ControllerBase
             .FirstOrDefaultAsync(p => p.LoyaltyProgramId == id);
         if (program is null) return NotFound();
 
-        var companyId = UserSessionHelper.GetCompanyId(HttpContext);
+        int companyId = program.CompanyId ?? ResolveCompanyId(null);
+        if (!User.IsInRole("Super Admin") && companyId != UserSessionHelper.GetCompanyId(HttpContext))
+            return Forbid();
+
         await using var tenant = await _factory.CreateAsync(companyId);
 
         var accounts = await _db.CustomerLoyaltyAccounts.AsNoTracking()
@@ -202,7 +240,10 @@ public class LoyaltyProgramsController : ControllerBase
             .FirstOrDefaultAsync(p => p.LoyaltyProgramId == id);
         if (program is null) return NotFound("Loyalty program not found.");
 
-        var companyId = UserSessionHelper.GetCompanyId(HttpContext);
+        int companyId = program.CompanyId ?? ResolveCompanyId(null);
+        if (!User.IsInRole("Super Admin") && companyId != UserSessionHelper.GetCompanyId(HttpContext))
+            return Forbid();
+
         await using var tenant = await _factory.CreateAsync(companyId);
 
         var customer = await tenant.Customers.AsNoTracking()
@@ -240,8 +281,13 @@ public class LoyaltyProgramsController : ControllerBase
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
         var account = await _db.CustomerLoyaltyAccounts
+            .Include(a => a.LoyaltyProgram)
             .FirstOrDefaultAsync(a => a.CustomerLoyaltyAccountId == accountId);
         if (account is null) return NotFound();
+
+        int companyId = account.LoyaltyProgram?.CompanyId ?? 1;
+        if (!User.IsInRole("Super Admin") && companyId != UserSessionHelper.GetCompanyId(HttpContext))
+            return Forbid();
 
         account.Points = Math.Max(0, account.Points + request.PointsChange);
         await _db.SaveChangesAsync();
@@ -253,8 +299,13 @@ public class LoyaltyProgramsController : ControllerBase
     public async Task<IActionResult> RemoveMember(int accountId)
     {
         var account = await _db.CustomerLoyaltyAccounts
+            .Include(a => a.LoyaltyProgram)
             .FirstOrDefaultAsync(a => a.CustomerLoyaltyAccountId == accountId);
         if (account is null) return NotFound();
+
+        int companyId = account.LoyaltyProgram?.CompanyId ?? 1;
+        if (!User.IsInRole("Super Admin") && companyId != UserSessionHelper.GetCompanyId(HttpContext))
+            return Forbid();
 
         account.IsActive = false;
         await _db.SaveChangesAsync();

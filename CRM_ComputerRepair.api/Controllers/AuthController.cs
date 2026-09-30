@@ -72,6 +72,9 @@ public class AuthController : ControllerBase
             Role = role,
             Email = user.Email ?? string.Empty,
             CompanyId = companyId,
+            CompanyName = company.CompanyName,
+            HasAcceptedTerms = string.Equals(role, "Super Admin", StringComparison.OrdinalIgnoreCase) || company.HasAcceptedTerms,
+            TermsAcceptedAt = company.TermsAcceptedAt,
             Token = token
         });
     }

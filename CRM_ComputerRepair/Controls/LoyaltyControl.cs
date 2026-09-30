@@ -1,3 +1,4 @@
+using CRM.winforms.Auth;
 using CRM.winforms.Controls;
 using CRM.winforms.Forms;
 using System;
@@ -24,10 +25,15 @@ namespace CRM.winforms
         private List<LoyaltyProgramDto> _filtered = new();
         private int? _filterTag = null; // null = All, 1 = Active, 2 = Discounts, 3 = Perks & Free, 0 = Archived
 
+        private int _selectedCompanyId = UserSession.CompanyId > 0 ? UserSession.CompanyId : 1;
+        private List<CompanyDto> _companies = new();
+
         // ═══════════ CONTROLS ═══════════
 
         private Label lblTitle = null!;
         private Label lblSubtitle = null!;
+        private Label? _lblCompanyPicker;
+        private ComboBox? _cboCompany;
         private SaasButton btnRefresh = null!;
         private SaasButton btnAdd = null!;
 
@@ -100,6 +106,32 @@ namespace CRM.winforms
 
             Controls.Add(lblTitle);
             Controls.Add(lblSubtitle);
+
+            if (string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase))
+            {
+                _lblCompanyPicker = new Label
+                {
+                    Text = "Business:",
+                    Font = UiKit.T.SmallStrong,
+                    ForeColor = UiKit.T.InkMuted,
+                    AutoSize = true,
+                    BackColor = AppTheme.Background
+                };
+
+                _cboCompany = new ComboBox
+                {
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Font = UiKit.T.Body,
+                    BackColor = UiKit.T.Surface,
+                    ForeColor = UiKit.T.Ink,
+                    FlatStyle = FlatStyle.Flat
+                };
+                _cboCompany.SelectedIndexChanged += CboCompany_SelectedIndexChanged;
+
+                Controls.Add(_lblCompanyPicker);
+                Controls.Add(_cboCompany);
+            }
+
             Controls.Add(btnRefresh);
             Controls.Add(btnAdd);
 
@@ -228,7 +260,7 @@ namespace CRM.winforms
             {
                 if (dgv.CurrentRow?.DataBoundItem is LoyaltyProgramDto dto)
                 {
-                    using var dlg = new LoyaltyFormDialog(dto);
+                    using var dlg = new LoyaltyFormDialog(dto, _selectedCompanyId);
                     if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                         _ = ReloadAsync();
                 }
@@ -294,6 +326,13 @@ namespace CRM.winforms
             btnRefresh.Size = new Size(btnRefresh.PreferredWidth, UiKit.T.ButtonHeight);
             btnRefresh.Location = new Point(btnAdd.Left - btnRefresh.Width - UiKit.T.S2, 2);
 
+            if (_cboCompany != null && _cboCompany.Visible && _lblCompanyPicker != null)
+            {
+                _cboCompany.Size = new Size(240, UiKit.T.ButtonHeight);
+                _cboCompany.Location = new Point(btnRefresh.Left - _cboCompany.Width - UiKit.T.S4, 3);
+                _lblCompanyPicker.Location = new Point(_cboCompany.Left - _lblCompanyPicker.PreferredWidth - 6, 9);
+            }
+
             int dividerY = subtitleY + lblSubtitle.PreferredHeight + UiKit.T.S4;
 
             // Metric strip
@@ -350,7 +389,13 @@ namespace CRM.winforms
         {
             try
             {
-                _all = await _api.GetLoyaltyProgramsAsync();
+                if (string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase) && _companies.Count == 0)
+                {
+                    _companies = await _api.GetCompaniesAsync();
+                    PopulateCompanyPicker();
+                }
+
+                _all = await _api.GetLoyaltyProgramsAsync(companyId: _selectedCompanyId);
                 UpdateMetricStrip();
                 ApplyFilter();
             }
@@ -362,6 +407,38 @@ namespace CRM.winforms
 
                 MessageBox.Show($"Could not load loyalty programs:\n\n{ex.Message}",
                     "Connection Problem", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void PopulateCompanyPicker()
+        {
+            if (_cboCompany == null || _companies.Count == 0) return;
+
+            _cboCompany.SelectedIndexChanged -= CboCompany_SelectedIndexChanged;
+            _cboCompany.DisplayMember = "CompanyName";
+            _cboCompany.ValueMember = "CompanyId";
+            _cboCompany.DataSource = null;
+            _cboCompany.DataSource = _companies;
+
+            var match = _companies.FirstOrDefault(c => c.CompanyId == _selectedCompanyId);
+            if (match != null)
+                _cboCompany.SelectedItem = match;
+            else if (_companies.Count > 0)
+            {
+                _cboCompany.SelectedIndex = 0;
+                _selectedCompanyId = _companies[0].CompanyId;
+            }
+
+            _cboCompany.SelectedIndexChanged += CboCompany_SelectedIndexChanged;
+        }
+
+        private void CboCompany_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_cboCompany?.SelectedItem is CompanyDto c)
+            {
+                _selectedCompanyId = c.CompanyId;
+                lblSubtitle.Text = $"Customer reward programs and retention incentives for {c.CompanyName}";
+                _ = ReloadAsync();
             }
         }
 
@@ -614,7 +691,7 @@ namespace CRM.winforms
 
         private async Task AddAsync()
         {
-            using var dlg = new LoyaltyFormDialog(null);
+            using var dlg = new LoyaltyFormDialog(null, _selectedCompanyId);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                 await ReloadAsync();
         }
@@ -652,7 +729,7 @@ namespace CRM.winforms
             if (_menuRowIndex < 0 || _menuRowIndex >= dgv.Rows.Count) return;
             if (dgv.Rows[_menuRowIndex].DataBoundItem is not LoyaltyProgramDto dto) return;
 
-            using var dlg = new LoyaltyFormDialog(dto);
+            using var dlg = new LoyaltyFormDialog(dto, _selectedCompanyId);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                 await ReloadAsync();
         }
@@ -714,7 +791,7 @@ namespace CRM.winforms
             if (e.RowIndex < 0) return;
             if (dgv.Rows[e.RowIndex].DataBoundItem is not LoyaltyProgramDto dto) return;
 
-            using var dlg = new LoyaltyFormDialog(dto);
+            using var dlg = new LoyaltyFormDialog(dto, _selectedCompanyId);
             if (dlg.ShowModal(this.FindForm()) == DialogResult.OK)
                 _ = ReloadAsync();
         }

@@ -208,7 +208,7 @@ public class AnalyticsController : ControllerBase
 
         // ── Loyalty performance (master programs × tenant spend) ──
         var activePrograms = await _master.LoyaltyPrograms.AsNoTracking()
-            .Where(p => p.IsActive)
+            .Where(p => p.IsActive && (p.CompanyId == companyId || (companyId == 1 && p.CompanyId == null)))
             .OrderBy(p => p.ProgramName)
             .ToListAsync();
 
@@ -611,7 +611,7 @@ public class AnalyticsController : ControllerBase
                     .ToListAsync();
 
                 var activePrograms = await _master.LoyaltyPrograms.AsNoTracking()
-                    .Where(p => p.IsActive)
+                    .Where(p => p.IsActive && (p.CompanyId == companyId || (companyId == 1 && p.CompanyId == null)))
                     .OrderBy(p => p.ProgramName)
                     .ToListAsync();
 
@@ -777,13 +777,16 @@ public class AnalyticsController : ControllerBase
         var customerIds = await db.Customers.AsNoTracking()
             .Select(c => c.CustomerId).ToListAsync();
 
+        var programs = await _master.LoyaltyPrograms.AsNoTracking()
+            .Where(p => p.CompanyId == companyId || (companyId == 1 && p.CompanyId == null))
+            .ToListAsync();
+        var programNames = programs.ToDictionary(p => p.LoyaltyProgramId, p => p.ProgramName);
+        var programIds = programs.Select(p => p.LoyaltyProgramId).ToList();
+
         var accounts = await _master.CustomerLoyaltyAccounts.AsNoTracking()
-            .Where(a => customerIds.Contains(a.CustomerId))
+            .Where(a => customerIds.Contains(a.CustomerId) && programIds.Contains(a.LoyaltyProgramId))
             .Where(a => !programId.HasValue || a.LoyaltyProgramId == programId.Value)
             .ToListAsync();
-
-        var programs = await _master.LoyaltyPrograms.AsNoTracking().ToListAsync();
-        var programNames = programs.ToDictionary(p => p.LoyaltyProgramId, p => p.ProgramName);
 
         var customers = await db.Customers.AsNoTracking().ToListAsync();
         var byCustomer = customers.ToDictionary(c => c.CustomerId);

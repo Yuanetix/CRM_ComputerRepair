@@ -70,6 +70,8 @@ public class CompaniesController : ControllerBase
                 PostalCode = c.PostalCode,
                 Country = c.Country ?? "Philippines",
                 IsActive = c.IsActive,
+                HasAcceptedTerms = c.HasAcceptedTerms,
+                TermsAcceptedAt = c.TermsAcceptedAt,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt,
 
@@ -162,6 +164,8 @@ public class CompaniesController : ControllerBase
             PostalCode = c.PostalCode,
             Country = c.Country ?? "Philippines",
             IsActive = c.IsActive,
+            HasAcceptedTerms = c.HasAcceptedTerms,
+            TermsAcceptedAt = c.TermsAcceptedAt,
             CreatedAt = c.CreatedAt,
             UpdatedAt = c.UpdatedAt,
 
@@ -314,6 +318,57 @@ public class CompaniesController : ControllerBase
                 });
 
                 await tenantDb.SaveChangesAsync();
+            }
+
+            // Provision company-specific starter loyalty programs in Master DB
+            if (!await _db.LoyaltyPrograms.AnyAsync(p => p.CompanyId == company.CompanyId))
+            {
+                _db.LoyaltyPrograms.AddRange(new[]
+                {
+                    new LoyaltyProgram
+                    {
+                        CompanyId = company.CompanyId,
+                        ProgramName = $"{company.CompanyName} Rewards Club",
+                        Description = $"Earn 1 point per ₱1 spent. Receive 10% off after 3 completed repairs and ₱1,500 total spending.",
+                        PointsPerPeso = 1,
+                        DiscountPercentage = 10,
+                        MinimumSpend = 500,
+                        StartDate = DateTime.UtcNow,
+                        EndDate = DateTime.UtcNow.AddYears(1),
+                        PointsValidityDays = 365,
+                        RedeemPointsRequired = 500,
+                        MinTransactions = 3,
+                        MinTotalSpent = 1500,
+                        MaxInactiveDays = 120,
+                        RewardType = LoyaltyRewardType.DiscountPercent,
+                        RewardValue = 10,
+                        MaxRedemptionsPerCustomer = 4,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow
+                    },
+                    new LoyaltyProgram
+                    {
+                        CompanyId = company.CompanyId,
+                        ProgramName = $"{company.CompanyName} VIP Care Tier",
+                        Description = $"Exclusive tier for frequent clients (₱8,000+ spend). Entitled to a free annual maintenance diagnostic.",
+                        PointsPerPeso = 2,
+                        DiscountPercentage = 0,
+                        MinimumSpend = 8000,
+                        StartDate = DateTime.UtcNow,
+                        EndDate = DateTime.UtcNow.AddYears(1),
+                        PointsValidityDays = 365,
+                        RedeemPointsRequired = 1500,
+                        MinTransactions = 5,
+                        MinTotalSpent = 8000,
+                        MaxInactiveDays = 365,
+                        RewardType = LoyaltyRewardType.FreeService,
+                        RewardValue = 1200,
+                        MaxRedemptionsPerCustomer = 1,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow
+                    }
+                });
+                await _db.SaveChangesAsync();
             }
         }
         catch (Exception ex)

@@ -63,6 +63,12 @@ namespace CRM.winforms
                     request.Headers.Add("X-User-Id", UserSession.Username);
                 }
 
+                if (UserSession.CompanyId > 0)
+                {
+                    request.Headers.Remove("X-Company-Id");
+                    request.Headers.Add("X-Company-Id", UserSession.CompanyId.ToString());
+                }
+
                 return base.SendAsync(request, cancellationToken);
             }
         }
@@ -517,10 +523,11 @@ namespace CRM.winforms
         // LOYALTY PROGRAMS
         // ═══════════════════════════════════════════════════════
 
-        public async Task<List<LoyaltyProgramDto>> GetLoyaltyProgramsAsync(bool activeOnly = false)
+        public async Task<List<LoyaltyProgramDto>> GetLoyaltyProgramsAsync(bool activeOnly = false, int? companyId = null)
         {
-            var url = "/loyalty-programs";
-            if (activeOnly) url += "?activeOnly=true";
+            int targetCompany = companyId ?? CompanyId;
+            var url = $"/loyalty-programs?companyId={targetCompany}";
+            if (activeOnly) url += "&activeOnly=true";
 
             var response = await _http.GetAsync(url);
             await EnsureSuccess(response);
@@ -753,6 +760,26 @@ namespace CRM.winforms
         {
             var response = await _http.PostAsync($"/terms/{id}/activate", null);
             await EnsureSuccess(response);
+        }
+
+        public async Task<bool> AcceptTermsAsync()
+        {
+            var response = await _http.PostAsync("/terms/accept", null);
+            await EnsureSuccess(response);
+            return response.IsSuccessStatusCode;
+        }
+
+        public async Task<bool> RejectTermsAsync()
+        {
+            try
+            {
+                var response = await _http.PostAsync("/terms/reject", null);
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         // ═══════════════════════════════════════════════════════
