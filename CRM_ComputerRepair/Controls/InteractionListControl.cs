@@ -48,6 +48,7 @@ namespace CRM.winforms.Controls
 
         // ── Workbench Card ──
         private WorkbenchCard card = null!;
+        private Label lblCardTitle = null!;
         private WorkbenchSearch search = null!;
         private InteractionsSegmentedFilter segments = null!;
         private Label lblCount = null!;
@@ -162,10 +163,31 @@ namespace CRM.winforms.Controls
             // ── Workbench Card ──
             card = new WorkbenchCard { BackColor = UiKit.T.Surface };
 
+            lblCardTitle = new Label
+            {
+                Text = "Interaction Records",
+                Font = UiKit.T.Section,
+                ForeColor = UiKit.T.Ink,
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                UseMnemonic = false
+            };
+
+            lblCount = new Label
+            {
+                Text = "",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkFaint,
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                UseMnemonic = false
+            };
+
             search = new WorkbenchSearch
             {
                 Placeholder = "Search by customer, ticket, device, subject, notes..."
             };
+            search.Inner.TextChanged += (s, e) => ApplySearch();
             search.QueryChanged += (s, e) => ApplySearch();
             _tips.SetToolTip(search, "Search (Ctrl+F, Esc to clear)");
 
@@ -197,17 +219,9 @@ namespace CRM.winforms.Controls
                 _ = ReloadAsync();
             };
 
-            lblCount = new Label
-            {
-                Text = "",
-                Font = UiKit.T.Small,
-                ForeColor = UiKit.T.InkMuted,
-                AutoSize = true,
-                BackColor = Color.Transparent
-            };
-
             dgv = new DataGridView();
             StyleGrid(dgv);
+            ConfigureColumns();
             dgv.CellPainting += Dgv_CellPainting;
             dgv.CellClick += Dgv_CellClick;
             dgv.CellDoubleClick += Dgv_CellDoubleClick;
@@ -239,9 +253,10 @@ namespace CRM.winforms.Controls
             pager = new TablePagination();
             pager.PageChanged += (s, e) => ApplySearch(resetPage: false);
 
-            card.Controls.Add(search);
-            card.Controls.Add(segments);
+            card.Controls.Add(lblCardTitle);
             card.Controls.Add(lblCount);
+            card.Controls.Add(segments);
+            card.Controls.Add(search);
             card.Controls.Add(dgv);
             card.Controls.Add(state);
             card.Controls.Add(pager);
@@ -343,31 +358,36 @@ namespace CRM.winforms.Controls
             y += rowMaxH + 24;
 
             // ── Workbench Card ──
-            int cardPad = UiKit.T.S6;
+            int cardPad = UiKit.T.S5;
             int cardH = Math.Max(320, Height - y - pad);
             card.SetBounds(pad, y, contentW, cardH);
 
             int innerW = contentW - cardPad * 2;
 
+            lblCardTitle.Location = new Point(cardPad, cardPad);
+            lblCount.Location = new Point(lblCardTitle.Right + 8, lblCardTitle.Top + 4);
+
+            int toolbarY = lblCardTitle.Bottom + 12;
             int filterW = segments.PreferredWidth;
-            int searchW = Math.Max(240, Math.Min(440, innerW - filterW - 20));
+            int searchW = Math.Max(220, Math.Min(380, innerW - filterW - 16));
 
-            search.SetBounds(cardPad, cardPad, searchW, 38);
-            segments.SetBounds(cardPad + innerW - filterW, cardPad + 1, filterW, 36);
+            segments.SetBounds(cardPad, toolbarY, filterW, 36);
+            search.SetBounds(cardPad + innerW - searchW, toolbarY, searchW, 36);
 
-            int gridY = search.Bottom + 14;
+            int gridY = toolbarY + 44;
             int footerH = pager.Visible ? TableKit.FooterH : 0;
-            int gridH = cardH - gridY - cardPad - 26 - footerH;
+            int gridH = cardH - gridY - cardPad - footerH;
 
-            dgv.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
-            state.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+            if (gridH > 50 && innerW > 100)
+            {
+                dgv.SetBounds(cardPad, gridY, innerW, gridH);
+                state.SetBounds(cardPad, gridY, innerW, gridH);
+            }
 
             if (pager.Visible)
             {
-                pager.SetBounds(cardPad, gridY + Math.Max(0, gridH), innerW, TableKit.FooterH);
+                pager.SetBounds(cardPad, gridY + gridH, innerW, TableKit.FooterH);
             }
-
-            lblCount.Location = new Point(cardPad, (pager.Visible ? pager.Bottom : dgv.Bottom) + 6);
         }
 
         // ═══════════ DATA LOAD (logic unchanged) ═══════════
@@ -467,10 +487,10 @@ namespace CRM.winforms.Controls
 
             dgv.DataSource = null;
             dgv.DataSource = page;
-            ConfigureColumns();
-            AddActionsColumn();
 
             bool hasData = view.Count > 0;
+            dgv.Visible = hasData;
+            state.Visible = !hasData;
             pager.Visible = hasData && view.Count > TableKit.PageSize;
             LayoutUi();
 
@@ -513,7 +533,9 @@ namespace CRM.winforms.Controls
             g.AllowUserToAddRows = false;
             g.AllowUserToDeleteRows = false;
             g.AllowUserToResizeRows = false;
+            g.AllowUserToOrderColumns = false;
             g.RowHeadersVisible = false;
+            g.ReadOnly = true;
             g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             g.MultiSelect = false;
             g.BackgroundColor = UiKit.T.Surface;
@@ -523,9 +545,9 @@ namespace CRM.winforms.Controls
             g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
             g.EnableHeadersVisualStyles = false;
             g.ScrollBars = ScrollBars.Both;
-            g.RowTemplate.Height = 64;
+            g.RowTemplate.Height = 56;
+            g.ColumnHeadersHeight = 44;
             g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-            g.ColumnHeadersHeight = 46;
 
             g.ColumnHeadersDefaultCellStyle.BackColor = UiKit.T.Surface;
             g.ColumnHeadersDefaultCellStyle.SelectionBackColor = UiKit.T.Surface;
@@ -541,79 +563,63 @@ namespace CRM.winforms.Controls
             g.DefaultCellStyle.SelectionForeColor = UiKit.T.Ink;
             g.DefaultCellStyle.Padding = new Padding(CellPadX, 0, CellPadX, 0);
             g.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+            g.RowsDefaultCellStyle.BackColor = UiKit.T.Surface;
         }
 
         private void ConfigureColumns()
         {
-            foreach (var hidden in new[]
+            dgv.AutoGenerateColumns = false;
+            dgv.Columns.Clear();
+
+            void Col(string prop, string name, string header, int width, bool fill = false,
+                DataGridViewContentAlignment align = DataGridViewContentAlignment.MiddleLeft)
             {
-                "CustomerInteractionId", "CustomerId", "RepairRequestId",
-                "InteractionType", "Status", "Priority",
-                "InteractionByUserId", "UpdatedAt", "ClosedAt", "IsActive",
-                "ActivityStatus", "ClosedAtDisplay", "CustomerName",
-                "CustomerPhone", "CustomerEmail", "RepairRequestNumber",
-                "DeviceModel", "ContactDisplay", "Notes", "Resolution"
-            })
-            {
-                var col = dgv.Columns[hidden];
-                if (col != null)
-                    col.Visible = false;
+                var c = new DataGridViewTextBoxColumn
+                {
+                    DataPropertyName = prop,
+                    Name = name,
+                    HeaderText = header,
+                    Width = width,
+                    SortMode = DataGridViewColumnSortMode.NotSortable
+                };
+                if (fill)
+                {
+                    c.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                    c.MinimumWidth = Math.Max(180, width);
+                }
+                c.DefaultCellStyle.Alignment = align;
+                dgv.Columns.Add(c);
             }
 
-            void Setup(string name, string header, int width, int displayIndex, bool fill = false)
-            {
-                var c = dgv.Columns[name];
-                if (c == null) return;
-
-                c.HeaderText = header;
-                c.SortMode = DataGridViewColumnSortMode.Automatic;
-                c.AutoSizeMode = fill
-                    ? DataGridViewAutoSizeColumnMode.Fill
-                    : DataGridViewAutoSizeColumnMode.None;
-                if (!fill) c.Width = width;
-                else c.MinimumWidth = 240;
-                c.DisplayIndex = displayIndex;
-            }
-
-            Setup("TypeText", "TYPE", 125, 0);
-            Setup("CustomerDisplay", "CUSTOMER & CONTACT", 220, 1);
-            Setup("RepairDisplay", "LINKED REPAIR", 200, 2);
-            Setup("Subject", "SUBJECT & SUMMARY", 0, 3, fill: true);
-            Setup("PriorityText", "PRIORITY", 110, 4);
-            Setup("StatusText", "STATUS", 130, 5);
-            Setup("InteractionDate", "CREATED", 140, 6);
-
-            if (dgv.Columns["InteractionDate"] is { } dateCol)
-            {
-                dateCol.DefaultCellStyle.Format = "MMM d  HH:mm";
-                dateCol.DefaultCellStyle.ForeColor = UiKit.T.InkMuted;
-                dateCol.DefaultCellStyle.SelectionForeColor = UiKit.T.InkMuted;
-            }
-        }
-
-        private void AddActionsColumn()
-        {
-            if (dgv.Columns.Contains(ColActions)) return;
+            Col("TypeText", "TypeText", "TYPE", 115, align: DataGridViewContentAlignment.MiddleCenter);
+            Col("CustomerDisplay", "CustomerDisplay", "CUSTOMER & CONTACT", 220);
+            Col("RepairDisplay", "RepairDisplay", "LINKED REPAIR", 190);
+            Col("Subject", "Subject", "SUBJECT & SUMMARY", 220, fill: true);
+            Col("PriorityText", "PriorityText", "PRIORITY", 105, align: DataGridViewContentAlignment.MiddleCenter);
+            Col("StatusText", "StatusText", "STATUS", 115, align: DataGridViewContentAlignment.MiddleCenter);
+            Col("InteractionDate", "InteractionDate", "CREATED", 130);
 
             var btnCol = new DataGridViewButtonColumn
             {
                 Name = ColActions,
-                HeaderText = "",
-                Text = "",
+                HeaderText = "ACTION",
+                Text = "Manage",
                 UseColumnTextForButtonValue = true,
-                Width = 56,
-                MinimumWidth = 56,
+                Width = 90,
+                MinimumWidth = 80,
                 FlatStyle = FlatStyle.Flat,
+                SortMode = DataGridViewColumnSortMode.NotSortable,
                 AutoSizeMode = DataGridViewAutoSizeColumnMode.None
             };
             btnCol.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             btnCol.DefaultCellStyle.BackColor = UiKit.T.Surface;
             btnCol.DefaultCellStyle.SelectionBackColor = UiKit.T.RowHover;
-            btnCol.DefaultCellStyle.Padding = new Padding(0);
+            btnCol.DefaultCellStyle.Font = UiKit.T.SmallStrong;
+            btnCol.DefaultCellStyle.ForeColor = AppTheme.Primary;
             dgv.Columns.Add(btnCol);
         }
 
-        // ═══════════ CELL PAINTING (CompaniesControl-style) ═══════════
+        // ═══════════ CELL PAINTING (Retention table UI style) ═══════════
 
         private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
@@ -621,74 +627,50 @@ namespace CRM.winforms.Controls
             var gr = e.Graphics;
             var cell = e.CellBounds;
 
-            // Header
+            // 1. Header row
             if (e.RowIndex == -1)
             {
-                using (var b = new SolidBrush(UiKit.T.Surface))
-                    gr.FillRectangle(b, cell);
-                using (var p = new Pen(UiKit.T.Line))
-                    gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
-
-                UiKit.Quality(gr);
-                UiKit.Text(gr, Convert.ToString(e.Value) ?? "", UiKit.T.SmallStrong, UiKit.T.InkMuted,
-                    new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1),
-                    CellText);
-                e.Handled = true;
+                PaintHeaderCell(e);
                 return;
             }
 
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            // 2. Row background & soft bottom divider
+            PaintRowBackground(e);
+
             string col = dgv.Columns[e.ColumnIndex].Name;
-            bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
-            bool hovered = e.RowIndex == _hoverRow;
-            bool focused = dgv.Focused;
-
-            Color rowBg = UiKit.T.Surface;
-            if (selected && focused) rowBg = UiKit.T.RowHover;
-            else if (selected && !focused) rowBg = UiKit.T.LineSoft;
-            else if (hovered) rowBg = UiKit.T.RowHover;
-
-            using (var b = new SolidBrush(rowBg))
-                gr.FillRectangle(b, cell);
-            using (var p = new Pen(UiKit.T.LineSoft))
-                gr.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
-
-            UiKit.Quality(gr);
-
-            if (e.ColumnIndex == 0 && selected && focused)
-                UiKit.FillRounded(gr, new Rectangle(cell.Left, cell.Top + 12, 3, cell.Height - 25), 1, AppTheme.Primary);
-
-            var r = new Rectangle(cell.Left + CellPadX, cell.Top,
-                Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1);
-            int cy = r.Top + r.Height / 2;
+            var inner = new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height);
             string text = Convert.ToString(e.FormattedValue) ?? string.Empty;
             var rowItem = dgv.Rows[e.RowIndex].DataBoundItem as InteractionDto;
 
             switch (col)
             {
+                case ColActions:
+                    PaintActionButton(gr, cell, "Manage", e.RowIndex == _hoverRow);
+                    e.Handled = true;
+                    break;
+
                 case "TypeText":
                     {
-                        Color accent = text switch
+                        (Color bg, Color fg, string label) = text switch
                         {
-                            "Inquiry" => AppTheme.Primary,
-                            "Complaint" => AppTheme.Danger,
-                            "Feedback" => AppTheme.Success,
-                            _ => UiKit.T.InkFaint
+                            "Inquiry" => (Color.FromArgb(238, 242, 255), Color.FromArgb(79, 70, 229), "Question"),
+                            "Complaint" => (Color.FromArgb(254, 242, 242), Color.FromArgb(220, 38, 38), "Concern"),
+                            "Feedback" => (Color.FromArgb(240, 253, 244), Color.FromArgb(22, 163, 74), "Review"),
+                            _ => (Color.FromArgb(243, 244, 246), Color.FromArgb(107, 114, 128), text)
                         };
-                        string label = text switch
-                        {
-                            "Inquiry" => "Question",
-                            "Complaint" => "Concern",
-                            "Feedback" => "Review",
-                            _ => text
-                        };
-                        PaintDotPill(gr, r, cy, label, accent, UiKit.T.SmallStrong);
+                        PillBadgeRenderer.DrawPill(gr, cell, label, bg, fg);
+                        e.Handled = true;
                         break;
                     }
 
                 case "CustomerDisplay":
                     if (rowItem != null)
-                        PaintCustomerCell(gr, rowItem.CustomerDisplay, rowItem.ContactDisplay, r);
+                    {
+                        PaintCustomerCell(gr, rowItem.CustomerDisplay, rowItem.ContactDisplay, inner);
+                        e.Handled = true;
+                    }
                     break;
 
                 case "RepairDisplay":
@@ -696,7 +678,8 @@ namespace CRM.winforms.Controls
                     {
                         string line1 = !string.IsNullOrWhiteSpace(rowItem.RepairRequestNumber) ? rowItem.RepairRequestNumber : "General Support";
                         string line2 = !string.IsNullOrWhiteSpace(rowItem.DeviceModel) ? rowItem.DeviceModel : "No device linked";
-                        PaintTwoLine(gr, r, line1, line2);
+                        PaintTwoLine(gr, inner, line1, line2);
+                        e.Handled = true;
                     }
                     break;
 
@@ -705,69 +688,127 @@ namespace CRM.winforms.Controls
                     {
                         string snippet = !string.IsNullOrWhiteSpace(rowItem.Notes)
                             ? rowItem.Notes.Replace("\r", " ").Replace("\n", " ")
-                            : "No notes provided";
-                        PaintTwoLine(gr, r, rowItem.Subject, snippet);
+                            : "No additional notes";
+                        PaintTwoLine(gr, inner, rowItem.Subject, snippet);
+                        e.Handled = true;
                     }
                     break;
 
                 case "PriorityText":
                     {
-                        if (text == "High" || text == "Medium")
+                        (Color bg, Color fg) = text switch
                         {
-                            Color accent = text == "High" ? AppTheme.Danger : AppTheme.Primary;
-                            PaintDotPill(gr, r, cy, text, accent, UiKit.T.SmallStrong);
-                        }
-                        else
-                        {
-                            UiKit.Text(gr, text, UiKit.T.Small, UiKit.T.InkMuted, r, CellText);
-                        }
+                            "High" => (Color.FromArgb(254, 242, 242), Color.FromArgb(220, 38, 38)),
+                            "Medium" => (Color.FromArgb(255, 251, 235), Color.FromArgb(217, 119, 6)),
+                            _ => (Color.FromArgb(243, 244, 246), Color.FromArgb(107, 114, 128))
+                        };
+                        PillBadgeRenderer.DrawPill(gr, cell, text, bg, fg);
+                        e.Handled = true;
                         break;
                     }
 
                 case "StatusText":
                     {
-                        Color accent = text switch
+                        (Color bg, Color fg) = text switch
                         {
-                            "Open" => AppTheme.Warning,
-                            "In Progress" => AppTheme.Primary,
-                            "Closed" => AppTheme.Success,
-                            _ => UiKit.T.InkMuted
+                            "Open" => (Color.FromArgb(255, 251, 235), Color.FromArgb(217, 119, 6)),
+                            "In Progress" => (Color.FromArgb(238, 242, 255), Color.FromArgb(79, 70, 229)),
+                            "Closed" => (Color.FromArgb(240, 253, 244), Color.FromArgb(22, 163, 74)),
+                            _ => (Color.FromArgb(243, 244, 246), Color.FromArgb(107, 114, 128))
                         };
-                        PaintDotPill(gr, r, cy, text, accent, UiKit.T.SmallStrong);
+                        PillBadgeRenderer.DrawPill(gr, cell, text, bg, fg);
+                        e.Handled = true;
                         break;
                     }
 
                 case "InteractionDate":
-                    UiKit.Text(gr, text, UiKit.T.Small, UiKit.T.InkMuted, r, CellText);
-                    break;
-
-                case ColActions:
+                    if (rowItem != null)
                     {
-                        int size = 30;
-                        var btn = new Rectangle(r.Right - size, cy - size / 2, size, size);
-                        bool hot = hovered;
-
-                        UiKit.FillRounded(gr, btn, 8, hot ? UiKit.Wash(AppTheme.Primary) : Color.Transparent);
-
-                        int dotR = 2;
-                        int dotGap = 6;
-                        int dotY = cy - dotR;
-                        int startX = btn.Left + (btn.Width / 2) - dotGap;
-                        using (var b = new SolidBrush(hot ? AppTheme.Primary : UiKit.T.InkMuted))
-                        {
-                            gr.FillEllipse(b, startX - dotR, dotY, dotR * 2, dotR * 2);
-                            gr.FillEllipse(b, startX - dotR + dotGap, dotY, dotR * 2, dotR * 2);
-                            gr.FillEllipse(b, startX - dotR + dotGap * 2, dotY, dotR * 2, dotR * 2);
-                        }
-                        break;
+                        string dStr = rowItem.InteractionDate.ToString("MMM d, yyyy");
+                        string tStr = rowItem.InteractionDate.ToString("HH:mm");
+                        PaintTwoLine(gr, inner, dStr, tStr);
+                        e.Handled = true;
                     }
+                    break;
 
                 default:
                     e.PaintContent(cell);
+                    e.Handled = true;
                     break;
             }
+        }
 
+        private static void PaintHeaderCell(DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.Graphics == null) return;
+            var cell = e.CellBounds;
+            using (var b = new SolidBrush(UiKit.T.Surface))
+                e.Graphics.FillRectangle(b, cell);
+            using (var p = new Pen(UiKit.T.Line, 1))
+                e.Graphics.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+            UiKit.Quality(e.Graphics);
+            string hdr = Convert.ToString(e.Value) ?? "";
+            UiKit.Text(e.Graphics, hdr, UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                new Rectangle(cell.Left + CellPadX, cell.Top, Math.Max(0, cell.Width - CellPadX * 2), cell.Height - 1),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
             e.Handled = true;
+        }
+
+        private void PaintRowBackground(DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.Graphics == null) return;
+            var cell = e.CellBounds;
+            bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
+            bool hovered = e.RowIndex == _hoverRow;
+
+            Color rowBg = selected ? UiKit.T.RowHover : (hovered ? UiKit.T.RowHover : UiKit.T.Surface);
+            using (var b = new SolidBrush(rowBg))
+                e.Graphics.FillRectangle(b, cell);
+            using (var p = new Pen(UiKit.T.LineSoft, 1))
+                e.Graphics.DrawLine(p, cell.Left, cell.Bottom - 1, cell.Right, cell.Bottom - 1);
+
+            UiKit.Quality(e.Graphics);
+        }
+
+        private static void PaintActionButton(Graphics gr, Rectangle cell, string text, bool isHovered)
+        {
+            int btnH = 26;
+            int btnW = Math.Min(76, cell.Width - 14);
+            int bx = cell.X + (cell.Width - btnW) / 2;
+            int by = cell.Y + (cell.Height - btnH) / 2;
+            var btnRect = new Rectangle(bx, by, btnW, btnH);
+
+            Color btnBg = isHovered ? AppTheme.Primary : UiKit.Wash(AppTheme.Primary);
+            Color btnFg = isHovered ? Color.White : AppTheme.Primary;
+
+            UiKit.FillRounded(gr, btnRect, 6, btnBg);
+            using var p = new Pen(isHovered ? AppTheme.Primary : Color.FromArgb(210, 215, 235), 1);
+            using var path = UiKit.Rounded(btnRect, 6);
+            gr.DrawPath(p, path);
+
+            UiKit.Text(gr, text, UiKit.T.SmallStrong, btnFg, btnRect, UiKit.Center);
+        }
+
+        private static class PillBadgeRenderer
+        {
+            public static void DrawPill(Graphics g, Rectangle bounds, string text, Color bg, Color fg)
+            {
+                if (string.IsNullOrEmpty(text)) text = "—";
+
+                int pillH = 24;
+                int textW = UiKit.Measure(text, UiKit.T.SmallStrong).Width;
+                int pillW = Math.Min(bounds.Width - 14, textW + 20);
+                pillW = Math.Max(56, pillW);
+                int pillX = bounds.X + (bounds.Width - pillW) / 2;
+                int pillY = bounds.Y + (bounds.Height - pillH) / 2;
+
+                var rect = new Rectangle(pillX, pillY, pillW, pillH);
+                UiKit.FillRounded(g, rect, pillH / 2, bg);
+                UiKit.Text(g, text, UiKit.T.SmallStrong, fg, rect,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
+                    | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+            }
         }
 
         private static void PaintCustomerCell(Graphics gr, string? name, string? contact, Rectangle rect)
@@ -818,22 +859,6 @@ namespace CRM.winforms.Controls
                 new Rectangle(rect.Left, y0, rect.Width, h1), CellText);
             UiKit.Text(gr, line2 ?? "", UiKit.T.Small, UiKit.T.InkMuted,
                 new Rectangle(rect.Left, y0 + h1, rect.Width, h2), CellText);
-        }
-
-        private static void PaintDotPill(Graphics gr, Rectangle rect, int cy, string text, Color fg, Font font)
-        {
-            if (string.IsNullOrEmpty(text)) return;
-
-            int textW = MeasureW(text, font);
-            int pillW = Math.Min(rect.Width, textW + 34);
-            var pill = new Rectangle(rect.Left, cy - 12, pillW, 24);
-
-            UiKit.FillRounded(gr, pill, 12, UiKit.Wash(fg));
-            UiKit.FillRounded(gr, new Rectangle(pill.Left + 11, cy - 3, 6, 6), 3, fg);
-            UiKit.Text(gr, text, font, fg,
-                new Rectangle(pill.Left + 23, pill.Top, Math.Max(0, pill.Width - 31), pill.Height),
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter
-                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | Flat);
         }
 
         // ═══════════ ACTIONS MENU (logic unchanged) ═══════════
