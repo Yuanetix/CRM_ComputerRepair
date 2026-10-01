@@ -3,6 +3,8 @@ using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Data;
 using CRM_ComputerRepair.infrastructure.Services;
+using CRM_ComputerRepair.api.Middleware;
+using CRM_ComputerRepair.api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,21 +13,31 @@ namespace CRM_ComputerRepair.api.Controllers;
 [ApiController]
 [Route("tenant/{companyId:int}/analytics")]
 [Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
+[RequireSubscribedModule(ModuleCodes.BusinessIntelligence, ModuleCodes.Actions)]
 public class AnalyticsController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
     private readonly MasterCrmDbContext _master;
+    private readonly Microsoft.AspNetCore.Identity.UserManager<User> _userManager;
 
-    public AnalyticsController(ITenantDbContextFactory factory, MasterCrmDbContext master)
+    public AnalyticsController(
+        ITenantDbContextFactory factory,
+        MasterCrmDbContext master,
+        Microsoft.AspNetCore.Identity.UserManager<User> userManager)
     {
         _factory = factory;
         _master = master;
+        _userManager = userManager;
     }
 
     /// <summary>Full dashboard: KPIs, trends, charts and loyalty performance computed from real records.</summary>
     [HttpGet("dashboard")]
-    public async Task<IActionResult> Dashboard(int companyId)
+    public async Task<IActionResult> Dashboard(int companyId, [FromQuery] int? branchId = null)
     {
+        var (scopedBranchId, isAllowed) = await BranchScopeHelper.ResolveBranchScopeAsync(HttpContext, _userManager, branchId);
+        if (!isAllowed)
+            return Forbid();
+
         await using var db = await _factory.CreateAsync(companyId);
 
         var now = DateTime.UtcNow;
@@ -36,6 +48,14 @@ public class AnalyticsController : ControllerBase
         var repairs = await db.RepairRequests.AsNoTracking().ToListAsync();
         var payments = await db.Payments.AsNoTracking().Where(p => !p.IsVoid).ToListAsync();
         var interactions = await db.CustomerInteractions.AsNoTracking().ToListAsync();
+
+        if (scopedBranchId.HasValue)
+        {
+            customers = customers.Where(c => c.BranchId == scopedBranchId.Value).ToList();
+            repairs = repairs.Where(r => r.BranchId == scopedBranchId.Value).ToList();
+            payments = payments.Where(p => p.BranchId == scopedBranchId.Value).ToList();
+            interactions = interactions.Where(i => i.BranchId == scopedBranchId.Value).ToList();
+        }
 
         var completedRepairs = repairs
             .Where(r => r.Status == RepairStatus.Completed && r.CompletionDate.HasValue)

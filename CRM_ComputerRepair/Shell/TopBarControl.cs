@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
+using CRM.winforms.Auth;
 
 namespace CRM.winforms
 {
@@ -20,9 +24,21 @@ namespace CRM.winforms
         private BellButton _bell = null!;
         private UserChip _chip = null!;
         private CloudSyncPill _syncPill = null!;
+        private Panel _pnlBranchSelector = null!;
+        private ComboBox _cmbBranchSelector = null!;
+        private bool _isUpdatingBranchSelection;
+        private readonly ApiClient _api = new();
         private readonly ToolTip _tips = new ToolTip { InitialDelay = 400, ReshowDelay = 150 };
         private Rectangle _brandBounds = Rectangle.Empty;
         private bool _brandHover;
+
+        public sealed class BranchScopeItem
+        {
+            public int? BranchId { get; set; }
+            public string BranchName { get; set; } = string.Empty;
+            public string DisplayText { get; set; } = string.Empty;
+            public override string ToString() => DisplayText;
+        }
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         [Browsable(false)]
@@ -70,6 +86,34 @@ namespace CRM.winforms
 
         private void BuildUi()
         {
+            _pnlBranchSelector = new Panel
+            {
+                Size = new Size(230, 36),
+                BackColor = UiKit.Surface,
+                Padding = new Padding(3, 4, 3, 4)
+            };
+            _pnlBranchSelector.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                UiKit.Quality(g);
+                var r = new Rectangle(0, 0, _pnlBranchSelector.Width - 1, _pnlBranchSelector.Height - 1);
+                UiKit.StrokeRounded(g, r, 6, UiKit.Line, 1f);
+            };
+
+            _cmbBranchSelector = new ComboBox
+            {
+                Dock = DockStyle.Fill,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Font = AppFonts.Regular(9.5f),
+                BackColor = UiKit.Surface,
+                ForeColor = AppTheme.TextPrimary
+            };
+            _cmbBranchSelector.SelectedIndexChanged += CmbBranchSelector_SelectedIndexChanged;
+            _pnlBranchSelector.Controls.Add(_cmbBranchSelector);
+
+            UserSession.OnBranchScopeChanged += HandleBranchScopeChanged;
+
             _syncPill = new CloudSyncPill();
             _syncPill.Click += (s, e) => SyncClicked?.Invoke(this, EventArgs.Empty);
             _tips.SetToolTip(_syncPill, "MonsterASP Cloud Database: Local & Cloud synchronization status. Click to sync now.");
@@ -82,6 +126,7 @@ namespace CRM.winforms
             _chip.Click += (s, e) => ProfileClicked?.Invoke(this, EventArgs.Empty);
             _tips.SetToolTip(_chip, "Account Profile");
 
+            Controls.Add(_pnlBranchSelector);
             Controls.Add(_syncPill);
             Controls.Add(_bell);
             Controls.Add(_chip);
@@ -93,6 +138,140 @@ namespace CRM.winforms
             _chip.Location = new Point(Width - _chip.Width - UiKit.S5, (Height - _chip.Height) / 2);
             _bell.Location = new Point(_chip.Left - _bell.Width - UiKit.S4, (Height - _bell.Height) / 2);
             _syncPill.Location = new Point(_bell.Left - _syncPill.Width - UiKit.S4, (Height - _syncPill.Height) / 2);
+            _pnlBranchSelector.Location = new Point(_syncPill.Left - _pnlBranchSelector.Width - UiKit.S4, (Height - _pnlBranchSelector.Height) / 2);
+        }
+
+        public async Task RefreshBranchScopeAsync()
+        {
+            bool canUseBranching = UserSession.HasModule("BRANCHING") ||
+                string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase);
+
+            _pnlBranchSelector.Visible = canUseBranching;
+            if (!canUseBranching) return;
+
+            try
+            {
+                var branches = await _api.GetBranchesAsync(includeInactive: false);
+                SetBranches(branches);
+            }
+            catch
+            {
+                SetBranches(new List<BranchDto>());
+            }
+        }
+
+        public void SetBranches(List<BranchDto> branches)
+        {
+            _isUpdatingBranchSelection = true;
+            try
+            {
+                _cmbBranchSelector.Items.Clear();
+
+                bool isAdmin = string.Equals(UserSession.Role, "Admin", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase);
+
+                if (isAdmin)
+                {
+                    _cmbBranchSelector.Enabled = true;
+                    _tips.SetToolTip(_cmbBranchSelector, "Switch active branch scope (company-wide or specific branch)");
+
+                    var allItem = new BranchScopeItem
+                    {
+                        BranchId = null,
+                        BranchName = "All Branches",
+                        DisplayText = "🏢  All Branches"
+                    };
+                    _cmbBranchSelector.Items.Add(allItem);
+
+                    int selectedIdx = 0;
+                    foreach (var b in branches.OrderBy(x => x.BranchCode))
+                    {
+                        var item = new BranchScopeItem
+                        {
+                            BranchId = b.BranchId,
+                            BranchName = b.BranchName,
+                            DisplayText = $"📍  [{b.BranchCode}] {b.BranchName}"
+                        };
+                        int idx = _cmbBranchSelector.Items.Add(item);
+                        if (UserSession.SelectedBranchId.HasValue && UserSession.SelectedBranchId.Value == b.BranchId)
+                        {
+                            selectedIdx = idx;
+                        }
+                    }
+                    _cmbBranchSelector.SelectedIndex = selectedIdx;
+                }
+                else
+                {
+                    // Manager or Staff locked to assigned branch
+                    _cmbBranchSelector.Enabled = false;
+
+                    if (UserSession.UserBranchId.HasValue)
+                    {
+                        var userBranch = branches.FirstOrDefault(b => b.BranchId == UserSession.UserBranchId.Value);
+                        string code = userBranch?.BranchCode ?? "BR";
+                        string name = userBranch?.BranchName ?? UserSession.UserBranchName ?? "Assigned Branch";
+
+                        var item = new BranchScopeItem
+                        {
+                            BranchId = UserSession.UserBranchId.Value,
+                            BranchName = name,
+                            DisplayText = $"🔒  [{code}] {name}"
+                        };
+                        _cmbBranchSelector.Items.Add(item);
+                        _cmbBranchSelector.SelectedIndex = 0;
+                        _tips.SetToolTip(_cmbBranchSelector, $"Scoped strictly to your appointed branch: {name}.");
+                    }
+                    else
+                    {
+                        var item = new BranchScopeItem
+                        {
+                            BranchId = null,
+                            BranchName = "Unassigned",
+                            DisplayText = "🔒  [—] No Branch Assigned"
+                        };
+                        _cmbBranchSelector.Items.Add(item);
+                        _cmbBranchSelector.SelectedIndex = 0;
+                        _tips.SetToolTip(_cmbBranchSelector, "Your account is not assigned to a specific branch.");
+                    }
+                }
+            }
+            finally
+            {
+                _isUpdatingBranchSelection = false;
+            }
+        }
+
+        private void CmbBranchSelector_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_isUpdatingBranchSelection) return;
+            if (_cmbBranchSelector.SelectedItem is BranchScopeItem item)
+            {
+                if (UserSession.SelectedBranchId != item.BranchId)
+                {
+                    UserSession.SetSelectedBranch(item.BranchId, item.BranchName);
+                }
+            }
+        }
+
+        private void HandleBranchScopeChanged()
+        {
+            if (_isUpdatingBranchSelection) return;
+            _isUpdatingBranchSelection = true;
+            try
+            {
+                for (int i = 0; i < _cmbBranchSelector.Items.Count; i++)
+                {
+                    if (_cmbBranchSelector.Items[i] is BranchScopeItem item && item.BranchId == UserSession.SelectedBranchId)
+                    {
+                        _cmbBranchSelector.SelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                _isUpdatingBranchSelection = false;
+            }
         }
 
         protected override void OnMouseMove(MouseEventArgs e)

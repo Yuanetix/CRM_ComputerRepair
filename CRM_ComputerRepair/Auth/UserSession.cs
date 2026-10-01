@@ -16,6 +16,30 @@ namespace CRM.winforms.Auth
         public static bool HasAcceptedTerms { get; set; }
         public static System.DateTime? TermsAcceptedAt { get; set; }
         public static string Token { get; set; } = "";
+        public static System.Collections.Generic.List<string> SubscribedModules { get; set; } = new();
+
+        // ── Branch Scoping ──
+        public static int? UserBranchId { get; set; }
+        public static string? UserBranchName { get; set; }
+        public static int? SelectedBranchId { get; set; }
+        public static string SelectedBranchName { get; set; } = "All Branches";
+        public static event System.Action? OnBranchScopeChanged;
+
+        public static void SetSelectedBranch(int? branchId, string? branchName = null)
+        {
+            SelectedBranchId = branchId;
+            SelectedBranchName = branchId.HasValue && !string.IsNullOrWhiteSpace(branchName)
+                ? branchName
+                : (branchId.HasValue ? $"Branch #{branchId}" : "All Branches");
+            OnBranchScopeChanged?.Invoke();
+        }
+
+        public static bool HasModule(string moduleCode)
+        {
+            if (string.Equals(Role, "Super Admin", System.StringComparison.OrdinalIgnoreCase))
+                return true;
+            return SubscribedModules.Exists(m => string.Equals(m, moduleCode, System.StringComparison.OrdinalIgnoreCase));
+        }
 
         /// <summary>
         /// Returns a clean user display name. If full name is "Admin User", simplifies to "Admin".
@@ -69,6 +93,11 @@ namespace CRM.winforms.Auth
             HasAcceptedTerms = false;
             TermsAcceptedAt = null;
             Token = "";
+            SubscribedModules.Clear();
+            UserBranchId = null;
+            UserBranchName = null;
+            SelectedBranchId = null;
+            SelectedBranchName = "All Branches";
             LogoutRequested = false;
         }
     }

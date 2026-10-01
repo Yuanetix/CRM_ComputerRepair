@@ -29,9 +29,9 @@ public class UsersController : ControllerBase
         var isSuperAdmin = User.IsInRole("Super Admin");
 
         var query = _users.Users.AsNoTracking();
-        if (!isSuperAdmin && currentCompanyId > 0)
+        if (!isSuperAdmin)
         {
-            query = query.Where(u => u.CompanyId == currentCompanyId);
+            query = query.Where(u => u.CompanyId == currentCompanyId && u.UserName != "superadmin");
         }
 
         if (activeOnly == true)
@@ -51,6 +51,8 @@ public class UsersController : ControllerBase
                 FirstName = u.FirstName,
                 LastName = u.LastName,
                 CompanyId = u.CompanyId,
+                BranchId = u.BranchId,
+                AssignedBranchName = u.AssignedBranchName,
                 IsActive = u.IsActive,
                 CreatedAt = u.CreatedAt,
                 UpdatedAt = u.UpdatedAt,
@@ -69,7 +71,7 @@ public class UsersController : ControllerBase
 
         var currentCompanyId = UserSessionHelper.GetCompanyId(HttpContext);
         var isSuperAdmin = User.IsInRole("Super Admin");
-        if (!isSuperAdmin && currentCompanyId > 0 && u.CompanyId != currentCompanyId)
+        if (!isSuperAdmin && (u.CompanyId != currentCompanyId || string.Equals(u.UserName, "superadmin", StringComparison.OrdinalIgnoreCase)))
             return Forbid();
 
         var roles = await _users.GetRolesAsync(u);
@@ -82,6 +84,8 @@ public class UsersController : ControllerBase
             FirstName = u.FirstName,
             LastName = u.LastName,
             CompanyId = u.CompanyId,
+            BranchId = u.BranchId,
+            AssignedBranchName = u.AssignedBranchName,
             IsActive = u.IsActive,
             CreatedAt = u.CreatedAt,
             UpdatedAt = u.UpdatedAt,
@@ -98,12 +102,18 @@ public class UsersController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Role))
             request.Role = "Staff";
 
+        var currentCompanyId = UserSessionHelper.GetCompanyId(HttpContext);
+        var isSuperAdmin = User.IsInRole("Super Admin");
+
         var user = new User
         {
             UserName = request.UserName.Trim(),
             Email = request.Email.Trim(),
             FirstName = request.FirstName.Trim(),
             LastName = request.LastName.Trim(),
+            CompanyId = isSuperAdmin && request.CompanyId.HasValue ? request.CompanyId : currentCompanyId,
+            BranchId = request.BranchId,
+            AssignedBranchName = request.AssignedBranchName,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -130,6 +140,8 @@ public class UsersController : ControllerBase
             user.Email,
             user.FirstName,
             user.LastName,
+            user.BranchId,
+            user.AssignedBranchName,
             user.IsActive
         });
     }
@@ -143,10 +155,20 @@ public class UsersController : ControllerBase
         var user = await _users.FindByIdAsync(id);
         if (user is null) return NotFound();
 
+        var currentCompanyId = UserSessionHelper.GetCompanyId(HttpContext);
+        var isSuperAdmin = User.IsInRole("Super Admin");
+        if (!isSuperAdmin && (user.CompanyId != currentCompanyId || string.Equals(user.UserName, "superadmin", StringComparison.OrdinalIgnoreCase)))
+            return Forbid();
+
+        if (string.Equals(user.UserName, "superadmin", StringComparison.OrdinalIgnoreCase) && !isSuperAdmin)
+            return Forbid();
+
         user.FirstName = request.FirstName.Trim();
         user.LastName = request.LastName.Trim();
         user.Email = request.Email?.Trim();
         user.UserName = request.UserName?.Trim() ?? user.UserName;
+        user.BranchId = request.BranchId;
+        user.AssignedBranchName = request.AssignedBranchName;
         user.IsActive = request.IsActive;
         user.UpdatedAt = DateTime.UtcNow;
 
@@ -189,6 +211,14 @@ public class UsersController : ControllerBase
         var user = await _users.FindByIdAsync(id);
         if (user is null) return NotFound();
 
+        var currentCompanyId = UserSessionHelper.GetCompanyId(HttpContext);
+        var isSuperAdmin = User.IsInRole("Super Admin");
+        if (!isSuperAdmin && (user.CompanyId != currentCompanyId || string.Equals(user.UserName, "superadmin", StringComparison.OrdinalIgnoreCase)))
+            return Forbid();
+
+        if (string.Equals(user.UserName, "superadmin", StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
         user.IsActive = false;
         user.UpdatedAt = DateTime.UtcNow;
         await _users.UpdateAsync(user);
@@ -206,6 +236,11 @@ public class UsersController : ControllerBase
     {
         var user = await _users.FindByIdAsync(id);
         if (user is null) return NotFound();
+
+        var currentCompanyId = UserSessionHelper.GetCompanyId(HttpContext);
+        var isSuperAdmin = User.IsInRole("Super Admin");
+        if (!isSuperAdmin && (user.CompanyId != currentCompanyId || string.Equals(user.UserName, "superadmin", StringComparison.OrdinalIgnoreCase)))
+            return Forbid();
 
         user.IsActive = true;
         user.UpdatedAt = DateTime.UtcNow;

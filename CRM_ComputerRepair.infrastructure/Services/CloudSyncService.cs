@@ -180,8 +180,9 @@ public class CloudSyncService : ICloudSyncService
             try
             {
                 await context.Database.MigrateAsync(ct);
+                await EnsureCloudTenantBranchSchemaAsync(context, ct);
                 _migratedTenants.TryAdd(companyId, true);
-                _logger.LogInformation("Cloud database migrations confirmed for company {CompanyId}.", companyId);
+                _logger.LogInformation("Cloud database migrations and branch schema confirmed for company {CompanyId}.", companyId);
             }
             catch (Exception ex)
             {
@@ -262,6 +263,7 @@ public class CloudSyncService : ICloudSyncService
             {
                 try
                 {
+                    cloudDb.ChangeTracker.Clear();
                     await ApplyItemToCloudAsync(cloudDb, item, ct);
                     item.Status = "Synced";
                     item.SyncedAtUtc = DateTime.UtcNow;
@@ -270,6 +272,7 @@ public class CloudSyncService : ICloudSyncService
                 }
                 catch (Exception ex)
                 {
+                    cloudDb.ChangeTracker.Clear();
                     _logger.LogWarning(ex, "Failed to sync item {Id} ({EntityType}:{EntityId}) to cloud: {Message}",
                         item.Id, item.EntityType, item.EntityId, ex.Message);
                     item.RetryCount++;
@@ -428,6 +431,7 @@ public class CloudSyncService : ICloudSyncService
         model.RepairRequests = new List<RepairRequest>();
         model.CustomerInteractions = new List<CustomerInteraction>();
         model.Devices = new List<Device>();
+        model.Branch = null;
 
         var existing = await db.Customers.FirstOrDefaultAsync(x => x.CustomerId == model.CustomerId, ct);
         if (existing != null)
@@ -462,6 +466,7 @@ public class CloudSyncService : ICloudSyncService
         model.RepairRequests = new List<RepairRequest>();
         model.Customer = null;
         model.Company = null;
+        model.Branch = null;
 
         var existing = await db.Devices.FirstOrDefaultAsync(x => x.DeviceId == model.DeviceId, ct);
         if (existing != null)
@@ -493,6 +498,7 @@ public class CloudSyncService : ICloudSyncService
         if (model == null) return;
         model.Customer = null;
         model.Device = null;
+        model.Branch = null;
         model.CustomerInteractions = new List<CustomerInteraction>();
 
         var existing = await db.RepairRequests.FirstOrDefaultAsync(x => x.RepairRequestId == model.RepairRequestId, ct);
@@ -529,6 +535,7 @@ public class CloudSyncService : ICloudSyncService
         var model = JsonSerializer.Deserialize<Payment>(item.PayloadJson, _jsonOpts);
         if (model == null) return;
         model.RepairRequest = null;
+        model.Branch = null;
 
         var existing = await db.Payments.FirstOrDefaultAsync(x => x.PaymentId == model.PaymentId, ct);
         if (existing != null)
@@ -556,6 +563,7 @@ public class CloudSyncService : ICloudSyncService
         var model = JsonSerializer.Deserialize<CustomerInteraction>(item.PayloadJson, _jsonOpts);
         if (model == null) return;
         model.Customer = null;
+        model.Branch = null;
 
         var existing = await db.CustomerInteractions.FirstOrDefaultAsync(x => x.CustomerInteractionId == model.CustomerInteractionId, ct);
         if (existing != null)
@@ -585,6 +593,7 @@ public class CloudSyncService : ICloudSyncService
         if (model == null) return;
         model.Customer = null;
         model.RepairRequest = null;
+        model.Branch = null;
 
         var existing = await db.FollowUps.FirstOrDefaultAsync(x => x.FollowUpId == model.FollowUpId, ct);
         if (existing != null)
@@ -839,19 +848,76 @@ public class CloudSyncService : ICloudSyncService
         string sqlOn = $"SET IDENTITY_INSERT [{table}] ON;";
         string sqlOff = $"SET IDENTITY_INSERT [{table}] OFF;";
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        try
+        if (db.Database.CurrentTransaction != null)
         {
             await db.Database.ExecuteSqlRawAsync(sqlOn, ct);
-            await action();
-            await db.Database.ExecuteSqlRawAsync(sqlOff, ct);
-            await tx.CommitAsync(ct);
+            try
+            {
+                await action();
+            }
+            finally
+            {
+                try { await db.Database.ExecuteSqlRawAsync(sqlOff, ct); } catch { }
+            }
         }
-        catch
+        else
         {
-            try { await db.Database.ExecuteSqlRawAsync(sqlOff, ct); } catch { }
-            await tx.RollbackAsync(ct);
-            throw;
+            var strategy = db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var tx = await db.Database.BeginTransactionAsync(ct);
+                try
+                {
+                    await db.Database.ExecuteSqlRawAsync(sqlOn, ct);
+                    await action();
+                    await db.Database.ExecuteSqlRawAsync(sqlOff, ct);
+                    await tx.CommitAsync(ct);
+                }
+                catch
+                {
+                    try { await db.Database.ExecuteSqlRawAsync(sqlOff, ct); } catch { }
+                    await tx.RollbackAsync(ct);
+                    throw;
+                }
+            });
         }
+    }
+
+    private static async Task EnsureCloudTenantBranchSchemaAsync(TenantCrmDbContext db, CancellationToken ct)
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Branches')
+BEGIN
+    CREATE TABLE Branches (
+        BranchId INT IDENTITY(1,1) PRIMARY KEY,
+        CompanyId INT NULL,
+        BranchCode NVARCHAR(50) NOT NULL,
+        BranchName NVARCHAR(200) NOT NULL,
+        Address NVARCHAR(500) NULL,
+        City NVARCHAR(100) NULL,
+        StateOrProvince NVARCHAR(100) NULL,
+        PostalCode NVARCHAR(20) NULL,
+        Phone NVARCHAR(50) NULL,
+        Email NVARCHAR(200) NULL,
+        ManagerUserId NVARCHAR(450) NULL,
+        ManagerName NVARCHAR(200) NULL,
+        IsActive BIT NOT NULL DEFAULT 1,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        UpdatedAt DATETIME2 NULL
+    );
+END
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Branches_BranchCode' AND object_id = OBJECT_ID('Branches'))
+BEGIN
+    CREATE UNIQUE INDEX IX_Branches_BranchCode ON Branches(BranchCode);
+END
+
+IF COL_LENGTH('Customers', 'BranchId') IS NULL ALTER TABLE Customers ADD BranchId INT NULL;
+IF COL_LENGTH('RepairRequests', 'BranchId') IS NULL ALTER TABLE RepairRequests ADD BranchId INT NULL;
+IF COL_LENGTH('Devices', 'BranchId') IS NULL ALTER TABLE Devices ADD BranchId INT NULL;
+IF COL_LENGTH('CustomerInteractions', 'BranchId') IS NULL ALTER TABLE CustomerInteractions ADD BranchId INT NULL;
+IF COL_LENGTH('FollowUps', 'BranchId') IS NULL ALTER TABLE FollowUps ADD BranchId INT NULL;
+IF COL_LENGTH('Payments', 'BranchId') IS NULL ALTER TABLE Payments ADD BranchId INT NULL;
+", ct);
     }
 }

@@ -36,6 +36,8 @@ public class CreateCustomerRequest
 
     [Range(0, int.MaxValue, ErrorMessage = "Loyalty points cannot be negative.")]
     public int? LoyaltyPoints { get; set; }
+
+    public int? BranchId { get; set; }
 }
 
 public class UpdateCustomerRequest
@@ -69,4 +71,6 @@ public class UpdateCustomerRequest
 
     [MaxLength(100)]
     public string? Country { get; set; } = "Philippines";
+
+    public int? BranchId { get; set; }
 }

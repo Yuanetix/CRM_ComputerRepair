@@ -148,6 +148,12 @@ await using (var scope = app.Services.CreateAsyncScope())
             logger.LogInformation("Database reset and seed finished. Exiting as requested.");
             return;
         }
+        else if (args.Contains("--seed-only"))
+        {
+            await DatabaseSeeder.SeedAsync(scope.ServiceProvider, logger);
+            logger.LogInformation("Database seed finished. Exiting as requested.");
+            return;
+        }
         else
         {
             await DatabaseSeeder.SeedAsync(scope.ServiceProvider, logger);

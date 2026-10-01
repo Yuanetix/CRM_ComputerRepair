@@ -1,4 +1,4 @@
-﻿namespace CRM_ComputerRepair.domain.Entities;
+namespace CRM_ComputerRepair.domain.Entities;
 
 public enum RepairStatus
 {
@@ -38,8 +38,10 @@ public class RepairRequest
     public string? TechnicianNotes { get; set; }
     public string? AssignedToStaffId { get; set; }
     public string? AssignedToManagerId { get; set; }
+    public int? BranchId { get; set; }
 
     // Navigation
+    public Branch? Branch { get; set; }
     public Customer? Customer { get; set; }
     public Device? Device { get; set; }
     public ICollection<CustomerInteraction> CustomerInteractions { get; set; } = new List<CustomerInteraction>();

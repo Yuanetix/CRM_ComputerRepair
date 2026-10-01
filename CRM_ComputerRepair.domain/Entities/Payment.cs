@@ -1,4 +1,4 @@
-﻿namespace CRM_ComputerRepair.domain.Entities;
+namespace CRM_ComputerRepair.domain.Entities;
 
 public class Payment
 {
@@ -10,7 +10,9 @@ public class Payment
     public string? ReferenceNumber { get; set; }
     public bool IsPaid { get; set; } = false;
     public bool IsVoid { get; set; } = false;
+    public int? BranchId { get; set; }
 
     // Navigation
+    public Branch? Branch { get; set; }
     public RepairRequest? RepairRequest { get; set; }
 }

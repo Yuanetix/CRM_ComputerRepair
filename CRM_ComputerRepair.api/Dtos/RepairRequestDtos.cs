@@ -26,6 +26,8 @@ public class CreateRepairRequestRequest
 
     [Range(0, double.MaxValue, ErrorMessage = "Estimated cost cannot be negative.")]
     public decimal? EstimatedCost { get; set; }
+
+    public int? BranchId { get; set; }
 }
 
 public class UpdateRepairRequestRequest
@@ -73,6 +75,8 @@ public class UpdateRepairRequestRequest
 
     [MaxLength(450)]
     public string? AssignedToManagerId { get; set; }
+
+    public int? BranchId { get; set; }
 }
 
 public class ApproveRepairRequestRequest
@@ -144,4 +148,6 @@ public class RepairRequestResponseDto
     public string? TechnicianNotes { get; set; }
     public string? AssignedToStaffId { get; set; }
     public string? AssignedToManagerId { get; set; }
+    public int? BranchId { get; set; }
+    public string? BranchName { get; set; }
 }

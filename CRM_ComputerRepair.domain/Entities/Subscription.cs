@@ -17,9 +17,19 @@ public class Subscription
     public bool IsActive { get; set; } = true;
     public bool IsArchived { get; set; } = false;
     public string? BillingCycle { get; set; } = "Monthly";
+    public string Status { get; set; } = "Active";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
+    public int? SubscriptionPlanId { get; set; }
+    public int? PlanId
+    {
+        get => SubscriptionPlanId;
+        set => SubscriptionPlanId = value;
+    }
+
     // Navigation
     public Company? Company { get; set; }
+    public SubscriptionPlan? Plan { get; set; }
+    public ICollection<CompanySubscriptionModule> SubscriptionModules { get; set; } = new List<CompanySubscriptionModule>();
 }

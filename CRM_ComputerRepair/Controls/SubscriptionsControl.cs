@@ -21,6 +21,9 @@ namespace CRM.winforms
 
         // ── Controls ──
         private Label lblTitle = null!;
+        private SaasButton btnTenantSubs = null!;
+        private SaasButton btnAuditHistory = null!;
+        private SaasButton btnModulePricing = null!;
         private SaasButton btnAdd = null!;
         private SaasButton btnRefresh = null!;
 
@@ -139,15 +142,38 @@ namespace CRM.winforms
                 UseMnemonic = false
             };
 
-            btnAdd = new SaasButton("Add Plan", SaasButtonVariant.Primary, "\uE710");
-            btnAdd.Size = new Size(140, 36);
+            btnAdd = new SaasButton("Add Plan", SaasButtonVariant.Secondary, "\uE710");
+            btnAdd.Size = new Size(115, 36);
             btnAdd.Click += async (s, e) => await AddPlanAsync();
 
+            btnModulePricing = new SaasButton("Module Pricing", SaasButtonVariant.Secondary, "\uE8A1");
+            btnModulePricing.Size = new Size(140, 36);
+            btnModulePricing.Click += (s, e) =>
+            {
+                using var dlg = new ModulePricingDialog();
+                dlg.ShowDialog(this.FindForm());
+            };
+
+            btnAuditHistory = new SaasButton("Audit History", SaasButtonVariant.Secondary, "\uE81C");
+            btnAuditHistory.Size = new Size(130, 36);
+            btnAuditHistory.Click += (s, e) =>
+            {
+                using var dlg = new SubscriptionHistoryDialog();
+                dlg.ShowDialog(this.FindForm());
+            };
+
+            btnTenantSubs = new SaasButton("Tenant Modules & Billing", SaasButtonVariant.Primary, "\uE716");
+            btnTenantSubs.Size = new Size(200, 36);
+            btnTenantSubs.Click += async (s, e) => await OpenTenantSubscriptionPickerAsync();
+
             btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
-            btnRefresh.Size = new Size(100, 36);
+            btnRefresh.Size = new Size(95, 36);
             btnRefresh.Click += async (s, e) => await ReloadAsync();
 
             Controls.Add(lblTitle);
+            Controls.Add(btnTenantSubs);
+            Controls.Add(btnAuditHistory);
+            Controls.Add(btnModulePricing);
             Controls.Add(btnAdd);
             Controls.Add(btnRefresh);
 
@@ -255,7 +281,10 @@ namespace CRM.winforms
 
             int btnY = pad;
             btnRefresh.Location = new Point(pad + contentW - btnRefresh.Width, btnY);
-            btnAdd.Location = new Point(btnRefresh.Left - btnAdd.Width - 10, btnY);
+            btnAdd.Location = new Point(btnRefresh.Left - btnAdd.Width - 8, btnY);
+            btnModulePricing.Location = new Point(btnAdd.Left - btnModulePricing.Width - 8, btnY);
+            btnAuditHistory.Location = new Point(btnModulePricing.Left - btnAuditHistory.Width - 8, btnY);
+            btnTenantSubs.Location = new Point(btnAuditHistory.Left - btnTenantSubs.Width - 8, btnY);
 
             int y = lblTitle.Bottom + 20;
 
@@ -717,26 +746,42 @@ namespace CRM.winforms
 
         private async Task AddPlanAsync()
         {
-            using var dlg = new SubscriptionFormDialog(null);
-            if (dlg.ShowModal(FindForm()) == DialogResult.OK && dlg.ResultPlan != null)
+            using var dlg = new SubscriptionPlanDialog();
+            if (dlg.ShowDialog(FindForm()) == DialogResult.OK)
             {
-                SaasToast.Show(FindForm(),
-                    $"Created plan '{dlg.ResultPlan.SubscriptionName}'!",
-                    ToastKind.Success);
+                SaasToast.Show(FindForm(), "Created plan successfully!", ToastKind.Success);
                 await ReloadAsync();
             }
         }
 
-        private void EditCurrentPlan()
+        private async void EditCurrentPlan()
         {
             var item = CurrentItem;
             if (item == null) return;
 
-            using var dlg = new SubscriptionFormDialog(item);
-            if (dlg.ShowModal(FindForm()) == DialogResult.OK)
+            try
             {
-                SaasToast.Show(FindForm(), $"Updated plan '{item.SubscriptionName}'.", ToastKind.Success);
-                _ = ReloadAsync();
+                var plan = await _api.GetPlanByIdAsync(item.SubscriptionId);
+                using var dlg = new SubscriptionPlanDialog(plan ?? new SubscriptionPlanDto
+                {
+                    PlanId = item.SubscriptionId,
+                    PlanName = item.SubscriptionName,
+                    Price = item.PricePerMonth,
+                    MaxUsers = item.MaxUsers,
+                    MaxDevices = item.MaxDevices,
+                    BillingInterval = item.BillingCycle ?? "Monthly",
+                    Description = item.Description
+                });
+
+                if (dlg.ShowDialog(FindForm()) == DialogResult.OK)
+                {
+                    SaasToast.Show(FindForm(), $"Updated plan '{item.SubscriptionName}'.", ToastKind.Success);
+                    await ReloadAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                SaasToast.Show(FindForm(), $"Failed to open plan editor: {ex.Message}", ToastKind.Danger);
             }
         }
 
@@ -801,6 +846,39 @@ namespace CRM.winforms
             catch (Exception ex)
             {
                 SaasToast.Show(FindForm(), $"Failed to restore plan: {ex.Message}", ToastKind.Danger);
+            }
+        }
+
+        private async Task OpenTenantSubscriptionPickerAsync()
+        {
+            try
+            {
+                var companies = await _api.GetCompaniesAsync();
+                var form = FindForm();
+                if (companies == null || companies.Count == 0)
+                {
+                    if (form != null) Toast.Notify(form, "No Tenants", "No companies registered yet.", ToastKind.Warning);
+                    return;
+                }
+
+                var menu = new ContextMenuStrip { ShowImageMargin = false, Font = UiKit.Body };
+                menu.Renderer = new QuietMenuRenderer();
+                foreach (var c in companies)
+                {
+                    var item = new ToolStripMenuItem($"{c.CompanyName} (ID: {c.CompanyId})") { Height = 32 };
+                    item.Click += (s, e) =>
+                    {
+                        using var dlg = new CompanySubscriptionDialog(c.CompanyId, c.CompanyName);
+                        dlg.ShowDialog(FindForm());
+                    };
+                    menu.Items.Add(item);
+                }
+                menu.Show(btnTenantSubs, new Point(0, btnTenantSubs.Height + 2));
+            }
+            catch (Exception ex)
+            {
+                var f = FindForm();
+                if (f != null) Toast.Notify(f, "Error", ex.Message, ToastKind.Danger);
             }
         }
 

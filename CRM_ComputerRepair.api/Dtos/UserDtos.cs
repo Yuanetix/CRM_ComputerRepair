@@ -11,6 +11,8 @@ public class UserSummaryDto
     public string LastName { get; set; } = "";
     public bool IsActive { get; set; }
     public int? CompanyId { get; set; }
+    public int? BranchId { get; set; }
+    public string? AssignedBranchName { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public List<string> Roles { get; set; } = new();
@@ -41,6 +43,9 @@ public class UpdateUserRequest
 
     [MaxLength(50)]
     public string? Role { get; set; }
+
+    public int? BranchId { get; set; }
+    public string? AssignedBranchName { get; set; }
 }
 
 public class CreateUserRequest
@@ -69,4 +74,8 @@ public class CreateUserRequest
     [Required(ErrorMessage = "Role is required.")]
     [MaxLength(50)]
     public string Role { get; set; } = "Staff";
+
+    public int? BranchId { get; set; }
+    public string? AssignedBranchName { get; set; }
+    public int? CompanyId { get; set; }
 }

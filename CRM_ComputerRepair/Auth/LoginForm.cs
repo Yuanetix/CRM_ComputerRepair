@@ -612,8 +612,23 @@ namespace CRM.winforms.Auth
                 UserSession.CompanyId = result.CompanyId > 0 ? result.CompanyId : companyId;
                 UserSession.CompanyName = result.CompanyName ?? "";
                 UserSession.HasAcceptedTerms = result.HasAcceptedTerms;
-                UserSession.TermsAcceptedAt = result.TermsAcceptedAt;
                 UserSession.Token = result.Token;
+                UserSession.SubscribedModules = result.SubscribedModules ?? new();
+                UserSession.UserBranchId = result.BranchId;
+                UserSession.UserBranchName = result.BranchName;
+
+                if (!string.Equals(result.Role, "Admin", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(result.Role, "Super Admin", StringComparison.OrdinalIgnoreCase) &&
+                    result.BranchId.HasValue)
+                {
+                    UserSession.SelectedBranchId = result.BranchId;
+                    UserSession.SelectedBranchName = result.BranchName ?? $"Branch #{result.BranchId}";
+                }
+                else
+                {
+                    UserSession.SelectedBranchId = null;
+                    UserSession.SelectedBranchName = "All Branches";
+                }
 
                 DialogResult = DialogResult.OK;
                 Close();

@@ -23,6 +23,7 @@ namespace CRM.winforms
         private Label _lblMeta = null!;
         private readonly ApiClient _api = new();
         private readonly System.Windows.Forms.Timer _syncPollTimer = new();
+        private string _currentKey = "dashboard";
 
         private sealed record PageMeta(string Title, string Subtitle, string Group);
 
@@ -57,7 +58,25 @@ namespace CRM.winforms
             topBar.ProfileClicked += TopBar_ProfileClicked;
             topBar.BellClicked += TopBar_BellClicked;
             topBar.SyncClicked += TopBar_SyncClicked;
-            topBar.BrandClicked += (s, e) => NavigateTo("dashboard");
+            topBar.BrandClicked += (s, e) => NavigateTo(sidebar.KeysInOrder.FirstOrDefault(k => CanAccessPage(k, out _)) ?? "dashboard");
+
+            UserSession.OnBranchScopeChanged += () =>
+            {
+                if (IsDisposed) return;
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        if (!IsDisposed && !string.IsNullOrEmpty(_currentKey))
+                            NavigateTo(_currentKey);
+                    }));
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(_currentKey))
+                        NavigateTo(_currentKey);
+                }
+            };
 
             this.Load += MainForm_Load;
             this.FormClosed += (s, e) => _syncPollTimer.Stop();
@@ -74,12 +93,14 @@ namespace CRM.winforms
 
             topBar.SetUser(UserSession.FullName, UserSession.Role, UserSession.CompanyId);
             topBar.NotificationCount = 0;
+            _ = topBar.RefreshBranchScopeAsync();
 
             BuildStatusMeta();
 
             this.Text = $"Fixory — CRM for Computer Repair  ·  {displayUser} ({UserSession.Role})";
 
-            string defaultKey = sidebar.KeysInOrder.Contains("dashboard") ? "dashboard" : (sidebar.KeysInOrder.FirstOrDefault() ?? "dashboard");
+            string defaultKey = sidebar.KeysInOrder.FirstOrDefault(k => CanAccessPage(k, out _))
+                ?? (sidebar.KeysInOrder.FirstOrDefault() ?? "dashboard");
             NavigateTo(defaultKey);
             Toast.Notify(this, $"Welcome back, {displayUser}.",
                 "Press Ctrl+K to jump anywhere.", ToastKind.Info);
@@ -187,6 +208,7 @@ namespace CRM.winforms
         private void OpenPalette()
         {
             var entries = Pages
+                .Where(kv => CanAccessPage(kv.Key, out _))
                 .Select(kv => new CommandPalette.Entry(
                     kv.Key, kv.Value.Title, kv.Value.Group,
                     SidebarControl.IconFor(kv.Key),
@@ -209,6 +231,60 @@ namespace CRM.winforms
             NavigateTo(key);
         }
 
+        public static bool CanAccessPage(string key, out string denialReason)
+        {
+            denialReason = string.Empty;
+            if (string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Administrative pages
+            if (key is "companies" or "subscriptions" or "admin-accounts" or "system-monitor")
+            {
+                denialReason = "This page is restricted to Super Admin.";
+                return false;
+            }
+
+            // User accounts & Terms are standard company modules
+            if (key is "user-accounts" or "terms")
+            {
+                return true;
+            }
+
+            // Subscribed Module checks
+            string? requiredModule = key switch
+            {
+                "repairs" => "MAIN_TRANSACTIONS",
+                "staff-activity" => "MAIN_TRANSACTIONS",
+                "customers" => "DATA_COLLECTION",
+                "customer-history" => "DATA_COLLECTION",
+                "dashboard" => "BUSINESS_INTELLIGENCE",
+                "reports" => "BUSINESS_INTELLIGENCE",
+                "follow-ups" => "ACTIONS",
+                "interactions" => "ACTIONS",
+                "retention" => "ACTIONS",
+                "loyalty" => "ACTIONS",
+                "branching" => "BRANCHING",
+                _ => null
+            };
+
+            if (requiredModule != null && !UserSession.HasModule(requiredModule))
+            {
+                string moduleName = requiredModule switch
+                {
+                    "MAIN_TRANSACTIONS" => "Main Transactions",
+                    "DATA_COLLECTION" => "Data Collection",
+                    "BUSINESS_INTELLIGENCE" => "Business Intelligence",
+                    "ACTIONS" => "Retention",
+                    "BRANCHING" => "Branching",
+                    _ => requiredModule
+                };
+                denialReason = $"Your company has not subscribed to the '{moduleName}' module.";
+                return false;
+            }
+
+            return true;
+        }
+
         private void NavigateTo(string key)
         {
             int? targetCustomerId = null;
@@ -222,7 +298,14 @@ namespace CRM.winforms
                 key = "customer-history";
             }
 
+            if (!CanAccessPage(key, out string denialReason))
+            {
+                Toast.Notify(this, "Module Not Subscribed", denialReason, ToastKind.Warning);
+                return;
+            }
+
             sidebar.ActiveKey = key;
+            _currentKey = key;
 
             pnlContent.Controls.Clear();
 

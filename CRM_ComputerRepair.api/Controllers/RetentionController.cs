@@ -4,6 +4,7 @@ using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Data;
 using CRM_ComputerRepair.infrastructure.Services;
+using CRM_ComputerRepair.api.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,7 +12,8 @@ namespace CRM_ComputerRepair.api.Controllers;
 
 [ApiController]
 [Route("tenant/{companyId:int}/retention")]
-[Authorize(Roles = "Manager,Admin,Super Admin")]
+[Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
+[RequireSubscribedModule(ModuleCodes.Actions, ModuleCodes.BusinessIntelligence)]
 public class RetentionController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;

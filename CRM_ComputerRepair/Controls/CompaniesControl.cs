@@ -109,7 +109,21 @@ namespace CRM.winforms.Controls
             var miToggle = new ToolStripMenuItem("Toggle Active / Deactivate") { Height = 32 };
             miToggle.Click += async (s, e) => await ToggleCompanyStatusAsync();
 
-            _actionsMenu.Items.AddRange(new ToolStripItem[] { miView, miEdit, new ToolStripSeparator(), miToggle });
+            var miSub = new ToolStripMenuItem("Manage Subscription & Modules") { Height = 32 };
+            miSub.Click += (s, e) => ManageCompanySubscription();
+
+            _actionsMenu.Items.AddRange(new ToolStripItem[] { miView, miEdit, miSub, new ToolStripSeparator(), miToggle });
+        }
+
+        private void ManageCompanySubscription()
+        {
+            var item = CurrentItem;
+            if (item == null) return;
+            using var dlg = new CompanySubscriptionDialog(item.CompanyId, item.CompanyName);
+            if (dlg.ShowDialog(this.FindForm()) == DialogResult.OK)
+            {
+                _ = ReloadAsync();
+            }
         }
 
         private void BuildUi()

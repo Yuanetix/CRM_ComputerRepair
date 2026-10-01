@@ -28,4 +28,7 @@ public class LoginResponse
     public bool HasAcceptedTerms { get; set; }
     public DateTime? TermsAcceptedAt { get; set; }
     public string Token { get; set; } = string.Empty;
+    public List<string> SubscribedModules { get; set; } = new();
+    public int? BranchId { get; set; }
+    public string? BranchName { get; set; }
 }

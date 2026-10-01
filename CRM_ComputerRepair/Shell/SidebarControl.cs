@@ -148,7 +148,8 @@ namespace CRM.winforms
             role ??= "Staff";
             string comp = (UserSession.CompanyName ?? "").ToLowerInvariant();
             string user = (UserSession.Username ?? "").ToLowerInvariant();
-            string menuKey = $"{role}_{comp}_{user}";
+            string modulesKey = string.Join(",", (UserSession.SubscribedModules ?? Enumerable.Empty<string>()).OrderBy(x => x));
+            string menuKey = $"{role}_{comp}_{user}_{modulesKey}";
             if (menuKey == _builtRole && _buttons.Count > 0) return;
             _builtRole = menuKey;
             _userRole = role;
@@ -162,34 +163,9 @@ namespace CRM.winforms
             {
                 BuildSuperAdminMenu();
             }
-            else if (string.Equals(role, "Manager", StringComparison.OrdinalIgnoreCase))
-            {
-                BuildManagerMenu(comp, user);
-            }
-            else if (string.Equals(role, "Staff", StringComparison.OrdinalIgnoreCase))
-            {
-                BuildStaffMenu(comp, user);
-            }
-            else if (comp.Contains("fixtech") || user.Contains("fixtech"))
-            {
-                BuildFixtechMenu();
-            }
-            else if (comp.Contains("bytecare") || user.Contains("bytecare"))
-            {
-                BuildBytecareMenu();
-            }
-            else if (comp.Contains("techrevive") || user.Contains("techrevive"))
-            {
-                BuildTechreviveMenu();
-            }
             else
             {
-                switch (role)
-                {
-                    case "Admin": BuildAdminMenu(); break;
-                    case "Manager": BuildManagerMenu(comp, user); break;
-                    default: BuildStaffMenu(comp, user); break;
-                }
+                BuildTenantMenu(role);
             }
 
             foreach (var kv in _buttons) _tips.SetToolTip(kv.Value, kv.Value.Title);
@@ -209,97 +185,82 @@ namespace CRM.winforms
             AddSection("Admin Panel");
             AddNav("system-monitor", IconFor("system-monitor"), "System monitor");
             AddNav("admin-accounts", IconFor("admin-accounts"), "Admin accounts");
-            AddNav("user-accounts", IconFor("user-accounts"), "User accounts");
             AddNav("terms", IconFor("terms"), "Terms & conditions");
         }
 
-        private void BuildFixtechMenu()
+        private void BuildTenantMenu(string role)
         {
-            AddSection("Main Transactions");
-            AddNav("repairs", IconFor("repairs"), "Repair requests");
+            bool isStaff = string.Equals(role, "Staff", StringComparison.OrdinalIgnoreCase);
+            bool isManager = string.Equals(role, "Manager", StringComparison.OrdinalIgnoreCase);
+            bool isAdmin = string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase);
 
-            AddSection("Data Collection");
-            AddNav("customers", IconFor("customers"), "Customers");
-            AddNav("customer-history", IconFor("customer-history"), "Customer history");
-        }
-
-        private void BuildBytecareMenu()
-        {
-            AddSection("Business Intelligence");
-            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
-            AddNav("reports", IconFor("reports"), "Reports");
-
-            AddSection("Actions");
-            AddNav("follow-ups", IconFor("follow-ups"), "Follow-ups");
-            AddNav("interactions", IconFor("interactions"), "Interactions");
-            AddNav("retention", IconFor("retention"), "Retention");
-        }
-
-        private void BuildTechreviveMenu()
-        {
-            AddSection("Branching");
-            AddNav("branching", IconFor("branching"), "Branch management");
-
-            AddSection("Business Intelligence");
-            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
-            AddNav("reports", IconFor("reports"), "Reports");
-
-            AddSection("Actions");
-            AddNav("follow-ups", IconFor("follow-ups"), "Follow-ups");
-            AddNav("interactions", IconFor("interactions"), "Interactions");
-            AddNav("retention", IconFor("retention"), "Retention");
-        }
-
-        private void BuildAdminMenu()
-        {
-            AddSection("Main");
-            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
-            AddNav("reports", IconFor("reports"), "Reports");
-            AddNav("retention", IconFor("retention"), "Retention");
-            AddSection("Administration");
-            AddNav("user-accounts", IconFor("user-accounts"), "User accounts");
-            AddNav("loyalty", IconFor("loyalty"), "Loyalty programs");
-            AddNav("terms", IconFor("terms"), "Terms & conditions");
-        }
-
-        private void BuildManagerMenu(string comp = "", string user = "")
-        {
-            AddSection("Overview & Intelligence");
-            AddNav("dashboard", IconFor("dashboard"), "Dashboard");
-            AddNav("reports", IconFor("reports"), "Reports & analytics");
-
-            AddSection("Operations");
-            AddNav("repairs", IconFor("repairs"), "Repair requests");
-            AddNav("staff-activity", IconFor("staff-activity"), "Staff activity");
-
-            AddSection("Loyalty & Customer Care");
-            AddNav("loyalty", IconFor("loyalty"), "Loyalty programs");
-
-            if (comp.Contains("techrevive") || user.Contains("techrevive"))
+            // 1. Branching
+            if (UserSession.HasModule("BRANCHING"))
             {
                 AddSection("Branching");
                 AddNav("branching", IconFor("branching"), "Branch management");
             }
 
-            if (comp.Contains("bytecare") || user.Contains("bytecare"))
+            // 2. Business Intelligence
+            if (UserSession.HasModule("BUSINESS_INTELLIGENCE"))
             {
-                AddNav("retention", IconFor("retention"), "Customer retention");
+                AddSection("Business Intelligence");
+                AddNav("dashboard", IconFor("dashboard"), "Dashboard");
+                if (!isStaff)
+                {
+                    AddNav("reports", IconFor("reports"), "Reports & analytics");
+                }
             }
-        }
 
-        private void BuildStaffMenu(string comp = "", string user = "")
-        {
-            AddSection("Overview");
-            AddNav("dashboard", IconFor("dashboard"), "Operations dashboard");
+            // 3. Main Transactions
+            if (UserSession.HasModule("MAIN_TRANSACTIONS"))
+            {
+                AddSection("Main Transactions");
+                AddNav("repairs", IconFor("repairs"), "Repair requests");
+                if (isManager || isAdmin)
+                {
+                    AddNav("staff-activity", IconFor("staff-activity"), "Staff activity");
+                }
+            }
 
-            AddSection("Customer Care");
-            AddNav("customers", IconFor("customers"), "Customers");
-            AddNav("follow-ups", IconFor("follow-ups"), "Follow-ups");
-            AddNav("interactions", IconFor("interactions"), "Customer interactions");
-            AddNav("customer-history", IconFor("customer-history"), "Customer history");
+            // 4. Data Collection
+            if (UserSession.HasModule("DATA_COLLECTION"))
+            {
+                AddSection("Data Collection");
+                AddNav("customers", IconFor("customers"), "Customers");
+                AddNav("customer-history", IconFor("customer-history"), "Customer history");
+            }
 
-            AddSection("Repair Workbench");
-            AddNav("repairs", IconFor("repairs"), "Repair requests");
+            // 5. Retention (formerly Actions)
+            if (UserSession.HasModule("ACTIONS") || UserSession.HasModule("RETENTION"))
+            {
+                AddSection("Retention");
+                if (!isAdmin)
+                {
+                    // Operational Follow-ups & Interactions handled by Staff and Managers
+                    AddNav("follow-ups", IconFor("follow-ups"), "Follow-ups");
+                    AddNav("interactions", IconFor("interactions"), "Interactions");
+                }
+                if (isAdmin || isManager)
+                {
+                    // Admin & Manager manage retention campaigns & loyalty programs
+                    AddNav("retention", IconFor("retention"), "Retention");
+                    AddNav("loyalty", IconFor("loyalty"), "Loyalty programs");
+                }
+            }
+
+            // 6. Administration
+            if (isAdmin || isManager)
+            {
+                AddSection("Administration");
+                AddNav("user-accounts", IconFor("user-accounts"), "User accounts");
+                AddNav("terms", IconFor("terms"), "Terms & conditions");
+            }
+            else
+            {
+                AddSection("Compliance");
+                AddNav("terms", IconFor("terms"), "Terms & conditions");
+            }
         }
 
         private void AddSection(string text)

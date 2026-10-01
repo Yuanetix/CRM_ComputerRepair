@@ -1,557 +1,821 @@
+using CRM.winforms.Auth;
+using CRM.winforms.Forms;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace CRM.winforms.Controls
 {
     /// <summary>
-    /// Multi-branch management control for enterprise tenants (TechRevive).
-    /// Displays branch locations, operational status, inter-branch repair transfers,
-    /// and regional business metrics.
-    /// 
-    /// Layout (flat, no cards):
-    ///   1. Header          – page title + subtitle
-    ///   2. Summary strip   – four network-wide figures on a single line
-    ///   3. Toolbar         – section title + short explanation of branch switching
-    ///   4. Branch directory – one table row per branch, "Switch Context" per row
+    /// Multi-Branching & Regional Operations Management Control.
+    /// Provides top KPI summary cards, real-time search & filters,
+    /// dynamic branch directory DataGridView with styled badges, manager avatars,
+    /// and a 3-dot context menu for branch operations.
     /// </summary>
     [DesignerCategory("Code")]
     public class BranchingControl : UserControl
     {
-        private Panel pnlHeader = null!;
-        private Panel pnlToolbar = null!;
-        private StatStrip stripStats = null!;
-        private DataGridView grid = null!;
+        private readonly ApiClient _api = new();
+        private List<BranchDto> _allBranches = new();
+        private List<BranchDto> _filteredBranches = new();
+
+        // ── Controls ──
         private Label lblTitle = null!;
         private Label lblSubtitle = null!;
-        private Label lblSection = null!;
-        private Label lblHint = null!;
+        private SaasButton btnNewBranch = null!;
+        private SaasButton btnRefresh = null!;
 
-        private BranchInfo[] _branches = null!;
+        // ── KPI Summary Tiles ──
+        private KpiTile tileActiveBranches = null!;
+        private KpiTile tileTotalStaff = null!;
+        private KpiTile tileActivePipeline = null!;
+        private KpiTile tileRevenue = null!;
+        private readonly List<KpiTile> _tiles = new();
+
+        // ── Workbench Card ──
+        private WorkbenchCard card = null!;
+        private WorkbenchSearch searchBox = null!;
+        private CheckBox chkIncludeInactive = null!;
+        private Label lblCount = null!;
+        private DataGridView dgv = null!;
+        private WorkbenchState emptyState = null!;
+
+        // ── Context Menu ──
+        private ContextMenuStrip _actionsMenu = null!;
+        private int _actionRowIndex = -1;
         private int _hoverRow = -1;
+        private int _hoverCol = -1;
 
-        // ── Layout constants ─────────────────────────────────────────────────
-        private const int PageMargin = 24;
-        private const int HeaderRowHeight = 38;
-        private const int BodyRowHeight = 58;
+        // ── Constants & Helpers ──
+        private const int ColCode = 0;
+        private const int ColName = 1;
+        private const int ColLocation = 2;
+        private const int ColManager = 3;
+        private const int ColStaff = 4;
+        private const int ColRecords = 5;
+        private const int ColStatus = 6;
+        private const int ColActions = 7;
 
-        // ── Column indexes ───────────────────────────────────────────────────
-        private const int ColBranch = 0;
-        private const int ColLocation = 1;
-        private const int ColTechnicians = 2;
-        private const int ColRepairs = 3;
-        private const int ColRevenue = 4;
-        private const int ColStatus = 5;
-        private const int ColAction = 6;
-
-        // ── Fonts (created once) ─────────────────────────────────────────────
-        private static readonly Font IconFont = new("Segoe MDL2 Assets", 16F);
-        private static readonly Font SectionFont = new("Segoe UI Semibold", 11F);
-        private static readonly Font RowTitleFont = new("Segoe UI Semibold", 9.5F);
-        private static readonly Font RowValueFont = new("Segoe UI Semibold", 9.5F);
-        private static readonly Font HeaderCellFont = new("Segoe UI Semibold", 7.5F);
-        private static readonly Font StatValueFont = new("Segoe UI Semibold", 13F);
-
-        private const TextFormatFlags TextFlags =
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
-            TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis;
-
-        private static readonly Color Green = Color.FromArgb(16, 185, 129);
-        private static readonly Color Blue = Color.FromArgb(59, 130, 246);
+        private static readonly Color PrimaryAccent = Color.FromArgb(37, 99, 235);
+        private static readonly Color Emerald = Color.FromArgb(16, 185, 129);
+        private static readonly Color NeutralGray = Color.FromArgb(107, 114, 128);
 
         public BranchingControl()
         {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
             DoubleBuffered = true;
             BackColor = AppTheme.Background;
             Dock = DockStyle.Fill;
 
-            _branches = new[]
+            BuildActionsMenu();
+            BuildUi();
+
+            Load += async (s, e) => await ReloadAsync();
+        }
+
+        private void BuildActionsMenu()
+        {
+            _actionsMenu = new ContextMenuStrip
             {
-                new BranchInfo(
-                    "Main Flagship - BGC Taguig", "BR-BGC-01", "Main Operations Hub",
-                    "G/F High Street South Corporate Plaza, 26th St, Taguig", "+63 920 555 3031",
-                    "14", "112", "₱185,200", "PRIMARY HUB", Green),
-                new BranchInfo(
-                    "Makati Central Branch", "BR-MKT-02", "Full Service Center",
-                    "Level 3 Ayala Malls Circuit, Theater Drive, Makati", "+63 920 555 3032",
-                    "8", "64", "₱118,900", "ONLINE", Blue),
-                new BranchInfo(
-                    "Quezon City North Branch", "BR-QC-03", "Hardware & Component Repair",
-                    "Unit 102 Gilmore Tech Plaza, Aurora Blvd, Quezon City", "+63 920 555 3033",
-                    "10", "88", "₱124,400", "ONLINE", Blue),
-                new BranchInfo(
-                    "Alabang South Branch", "BR-ALB-04", "Express Diagnostics Hub",
-                    "Unit 405 Filinvest Corporate Center, Alabang, Muntinlupa", "+63 920 555 3034",
-                    "6", "45", "₱54,000", "ONLINE", Blue),
+                ShowImageMargin = false,
+                Font = UiKit.T.Body,
+                Renderer = new QuietMenuRenderer()
             };
 
-            BuildUi();
+            var miEdit = new ToolStripMenuItem("✏️  Edit Branch") { Height = 32 };
+            miEdit.Click += (s, e) => EditSelectedBranch();
+
+            var miSwitch = new ToolStripMenuItem("📍  Switch Scope To This Branch") { Height = 32 };
+            miSwitch.Click += (s, e) => SwitchScopeToSelectedBranch();
+
+            var miToggle = new ToolStripMenuItem("⛔  Deactivate Branch") { Height = 32 };
+            miToggle.Click += async (s, e) => await ToggleActiveStatusAsync();
+
+            _actionsMenu.Items.AddRange(new ToolStripItem[] { miEdit, miSwitch, new ToolStripSeparator(), miToggle });
+
+            _actionsMenu.Opening += (s, e) =>
+            {
+                var branch = SelectedBranch;
+                if (branch == null)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                bool isAdmin = string.Equals(UserSession.Role, "Admin", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase);
+
+                miEdit.Visible = isAdmin;
+                miToggle.Visible = isAdmin;
+                miToggle.Text = branch.IsActive ? "⛔  Deactivate Branch" : "✅  Reactivate Branch";
+
+                // Non-admins can only see Switch if they are allowed (manager/staff locked)
+                miSwitch.Enabled = isAdmin || (UserSession.UserBranchId.HasValue && UserSession.UserBranchId.Value == branch.BranchId);
+            };
         }
 
-        protected override void OnLoad(EventArgs e)
+        private BranchDto? SelectedBranch
         {
-            base.OnLoad(e);
-            grid.ClearSelection();
-            grid.CurrentCell = null;
+            get
+            {
+                if (_actionRowIndex >= 0 && _actionRowIndex < _filteredBranches.Count)
+                    return _filteredBranches[_actionRowIndex];
+                return null;
+            }
         }
-
-        // ════════════════════════════════════════════════════════════════════
-        //  UI construction
-        // ════════════════════════════════════════════════════════════════════
 
         private void BuildUi()
         {
             SuspendLayout();
 
-            // WinForms docks in reverse add-order: Fill first, then the Top panels
-            // from the bottom-most to the top-most.
-
-            // ── 4. Branch directory (Fill) ───────────────────────────────────
-            grid = BuildGrid();
-
-            var gridFrame = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = HeaderRowHeight + (_branches.Length * BodyRowHeight) + 2,
-                Padding = new Padding(1),
-                BackColor = AppTheme.Border
-            };
-            gridFrame.Controls.Add(grid);
-
-            var pnlBody = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = AppTheme.Background,
-                Padding = new Padding(PageMargin, 0, PageMargin, PageMargin),
-                AutoScroll = true
-            };
-            pnlBody.Controls.Add(gridFrame);
-            Controls.Add(pnlBody);
-
-            // ── 3. Toolbar ───────────────────────────────────────────────────
-            pnlToolbar = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 58,
-                BackColor = AppTheme.Background,
-                Padding = new Padding(PageMargin + 1, 12, PageMargin + 1, 0)
-            };
-
-            lblSection = new Label
-            {
-                Text = "Branch Directory",
-                Font = SectionFont,
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                Dock = DockStyle.Left,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-
-            lblHint = new Label
-            {
-                Text = $"{_branches.Length} locations  ·  Switch Context filters intakes, repair orders and inventory by branch",
-                Font = AppTheme.FontStatus,
-                ForeColor = AppTheme.TextMuted,
-                AutoSize = true,
-                Dock = DockStyle.Right,
-                TextAlign = ContentAlignment.MiddleRight
-            };
-
-            pnlToolbar.Controls.Add(lblHint);
-            pnlToolbar.Controls.Add(lblSection);
-            Controls.Add(pnlToolbar);
-
-            // ── 2. Summary strip ─────────────────────────────────────────────
-            stripStats = new StatStrip(new[]
-            {
-                new StatItem("ACTIVE BRANCHES", "4 Locations", "\uE716", AppTheme.Primary),
-                new StatItem("INTER-BRANCH TICKETS", "28 Transferred", "\uE8BD", Green),
-                new StatItem("REGIONAL REVENUE", "₱482,500.00", "\uE9D5", Color.FromArgb(124, 58, 237)),
-                new StatItem("CENTRALIZED SYNC", "100% Real-Time", "\uE7BA", Color.FromArgb(14, 165, 233)),
-            }, IconFont, AppTheme.FontStatus, StatValueFont)
-            {
-                Dock = DockStyle.Top,
-                Height = 84
-            };
-            Controls.Add(stripStats);
-
-            // ── 1. Header ────────────────────────────────────────────────────
-            pnlHeader = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 85,
-                BackColor = AppTheme.Surface,
-                Padding = new Padding(28, 16, 28, 16)
-            };
-
+            // ── Header ──
             lblTitle = new Label
             {
-                Text = "Branch Operations & Regional Management",
-                Font = AppTheme.FontTitle,
-                ForeColor = AppTheme.TextPrimary,
+                Text = "Branch Management & Regional Directory",
+                Font = UiKit.T.Title,
+                ForeColor = UiKit.T.Ink,
                 AutoSize = true,
-                Location = new Point(28, 16)
+                BackColor = Color.Transparent,
+                UseMnemonic = false
             };
 
             lblSubtitle = new Label
             {
-                Text = "Enterprise Multi-Branching tier active  ·  Centralized synchronization across 4 store locations",
+                Text = "Centralized multi-store branch routing, localized performance metrics, and operational scoping",
                 Font = AppTheme.FontPageSubtitle,
                 ForeColor = AppTheme.TextMuted,
                 AutoSize = true,
-                Location = new Point(28, 48)
+                BackColor = Color.Transparent
             };
 
-            pnlHeader.Controls.Add(lblTitle);
-            pnlHeader.Controls.Add(lblSubtitle);
-            pnlHeader.Paint += (s, e) =>
+            bool isAdmin = string.Equals(UserSession.Role, "Admin", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(UserSession.Role, "Super Admin", StringComparison.OrdinalIgnoreCase);
+
+            btnNewBranch = new SaasButton("New Branch", SaasButtonVariant.Primary, "\uE710");
+            btnNewBranch.Size = new Size(145, 36);
+            btnNewBranch.Visible = isAdmin;
+            btnNewBranch.Click += (s, e) => CreateNewBranch();
+
+            btnRefresh = new SaasButton("Refresh", SaasButtonVariant.Secondary, "\uE72C");
+            btnRefresh.Size = new Size(100, 36);
+            btnRefresh.Click += async (s, e) => await ReloadAsync();
+
+            Controls.Add(lblTitle);
+            Controls.Add(lblSubtitle);
+            Controls.Add(btnNewBranch);
+            Controls.Add(btnRefresh);
+
+            // ── KPI Summary Tiles (4 Cards) ──
+            tileActiveBranches = AddTile("TOTAL ACTIVE BRANCHES", "0", "Operational store locations", PrimaryAccent, "\uE716");
+            tileTotalStaff = AddTile("TOTAL STAFF", "0", "Assigned across branches", Emerald, "\uE77B");
+            tileActivePipeline = AddTile("ACTIVE PIPELINE / RECORDS", "0", "Open tickets & customers", Color.FromArgb(139, 92, 246), "\uE8BD");
+            tileRevenue = AddTile("REVENUE / PERFORMANCE", "₱0.00", "Total closed revenue", Color.FromArgb(245, 158, 11), "\uE9D5");
+
+            // ── Workbench Card ──
+            card = new WorkbenchCard { BackColor = UiKit.T.Surface };
+
+            searchBox = new WorkbenchSearch
             {
-                using var p = new Pen(AppTheme.Border, 1);
-                e.Graphics.DrawLine(p, 0, pnlHeader.Height - 1, pnlHeader.Width, pnlHeader.Height - 1);
+                Placeholder = "Search by code, branch name, city, or manager..."
             };
-            Controls.Add(pnlHeader);
+            searchBox.QueryChanged += (s, e) => ApplyLocalFilter();
 
+            chkIncludeInactive = new CheckBox
+            {
+                Text = "Include Inactive Branches",
+                Font = UiKit.T.SmallStrong,
+                ForeColor = AppTheme.TextSecondary,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Checked = false
+            };
+            chkIncludeInactive.CheckedChanged += async (s, e) => await ReloadAsync();
+
+            lblCount = new Label
+            {
+                Text = "",
+                Font = UiKit.T.Small,
+                ForeColor = UiKit.T.InkMuted,
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+
+            dgv = new DataGridView();
+            StyleGrid(dgv);
+
+            emptyState = new WorkbenchState { Visible = false };
+            emptyState.Show("\uE716", "No branch locations found",
+                "Create a new branch location or adjust search query filters.");
+
+            card.Controls.Add(searchBox);
+            card.Controls.Add(chkIncludeInactive);
+            card.Controls.Add(lblCount);
+            card.Controls.Add(dgv);
+            card.Controls.Add(emptyState);
+
+            Controls.Add(card);
+
+            Resize += (s, e) => LayoutUi();
             ResumeLayout(true);
+            LayoutUi();
         }
 
-        private DataGridView BuildGrid()
+        private KpiTile AddTile(string label, string number, string sub, Color accent, string glyph)
         {
-            var dg = new BufferedGrid
+            var t = new KpiTile();
+            t.Set(label, number, sub, accent, glyph);
+            _tiles.Add(t);
+            Controls.Add(t);
+            return t;
+        }
+
+        private void LayoutUi()
+        {
+            if (Width <= 0 || Height <= 0) return;
+
+            int pad = UiKit.T.S6;
+            int contentW = Math.Max(700, Width - pad * 2);
+
+            lblTitle.Location = new Point(pad, pad);
+            lblSubtitle.Location = new Point(pad, lblTitle.Bottom + 4);
+
+            int btnY = pad;
+            btnRefresh.Location = new Point(pad + contentW - btnRefresh.Width, btnY);
+            btnNewBranch.Location = new Point(btnRefresh.Left - btnNewBranch.Width - 10, btnY);
+
+            int y = lblSubtitle.Bottom + 20;
+
+            // ── 4 KPI Tiles ──
+            int tileCols = contentW >= 1100 ? 4 : (contentW >= 760 ? 2 : 1);
+            int tileGap = 16;
+            int tileW = (contentW - (tileCols - 1) * tileGap) / tileCols;
+
+            int rowMaxH = 0;
+            for (int i = 0; i < _tiles.Count; i++)
             {
-                Dock = DockStyle.Fill,
-                BackgroundColor = AppTheme.Surface,
-                BorderStyle = BorderStyle.None,
-                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
-                GridColor = AppTheme.Border,
-                ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
-                EnableHeadersVisualStyles = false,
-                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
-                ColumnHeadersHeight = HeaderRowHeight,
-                RowHeadersVisible = false,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                AllowUserToResizeRows = false,
-                AllowUserToResizeColumns = false,
-                ReadOnly = true,
-                MultiSelect = false,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                ScrollBars = ScrollBars.None,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                StandardTab = true
-            };
+                int col = i % tileCols;
+                if (col == 0 && i > 0)
+                {
+                    y += rowMaxH + tileGap;
+                    rowMaxH = 0;
+                }
 
-            dg.RowTemplate.Height = BodyRowHeight;
+                int tx = pad + col * (tileW + tileGap);
+                int th = _tiles[i].HeightFor(tileW);
+                _tiles[i].SetBounds(tx, y, tileW, th);
+                rowMaxH = Math.Max(rowMaxH, th);
+            }
+            y += rowMaxH + 20;
 
-            // header style
-            dg.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
+            // ── Workbench Card ──
+            int cardPad = UiKit.T.S6;
+            int cardH = Math.Max(320, Height - y - pad);
+            card.SetBounds(pad, y, contentW, cardH);
+
+            int innerW = contentW - cardPad * 2;
+
+            int chkWidth = chkIncludeInactive.PreferredSize.Width + 10;
+            chkIncludeInactive.SetBounds(cardPad + innerW - chkWidth, cardPad + 8, chkWidth, 24);
+
+            int searchW = Math.Max(260, Math.Min(480, innerW - chkWidth - 24));
+            searchBox.SetBounds(cardPad, cardPad, searchW, 38);
+
+            int gridY = searchBox.Bottom + 14;
+            int gridH = cardH - gridY - cardPad - 24;
+
+            dgv.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+            emptyState.SetBounds(cardPad, gridY, innerW, Math.Max(120, gridH));
+            lblCount.Location = new Point(cardPad, dgv.Bottom + 6);
+        }
+
+        private void StyleGrid(DataGridView g)
+        {
+            typeof(DataGridView)
+                .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(g, true);
+
+            g.AutoGenerateColumns = false;
+            g.AllowUserToAddRows = false;
+            g.AllowUserToDeleteRows = false;
+            g.AllowUserToResizeRows = false;
+            g.RowHeadersVisible = false;
+            g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            g.MultiSelect = false;
+            g.BackgroundColor = UiKit.T.Surface;
+            g.BorderStyle = BorderStyle.None;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            g.GridColor = UiKit.T.LineSoft;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            g.EnableHeadersVisualStyles = false;
+            g.ScrollBars = ScrollBars.Both;
+            g.RowTemplate.Height = 54;
+            g.ColumnHeadersHeight = 38;
+            g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+
+            g.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
             {
                 BackColor = AppTheme.Background,
                 ForeColor = AppTheme.TextMuted,
                 SelectionBackColor = AppTheme.Background,
                 SelectionForeColor = AppTheme.TextMuted,
-                Font = HeaderCellFont,
+                Font = UiKit.T.SmallStrong,
                 Alignment = DataGridViewContentAlignment.MiddleLeft,
-                Padding = new Padding(8, 0, 8, 0)
+                Padding = new Padding(12, 0, 12, 0)
             };
 
-            // body style
-            dg.DefaultCellStyle = new DataGridViewCellStyle
+            g.DefaultCellStyle = new DataGridViewCellStyle
             {
-                BackColor = AppTheme.Surface,
+                BackColor = UiKit.T.Surface,
                 ForeColor = AppTheme.TextPrimary,
-                SelectionBackColor = Blend(AppTheme.Surface, AppTheme.Primary, 0.07f),
+                SelectionBackColor = Color.FromArgb(243, 244, 246),
                 SelectionForeColor = AppTheme.TextPrimary,
                 Font = AppTheme.FontBody,
                 Alignment = DataGridViewContentAlignment.MiddleLeft,
-                Padding = new Padding(8, 0, 8, 0)
+                Padding = new Padding(12, 0, 12, 0)
             };
 
-            dg.Columns.Add(MakeColumn("colBranch", "BRANCH", 27, DataGridViewContentAlignment.MiddleLeft, 16));
-            dg.Columns.Add(MakeColumn("colLocation", "ADDRESS  /  CONTACT", 31, DataGridViewContentAlignment.MiddleLeft, 8));
-            dg.Columns.Add(MakeColumn("colTech", "TECHNICIANS", 9, DataGridViewContentAlignment.MiddleRight, 8));
-            dg.Columns.Add(MakeColumn("colRepairs", "ACTIVE REPAIRS", 10, DataGridViewContentAlignment.MiddleRight, 8));
-            dg.Columns.Add(MakeColumn("colRevenue", "MTD REVENUE", 11, DataGridViewContentAlignment.MiddleRight, 8));
-            dg.Columns.Add(MakeColumn("colStatus", "STATUS", 12, DataGridViewContentAlignment.MiddleLeft, 24));
-            dg.Columns.Add(MakeColumn("colAction", "", 14, DataGridViewContentAlignment.MiddleCenter, 8));
+            g.Columns.Add(MakeCol("colCode", "CODE", 12, DataGridViewContentAlignment.MiddleLeft));
+            g.Columns.Add(MakeCol("colName", "BRANCH NAME", 24, DataGridViewContentAlignment.MiddleLeft));
+            g.Columns.Add(MakeCol("colLocation", "LOCATION", 18, DataGridViewContentAlignment.MiddleLeft));
+            g.Columns.Add(MakeCol("colManager", "APPOINTED MANAGER", 20, DataGridViewContentAlignment.MiddleLeft));
+            g.Columns.Add(MakeCol("colStaff", "STAFF", 8, DataGridViewContentAlignment.MiddleCenter));
+            g.Columns.Add(MakeCol("colRecords", "RECORDS", 8, DataGridViewContentAlignment.MiddleCenter));
+            g.Columns.Add(MakeCol("colStatus", "STATUS", 10, DataGridViewContentAlignment.MiddleLeft));
+            g.Columns.Add(MakeCol("colActions", "", 6, DataGridViewContentAlignment.MiddleCenter));
 
-            foreach (var b in _branches)
+            g.CellPainting += Dgv_CellPainting;
+            g.CellClick += Dgv_CellClick;
+            g.CellMouseMove += Dgv_CellMouseMove;
+            g.CellMouseLeave += (s, e) =>
             {
-                int i = dg.Rows.Add(b.Name, b.Address, b.Technicians, b.Repairs, b.Revenue, b.Badge, string.Empty);
-                dg.Rows[i].Tag = b;
-            }
-
-            dg.Columns[ColRevenue].DefaultCellStyle.Font = RowValueFont;
-            dg.Columns[ColAction].MinimumWidth = 150;
-            dg.Columns[ColBranch].MinimumWidth = 200;
-            dg.Columns[ColLocation].MinimumWidth = 220;
-
-            dg.CellPainting += Grid_CellPainting;
-            dg.CellMouseMove += Grid_CellMouseMove;
-            dg.CellMouseLeave += (s, e) => SetHoverRow(-1);
-            dg.CellMouseClick += Grid_CellMouseClick;
-
-            return dg;
+                _hoverRow = -1;
+                _hoverCol = -1;
+                dgv.Invalidate();
+            };
         }
 
-        private static DataGridViewTextBoxColumn MakeColumn(string name, string header, float weight,
-            DataGridViewContentAlignment align, int paddingLeft)
+        private static DataGridViewTextBoxColumn MakeCol(string name, string header, float fillWeight, DataGridViewContentAlignment align)
         {
-            var col = new DataGridViewTextBoxColumn
+            return new DataGridViewTextBoxColumn
             {
                 Name = name,
                 HeaderText = header,
-                FillWeight = weight,
-                MinimumWidth = 80,
+                FillWeight = fillWeight,
                 SortMode = DataGridViewColumnSortMode.NotSortable,
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = align }
             };
-
-            var pad = align == DataGridViewContentAlignment.MiddleRight
-                ? new Padding(0, 0, 20, 0)
-                : new Padding(paddingLeft, 0, 8, 0);
-
-            col.HeaderCell.Style = new DataGridViewCellStyle { Alignment = align, Padding = pad };
-            col.DefaultCellStyle = new DataGridViewCellStyle { Alignment = align, Padding = pad };
-            return col;
         }
 
-        // ════════════════════════════════════════════════════════════════════
-        //  Grid painting & interaction
-        // ════════════════════════════════════════════════════════════════════
+        public async Task ReloadAsync()
+        {
+            btnRefresh.Enabled = false;
+            try
+            {
+                bool includeInactive = chkIncludeInactive.Checked;
+                var branchesTask = _api.GetBranchesAsync(includeInactive: includeInactive);
+                var statsTask = _api.GetBranchStatsAsync();
 
-        private void Grid_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
+                await Task.WhenAll(branchesTask, statsTask);
+
+                _allBranches = await branchesTask;
+                var stats = await statsTask;
+
+                if (stats != null)
+                {
+                    tileActiveBranches.Set("TOTAL ACTIVE BRANCHES", stats.TotalActiveBranches.ToString("N0"), "Operational locations", PrimaryAccent, "\uE716");
+                    tileTotalStaff.Set("TOTAL STAFF", stats.TotalStaff.ToString("N0"), "Employees across branches", Emerald, "\uE77B");
+                    tileActivePipeline.Set("ACTIVE PIPELINE / RECORDS", stats.ActivePipelineRecords.ToString("N0"), "Open tickets & customers", Color.FromArgb(139, 92, 246), "\uE8BD");
+                    tileRevenue.Set("REVENUE / PERFORMANCE", $"₱{stats.TotalClosedRevenue:N2}", "Aggregated closed revenue", Color.FromArgb(245, 158, 11), "\uE9D5");
+                }
+
+                ApplyLocalFilter();
+
+                // Also notify TopBar so persistent selector stays in sync
+                var main = FindForm() as MainForm;
+                if (main != null)
+                {
+                    var topBarField = main.Controls.Find("topBar", true).FirstOrDefault() as TopBarControl;
+                    topBarField?.SetBranches(_allBranches.Where(b => b.IsActive).ToList());
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to load branch data:\n\n{ex.Message}", "Branch Directory Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnRefresh.Enabled = true;
+            }
+        }
+
+        private void ApplyLocalFilter()
+        {
+            string q = searchBox.Query.Trim().ToLower();
+
+            _filteredBranches = _allBranches.Where(b =>
+            {
+                if (string.IsNullOrWhiteSpace(q)) return true;
+                return (b.BranchCode != null && b.BranchCode.ToLower().Contains(q)) ||
+                       (b.BranchName != null && b.BranchName.ToLower().Contains(q)) ||
+                       (b.City != null && b.City.ToLower().Contains(q)) ||
+                       (b.StateOrProvince != null && b.StateOrProvince.ToLower().Contains(q)) ||
+                       (b.ManagerName != null && b.ManagerName.ToLower().Contains(q));
+            }).ToList();
+
+            PopulateGrid();
+        }
+
+        private void PopulateGrid()
+        {
+            dgv.Rows.Clear();
+
+            foreach (var b in _filteredBranches)
+            {
+                int idx = dgv.Rows.Add(
+                    b.BranchCode,
+                    b.BranchName,
+                    b.LocationDisplay,
+                    b.ManagerDisplay,
+                    b.StaffCount.ToString(),
+                    b.RecordsCount.ToString(),
+                    b.StatusDisplay,
+                    "⋮");
+
+                dgv.Rows[idx].Tag = b;
+            }
+
+            lblCount.Text = $"Showing {_filteredBranches.Count} of {_allBranches.Count} branch locations";
+            bool isEmpty = _filteredBranches.Count == 0;
+            dgv.Visible = !isEmpty;
+            emptyState.Visible = isEmpty;
+        }
+
+        private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            if (grid.Rows[e.RowIndex].Tag is not BranchInfo b) return;
+            if (e.RowIndex >= _filteredBranches.Count) return;
+
+            var b = _filteredBranches[e.RowIndex];
+            var g = e.Graphics;
+            UiKit.Quality(g);
+
+            // Paint standard background & bottom border
+            bool isSelected = (e.State & DataGridViewElementStates.Selected) != 0;
+            bool isHovered = e.RowIndex == _hoverRow;
+
+            Color bg = isSelected ? Color.FromArgb(240, 244, 255) : (isHovered ? Color.FromArgb(249, 250, 251) : UiKit.T.Surface);
+            using (var brush = new SolidBrush(bg))
+                g.FillRectangle(brush, e.CellBounds);
+
+            using (var pen = new Pen(UiKit.T.LineSoft, 1))
+                g.DrawLine(pen, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
+
+            int cellX = e.CellBounds.X + 12;
+            int cellY = e.CellBounds.Y;
+            int cellW = e.CellBounds.Width - 24;
+            int cellH = e.CellBounds.Height;
 
             switch (e.ColumnIndex)
             {
-                case ColBranch:
-                    PaintTwoLine(e, b.Name, RowTitleFont, AppTheme.TextPrimary,
-                        $"{b.Code}  ·  {b.Role}", 16);
+                case ColCode:
+                    // Bold Code with distinct primary accent
+                    using (var codeFont = AppFonts.Strong(10F))
+                    {
+                        TextRenderer.DrawText(g, b.BranchCode, codeFont,
+                            new Rectangle(cellX, cellY, cellW, cellH), PrimaryAccent,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    }
+                    e.Handled = true;
+                    break;
+
+                case ColName:
+                    // Name on line 1, street address on line 2
+                    using (var nameFont = AppFonts.Regular(9.5F))
+                    {
+                        var topRect = new Rectangle(cellX, cellY + 8, cellW, 18);
+                        TextRenderer.DrawText(g, b.BranchName, nameFont, topRect, AppTheme.TextPrimary,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    }
+                    var subRect = new Rectangle(cellX, cellY + 28, cellW, 16);
+                    string addressText = !string.IsNullOrWhiteSpace(b.Address) ? b.Address : "—";
+                    TextRenderer.DrawText(g, addressText, UiKit.T.Small, subRect, AppTheme.TextMuted,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    e.Handled = true;
                     break;
 
                 case ColLocation:
-                    PaintTwoLine(e, b.Address, AppTheme.FontBody, AppTheme.TextSecondary,
-                        b.Phone, 8);
+                    TextRenderer.DrawText(g, b.LocationDisplay, UiKit.T.Body,
+                        new Rectangle(cellX, cellY, cellW, cellH), AppTheme.TextSecondary,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    e.Handled = true;
+                    break;
+
+                case ColManager:
+                    // Initials avatar + Manager Name
+                    if (!string.IsNullOrWhiteSpace(b.ManagerName))
+                    {
+                        int avatarSize = 28;
+                        int avatarY = cellY + (cellH - avatarSize) / 2;
+                        var avatarRect = new Rectangle(cellX, avatarY, avatarSize, avatarSize);
+
+                        Color avatarBg = GetAvatarColor(b.ManagerName);
+                        using (var ab = new SolidBrush(avatarBg))
+                            g.FillEllipse(ab, avatarRect);
+
+                        string initials = GetInitials(b.ManagerName);
+                        UiKit.Text(g, initials, UiKit.T.SmallStrong, Color.White, avatarRect, UiKit.Center);
+
+                        var textRect = new Rectangle(cellX + avatarSize + 10, cellY, cellW - avatarSize - 10, cellH);
+                        TextRenderer.DrawText(g, b.ManagerName, AppFonts.Regular(9.5F), textRect, AppTheme.TextPrimary,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    }
+                    else
+                    {
+                        TextRenderer.DrawText(g, "— Unassigned —", UiKit.T.Small,
+                            new Rectangle(cellX, cellY, cellW, cellH), AppTheme.TextMuted,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    }
+                    e.Handled = true;
+                    break;
+
+                case ColStaff:
+                    // Centered count
+                    TextRenderer.DrawText(g, b.StaffCount.ToString(), AppFonts.Regular(10F),
+                        new Rectangle(e.CellBounds.X, cellY, e.CellBounds.Width, cellH), AppTheme.TextPrimary,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    e.Handled = true;
+                    break;
+
+                case ColRecords:
+                    // Centered count
+                    TextRenderer.DrawText(g, b.RecordsCount.ToString(), AppFonts.Regular(10F),
+                        new Rectangle(e.CellBounds.X, cellY, e.CellBounds.Width, cellH), AppTheme.TextPrimary,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    e.Handled = true;
                     break;
 
                 case ColStatus:
-                    PaintStatus(e, b);
+                    // Pill: Green for active, Gray for inactive
+                    int pillW = 76;
+                    int pillH = 24;
+                    int pillX = cellX;
+                    int pillY = cellY + (cellH - pillH) / 2;
+                    var pillRect = new Rectangle(pillX, pillY, pillW, pillH);
+
+                    Color pBg = b.IsActive ? Color.FromArgb(236, 253, 243) : Color.FromArgb(243, 244, 246);
+                    Color pBorder = b.IsActive ? Color.FromArgb(166, 244, 197) : Color.FromArgb(209, 213, 219);
+                    Color pText = b.IsActive ? Color.FromArgb(6, 118, 71) : NeutralGray;
+
+                    UiKit.FillRounded(g, pillRect, 12, pBg);
+                    using (var pPen = new Pen(pBorder, 1))
+                    using (var path = UiKit.Rounded(new Rectangle(pillRect.X, pillRect.Y, pillRect.Width - 1, pillRect.Height - 1), 12))
+                        g.DrawPath(pPen, path);
+
+                    UiKit.Text(g, b.StatusDisplay, UiKit.T.SmallStrong, pText, pillRect, UiKit.Center);
+                    e.Handled = true;
                     break;
 
-                case ColAction:
-                    PaintActionButton(e);
+                case ColActions:
+                    // ⋮ Context menu button
+                    int btnSize = 28;
+                    int bx = e.CellBounds.X + (e.CellBounds.Width - btnSize) / 2;
+                    int by = cellY + (cellH - btnSize) / 2;
+                    var actionRect = new Rectangle(bx, by, btnSize, btnSize);
+
+                    bool isActionHover = isHovered && _hoverCol == ColActions;
+                    if (isActionHover)
+                    {
+                        UiKit.FillRounded(g, actionRect, 6, Color.FromArgb(229, 231, 235));
+                    }
+
+                    using (var actFont = AppFonts.Strong(12F))
+                    {
+                        TextRenderer.DrawText(g, "⋮", actFont, actionRect, AppTheme.TextSecondary,
+                            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    }
+                    e.Handled = true;
                     break;
             }
         }
 
-        private static void PaintBase(DataGridViewCellPaintingEventArgs e)
+        private void Dgv_CellMouseMove(object? sender, DataGridViewCellMouseEventArgs e)
         {
-            e.Paint(e.CellBounds,
-                DataGridViewPaintParts.Background |
-                DataGridViewPaintParts.SelectionBackground |
-                DataGridViewPaintParts.Border);
-        }
-
-        private static void PaintTwoLine(DataGridViewCellPaintingEventArgs e, string top, Font topFont,
-            Color topColor, string bottom, int left)
-        {
-            PaintBase(e);
-            var b = e.CellBounds;
-            int w = b.Width - left - 12;
-
-            TextRenderer.DrawText(e.Graphics, top, topFont,
-                new Rectangle(b.X + left, b.Y + 11, w, 18), topColor, TextFlags);
-            TextRenderer.DrawText(e.Graphics, bottom, AppTheme.FontStatus,
-                new Rectangle(b.X + left, b.Y + 30, w, 16), AppTheme.TextMuted, TextFlags);
-            e.Handled = true;
-        }
-
-        private static void PaintStatus(DataGridViewCellPaintingEventArgs e, BranchInfo b)
-        {
-            PaintBase(e);
-            var cell = e.CellBounds;
-            var g = e.Graphics;
-
-            var oldMode = g.SmoothingMode;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var br = new SolidBrush(b.BadgeColor))
-                g.FillEllipse(br, cell.X + 24, cell.Y + (cell.Height - 8) / 2, 8, 8);
-            g.SmoothingMode = oldMode;
-
-            TextRenderer.DrawText(g, b.Badge, AppTheme.FontStatus,
-                new Rectangle(cell.X + 40, cell.Y, cell.Width - 48, cell.Height),
-                b.BadgeColor, TextFlags);
-            e.Handled = true;
-        }
-
-        private void PaintActionButton(DataGridViewCellPaintingEventArgs e)
-        {
-            PaintBase(e);
-            var g = e.Graphics;
-            var rect = GetButtonRect(e.CellBounds);
-            bool hot = e.RowIndex == _hoverRow;
-
-            using (var fill = new SolidBrush(hot ? AppTheme.Primary : AppTheme.Surface))
-                g.FillRectangle(fill, rect);
-            using (var pen = new Pen(AppTheme.Primary, 1))
-                g.DrawRectangle(pen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
-
-            TextRenderer.DrawText(g, "Switch Context", AppTheme.FontStatus, rect,
-                hot ? Color.White : AppTheme.Primary,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            e.Handled = true;
-        }
-
-        private static Rectangle GetButtonRect(Rectangle cell)
-        {
-            const int w = 118, h = 30;
-            return new Rectangle(cell.X + Math.Max(4, (cell.Width - w) / 2), cell.Y + (cell.Height - h) / 2, w, h);
-        }
-
-        private void Grid_CellMouseMove(object? sender, DataGridViewCellMouseEventArgs e)
-        {
-            if (e.RowIndex < 0 || e.ColumnIndex != ColAction) { SetHoverRow(-1); return; }
-
-            var cell = grid.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
-            var pt = new Point(cell.X + e.X, cell.Y + e.Y);
-            SetHoverRow(GetButtonRect(cell).Contains(pt) ? e.RowIndex : -1);
-        }
-
-        private void SetHoverRow(int row)
-        {
-            if (_hoverRow == row) return;
-            int old = _hoverRow;
-            _hoverRow = row;
-            grid.Cursor = row >= 0 ? Cursors.Hand : Cursors.Default;
-            if (old >= 0) grid.InvalidateCell(ColAction, old);
-            if (row >= 0) grid.InvalidateCell(ColAction, row);
-        }
-
-        private void Grid_CellMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
-        {
-            if (e.Button != MouseButtons.Left || e.RowIndex < 0 || e.ColumnIndex != ColAction) return;
-            if (grid.Rows[e.RowIndex].Tag is not BranchInfo b) return;
-
-            var cell = grid.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
-            var pt = new Point(cell.X + e.X, cell.Y + e.Y);
-            if (!GetButtonRect(cell).Contains(pt)) return;
-
-            MessageBox.Show(
-                $"Switched active branch operational context to: {b.Name}.\nAll intakes, repair orders, and inventory will now filter by this location.",
-                "Branch Context Changed",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        }
-
-        private static Color Blend(Color baseColor, Color overlay, float amount)
-        {
-            int r = (int)(baseColor.R + (overlay.R - baseColor.R) * amount);
-            int g = (int)(baseColor.G + (overlay.G - baseColor.G) * amount);
-            int b = (int)(baseColor.B + (overlay.B - baseColor.B) * amount);
-            return Color.FromArgb(r, g, b);
-        }
-
-        // ════════════════════════════════════════════════════════════════════
-        //  Supporting types
-        // ════════════════════════════════════════════════════════════════════
-
-        private sealed class BranchInfo
-        {
-            public string Name { get; }
-            public string Code { get; }
-            public string Role { get; }
-            public string Address { get; }
-            public string Phone { get; }
-            public string Technicians { get; }
-            public string Repairs { get; }
-            public string Revenue { get; }
-            public string Badge { get; }
-            public Color BadgeColor { get; }
-
-            public BranchInfo(string name, string code, string role, string address, string phone,
-                              string technicians, string repairs, string revenue, string badge, Color badgeColor)
+            if (e.RowIndex != _hoverRow || e.ColumnIndex != _hoverCol)
             {
-                Name = name; Code = code; Role = role; Address = address; Phone = phone;
-                Technicians = technicians; Repairs = repairs; Revenue = revenue;
-                Badge = badge; BadgeColor = badgeColor;
+                int old = _hoverRow;
+                _hoverRow = e.RowIndex;
+                _hoverCol = e.ColumnIndex;
+                if (old >= 0 && old < dgv.RowCount) dgv.InvalidateRow(old);
+                if (_hoverRow >= 0 && _hoverRow < dgv.RowCount) dgv.InvalidateRow(_hoverRow);
             }
         }
 
-        private sealed class BufferedGrid : DataGridView
+        private void Dgv_CellClick(object? sender, DataGridViewCellEventArgs e)
         {
-            public BufferedGrid()
+            if (e.RowIndex < 0 || e.RowIndex >= _filteredBranches.Count) return;
+
+            if (e.ColumnIndex == ColActions)
             {
-                DoubleBuffered = true;
+                _actionRowIndex = e.RowIndex;
+                var cellRect = dgv.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
+                _actionsMenu.Show(dgv, new Point(cellRect.Left - 100, cellRect.Bottom));
             }
         }
 
-        private readonly struct StatItem
+        private void CreateNewBranch()
         {
-            public string Label { get; }
-            public string Value { get; }
-            public string Glyph { get; }
-            public Color Accent { get; }
-
-            public StatItem(string label, string value, string glyph, Color accent)
+            using var dlg = new BranchFormDialog();
+            if (dlg.ShowDialog(FindForm()) == DialogResult.OK)
             {
-                Label = label; Value = value; Glyph = glyph; Accent = accent;
+                _ = ReloadAsync();
+                SaasToast.Show(this, "Branch Created", ToastKind.Success, "New branch location has been successfully registered.");
             }
         }
 
-        /// <summary>Flat one-line KPI strip: icon + label + value, separated by hairlines.</summary>
-        private sealed class StatStrip : Control
+        private void EditSelectedBranch()
         {
-            private readonly StatItem[] _items;
-            private readonly Font _iconFont, _labelFont, _valueFont;
+            var branch = SelectedBranch;
+            if (branch == null) return;
 
-            public StatStrip(StatItem[] items, Font iconFont, Font labelFont, Font valueFont)
+            using var dlg = new BranchFormDialog(branch);
+            if (dlg.ShowDialog(FindForm()) == DialogResult.OK)
             {
-                _items = items;
-                _iconFont = iconFont;
-                _labelFont = labelFont;
-                _valueFont = valueFont;
-                SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
-                         ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = AppTheme.Surface;
+                _ = ReloadAsync();
+                SaasToast.Show(this, "Branch Updated", ToastKind.Success, $"Branch '{branch.BranchCode}' was successfully updated.");
             }
+        }
+
+        private void SwitchScopeToSelectedBranch()
+        {
+            var branch = SelectedBranch;
+            if (branch == null) return;
+
+            UserSession.SetSelectedBranch(branch.BranchId, branch.BranchName);
+            SaasToast.Show(this, "Branch Scope Changed", ToastKind.Info,
+                $"Operational scope switched to [{branch.BranchCode}] {branch.BranchName}. Data is now scoped to this branch.");
+        }
+
+        private async Task ToggleActiveStatusAsync()
+        {
+            var branch = SelectedBranch;
+            if (branch == null) return;
+
+            string action = branch.IsActive ? "Deactivate" : "Reactivate";
+            var form = FindForm();
+            if (form == null) return;
+
+            bool confirm = SaasConfirm.Ask(form,
+                $"{action} Branch {branch.BranchCode}?",
+                $"Are you sure you want to {action.ToLower()} '{branch.BranchName}'?\nLinked records will be preserved safely.",
+                confirmText: action,
+                danger: branch.IsActive);
+
+            if (!confirm) return;
+
+            try
+            {
+                await _api.ToggleBranchActiveAsync(branch.BranchId);
+                await ReloadAsync();
+                SaasToast.Show(this, $"Branch {action}d", ToastKind.Success,
+                    $"Branch '{branch.BranchName}' has been {(branch.IsActive ? "deactivated" : "reactivated")}.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Unable to change branch status:\n\n{ex.Message}", "Status Change Failed",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private static string GetInitials(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return "—";
+            var parts = name.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 1) return parts[0].Substring(0, Math.Min(2, parts[0].Length)).ToUpperInvariant();
+            return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+        }
+
+        private static Color GetAvatarColor(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return Color.FromArgb(107, 114, 128);
+            Color[] colors =
+            {
+                Color.FromArgb(99, 102, 241),
+                Color.FromArgb(16, 185, 129),
+                Color.FromArgb(245, 158, 11),
+                Color.FromArgb(236, 72, 153),
+                Color.FromArgb(59, 130, 246),
+                Color.FromArgb(124, 58, 237)
+            };
+            int h = Math.Abs(name.GetHashCode());
+            return colors[h % colors.Length];
+        }
+
+        // ═══════════ KPI TILE ═══════════
+
+        [DesignerCategory("Code")]
+        private sealed class KpiTile : Control
+        {
+            private const int Pad = 20;
+            private const int IconSize = 36;
+            private const int MinHeight = 126;
+
+            private string _label = "";
+            private string _number = "0";
+            private string _sub = "";
+            private Color _accent = AppTheme.Primary;
+            private string _glyph = "";
+
+            public KpiTile()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                BackColor = AppTheme.Background;
+            }
+
+            public void Set(string label, string number, string sub, Color accent, string glyph)
+            {
+                _label = label;
+                _number = number;
+                _sub = sub;
+                _accent = accent;
+                _glyph = glyph;
+                Invalidate();
+            }
+
+            public int HeightFor(int width) => MinHeight;
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                g.Clear(AppTheme.Surface);
+                UiKit.Quality(g);
 
-                using var line = new Pen(AppTheme.Border, 1);
-                g.DrawLine(line, 0, Height - 1, Width, Height - 1);
+                using (var bg = new SolidBrush(AppTheme.Background))
+                    g.FillRectangle(bg, ClientRectangle);
 
-                int n = _items.Length;
-                int colW = Width / n;
+                UiKit.Card(g, ClientRectangle, UiKit.T.Radius, UiKit.T.Surface, UiKit.T.Line);
 
-                for (int i = 0; i < n; i++)
+                var iconRect = new Rectangle(Pad, Pad, IconSize, IconSize);
+                UiKit.FillRounded(g, iconRect, 10, UiKit.Wash(_accent));
+                using (var f = UiKit.GlyphFont(13F))
+                    UiKit.Text(g, _glyph, f, _accent, iconRect, UiKit.Center);
+
+                int textX = Pad + IconSize + 12;
+                int textW = Width - textX - Pad;
+
+                UiKit.Text(g, _label, UiKit.T.SmallStrong, UiKit.T.InkMuted,
+                    new Rectangle(textX, Pad + 2, textW, 16),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                using (var numFont = AppFonts.Strong(18F))
                 {
-                    int x = i * colW;
-                    var item = _items[i];
-
-                    if (i > 0)
-                        g.DrawLine(line, x, 18, x, Height - 19);
-
-                    int left = x + (i == 0 ? PageMargin + 4 : 28);
-
-                    TextRenderer.DrawText(g, item.Glyph, _iconFont,
-                        new Rectangle(left, 0, 28, Height - 1), item.Accent,
-                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-
-                    int textX = left + 40;
-                    int textW = colW - (textX - x) - 12;
-
-                    TextRenderer.DrawText(g, item.Label, _labelFont,
-                        new Rectangle(textX, 18, textW, 16), AppTheme.TextMuted, TextFlags);
-                    TextRenderer.DrawText(g, item.Value, _valueFont,
-                        new Rectangle(textX, 36, textW, 26), AppTheme.TextPrimary, TextFlags);
+                    TextRenderer.DrawText(g, _number, numFont,
+                        new Rectangle(textX, Pad + 24, textW, 28), UiKit.T.Ink,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                 }
+
+                UiKit.Text(g, _sub, UiKit.T.Small, UiKit.T.InkMuted,
+                    new Rectangle(textX, Pad + 56, textW, 16),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            }
+        }
+
+        // ═══════════ QUIET MENU RENDERER ═══════════
+
+        [DesignerCategory("Code")]
+        private sealed class QuietMenuRenderer : ToolStripProfessionalRenderer
+        {
+            public QuietMenuRenderer() : base(new Colors()) { RoundedEdges = false; }
+
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                var r = new Rectangle(4, 0, e.Item.Width - 8, e.Item.Height);
+                if (e.Item.Selected) UiKit.FillRounded(e.Graphics, r, 6, UiKit.T.RowHover);
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                using var pen = new Pen(UiKit.T.LineSoft, 1);
+                int y = e.Item.Height / 2;
+                e.Graphics.DrawLine(pen, 8, y, e.Item.Width - 8, y);
+            }
+
+            private sealed class Colors : ProfessionalColorTable
+            {
+                public override Color ToolStripDropDownBackground => UiKit.T.Surface;
+                public override Color MenuBorder => UiKit.T.Line;
+                public override Color MenuItemBorder => UiKit.T.Surface;
+                public override Color ImageMarginGradientBegin => UiKit.T.Surface;
+                public override Color ImageMarginGradientMiddle => UiKit.T.Surface;
+                public override Color ImageMarginGradientEnd => UiKit.T.Surface;
             }
         }
     }

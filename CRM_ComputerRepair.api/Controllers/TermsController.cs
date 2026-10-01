@@ -23,7 +23,7 @@ public class TermsController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "Super Admin,Admin")]
+    [Authorize]
     public async Task<IActionResult> GetAll()
     {
         var list = await _db.TermsAndConditionsSet
@@ -48,7 +48,7 @@ public class TermsController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
-    [Authorize(Roles = "Super Admin,Admin")]
+    [Authorize]
     public async Task<IActionResult> GetById(int id)
     {
         var item = await _db.TermsAndConditionsSet.AsNoTracking()

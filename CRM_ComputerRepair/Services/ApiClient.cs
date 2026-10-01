@@ -69,6 +69,12 @@ namespace CRM.winforms
                     request.Headers.Add("X-Company-Id", UserSession.CompanyId.ToString());
                 }
 
+                request.Headers.Remove("X-Branch-Id");
+                if (UserSession.SelectedBranchId.HasValue)
+                {
+                    request.Headers.Add("X-Branch-Id", UserSession.SelectedBranchId.Value.ToString());
+                }
+
                 return base.SendAsync(request, cancellationToken);
             }
         }
@@ -1296,6 +1302,227 @@ namespace CRM.winforms
             {
                 return null;
             }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // SUBSCRIPTIONS & MODULES
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<AppModuleDto>> GetAppModulesAsync()
+        {
+            var res = await _http.GetAsync("/subscriptions/modules");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<List<AppModuleDto>>(stream, _jsonOptions) ?? new();
+        }
+
+        public async Task UpdateModulePriceAsync(int moduleId, decimal newPrice)
+        {
+            var content = ToJsonContent(new { pricePerMonth = newPrice });
+            var res = await _http.PutAsync($"/subscriptions/modules/{moduleId}/price", content);
+            await EnsureSuccess(res);
+        }
+
+        public async Task<List<CompanySubscriptionDetailDto>> GetAllCompanySubscriptionsAsync()
+        {
+            var res = await _http.GetAsync("/subscriptions/companies");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<List<CompanySubscriptionDetailDto>>(stream, _jsonOptions) ?? new();
+        }
+
+        public async Task<CompanySubscriptionDetailDto?> GetCompanySubscriptionAsync(int companyId)
+        {
+            var res = await _http.GetAsync($"/subscriptions/companies/{companyId}");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<CompanySubscriptionDetailDto>(stream, _jsonOptions);
+        }
+
+        public async Task<CompanySubscriptionDetailDto?> AddModuleToCompanyAsync(int companyId, string moduleCode)
+        {
+            var content = ToJsonContent(new { moduleCode });
+            var res = await _http.PostAsync($"/subscriptions/companies/{companyId}/modules", content);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<CompanySubscriptionDetailDto>(stream, _jsonOptions);
+        }
+
+        public async Task<CompanySubscriptionDetailDto?> RemoveModuleFromCompanyAsync(int companyId, int moduleId)
+        {
+            var res = await _http.DeleteAsync($"/subscriptions/companies/{companyId}/modules/{moduleId}");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<CompanySubscriptionDetailDto>(stream, _jsonOptions);
+        }
+
+        public async Task<CompanySubscriptionDetailDto?> ToggleCompanySubscriptionStatusAsync(int companyId)
+        {
+            var res = await _http.PatchAsync($"/subscriptions/companies/{companyId}/toggle-status", null);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<CompanySubscriptionDetailDto>(stream, _jsonOptions);
+        }
+
+        public async Task<List<SubscriptionPlanDto>> GetPlansAsync(bool activeOnly = false, bool includeArchived = false)
+        {
+            var url = $"/subscriptions/plans?includeArchived={includeArchived.ToString().ToLower()}";
+            if (activeOnly) url += "&activeOnly=true";
+
+            var res = await _http.GetAsync(url);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<List<SubscriptionPlanDto>>(stream, _jsonOptions) ?? new();
+        }
+
+        public async Task<SubscriptionPlanDto?> GetPlanByIdAsync(int id)
+        {
+            var res = await _http.GetAsync($"/subscriptions/plans/{id}");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<SubscriptionPlanDto>(stream, _jsonOptions);
+        }
+
+        public async Task<SubscriptionPlanDto?> CreatePlanAsync(CreatePlanRequest request)
+        {
+            var content = ToJsonContent(request);
+            var res = await _http.PostAsync("/subscriptions/plans", content);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<SubscriptionPlanDto>(stream, _jsonOptions);
+        }
+
+        public async Task<SubscriptionPlanDto?> UpdatePlanAsync(int id, UpdatePlanRequest request)
+        {
+            var content = ToJsonContent(request);
+            var res = await _http.PutAsync($"/subscriptions/plans/{id}", content);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<SubscriptionPlanDto>(stream, _jsonOptions);
+        }
+
+        public async Task<bool> TogglePlanStatusAsync(int id)
+        {
+            var res = await _http.PatchAsync($"/subscriptions/plans/{id}/toggle-status", null);
+            await EnsureSuccess(res);
+            return true;
+        }
+
+        public async Task ArchivePlanAsync(int id)
+        {
+            var res = await _http.PostAsync($"/subscriptions/plans/{id}/archive", null);
+            await EnsureSuccess(res);
+        }
+
+        public async Task RestorePlanAsync(int id)
+        {
+            var res = await _http.PostAsync($"/subscriptions/plans/{id}/restore", null);
+            await EnsureSuccess(res);
+        }
+
+        public async Task<CompanySubscriptionDetailDto?> ChangeCompanyPlanAsync(int companyId, ChangeCompanyPlanRequest req)
+        {
+            var content = ToJsonContent(req);
+            var res = await _http.PostAsync($"/subscriptions/companies/{companyId}/plan", content);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<CompanySubscriptionDetailDto>(stream, _jsonOptions);
+        }
+
+        public async Task<CompanySubscriptionDetailDto?> AddModuleAddonAsync(int companyId, string moduleCode)
+        {
+            var content = ToJsonContent(new AddModuleAddonRequest { ModuleCode = moduleCode });
+            var res = await _http.PostAsync($"/subscriptions/companies/{companyId}/addons", content);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<CompanySubscriptionDetailDto>(stream, _jsonOptions);
+        }
+
+        public async Task<CompanySubscriptionDetailDto?> RemoveModuleAddonAsync(int companyId, string moduleCode)
+        {
+            var res = await _http.DeleteAsync($"/subscriptions/companies/{companyId}/addons/{Uri.EscapeDataString(moduleCode)}");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<CompanySubscriptionDetailDto>(stream, _jsonOptions);
+        }
+
+        public async Task<List<SubscriptionHistoryDto>> GetSubscriptionHistoryAsync()
+        {
+            var res = await _http.GetAsync("/subscriptions/history");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<List<SubscriptionHistoryDto>>(stream, _jsonOptions) ?? new();
+        }
+
+        public async Task<List<SubscriptionHistoryDto>> GetCompanySubscriptionHistoryAsync(int companyId)
+        {
+            var res = await _http.GetAsync($"/subscriptions/companies/{companyId}/history");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<List<SubscriptionHistoryDto>>(stream, _jsonOptions) ?? new();
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // BRANCHES
+        // ═══════════════════════════════════════════════════════
+
+        public async Task<List<BranchDto>> GetBranchesAsync(int? companyId = null, bool includeInactive = false, string? search = null)
+        {
+            int cid = companyId ?? CompanyId;
+            var url = $"/tenant/{cid}/branches?includeInactive={includeInactive.ToString().ToLowerInvariant()}";
+            if (!string.IsNullOrWhiteSpace(search))
+                url += $"&search={Uri.EscapeDataString(search)}";
+
+            var res = await _http.GetAsync(url);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<List<BranchDto>>(stream, _jsonOptions) ?? new();
+        }
+
+        public async Task<BranchSummaryStatsDto?> GetBranchStatsAsync(int? companyId = null)
+        {
+            int cid = companyId ?? CompanyId;
+            var res = await _http.GetAsync($"/tenant/{cid}/branches/stats");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<BranchSummaryStatsDto>(stream, _jsonOptions);
+        }
+
+        public async Task<BranchDto?> GetBranchByIdAsync(int branchId, int? companyId = null)
+        {
+            int cid = companyId ?? CompanyId;
+            var res = await _http.GetAsync($"/tenant/{cid}/branches/{branchId}");
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<BranchDto>(stream, _jsonOptions);
+        }
+
+        public async Task<BranchDto?> CreateBranchAsync(CreateBranchRequest req, int? companyId = null)
+        {
+            int cid = companyId ?? CompanyId;
+            var content = ToJsonContent(req);
+            var res = await _http.PostAsync($"/tenant/{cid}/branches", content);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<BranchDto>(stream, _jsonOptions);
+        }
+
+        public async Task<BranchDto?> UpdateBranchAsync(int branchId, UpdateBranchRequest req, int? companyId = null)
+        {
+            int cid = companyId ?? CompanyId;
+            var content = ToJsonContent(req);
+            var res = await _http.PutAsync($"/tenant/{cid}/branches/{branchId}", content);
+            await EnsureSuccess(res);
+            var stream = await res.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<BranchDto>(stream, _jsonOptions);
+        }
+
+        public async Task<bool> ToggleBranchActiveAsync(int branchId, int? companyId = null)
+        {
+            int cid = companyId ?? CompanyId;
+            var res = await _http.PatchAsync($"/tenant/{cid}/branches/{branchId}/toggle-active", null);
+            await EnsureSuccess(res);
+            return true;
         }
 
         // ═══════════════════════════════════════════════════════

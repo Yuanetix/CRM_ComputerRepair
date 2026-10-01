@@ -28,6 +28,7 @@ public static class DatabaseSeeder
 
         logger.LogInformation("Applying master database migrations...");
         await master.Database.MigrateAsync();
+        await EnsureMasterBranchSchemaAsync(master);
 
         // 1. Reset identity: exactly ONE super admin account, plus the 3 tenant company accounts
         await ResetAndSeedIdentityAsync(users, roles, logger);
@@ -70,6 +71,7 @@ public static class DatabaseSeeder
             // Seed fresh realistic data (over 1,600 realistic records)
             await SeedTenantAsync(tenant, master, seededPrograms, tdb.CompanyId);
             await SeedRetentionDefaultsAsync(tenant);
+            await SeedTenantBranchesAsync(tenant, master, users, tdb.CompanyId, logger);
         }
 
         // 5. Loyalty memberships
@@ -92,6 +94,7 @@ public static class DatabaseSeeder
         // ── Migrations (both databases) ──
         logger.LogInformation("Applying master database migrations...");
         await master.Database.MigrateAsync();
+        await EnsureMasterBranchSchemaAsync(master);
 
         // ── Identity roles + system users ──
         var users = sp.GetRequiredService<UserManager<User>>();
@@ -143,6 +146,7 @@ public static class DatabaseSeeder
                 }
 
                 await SeedRetentionDefaultsAsync(tenant);
+                await SeedTenantBranchesAsync(tenant, master, users, tdb.CompanyId, logger);
             }
             catch (Exception ex)
             {
@@ -158,6 +162,16 @@ public static class DatabaseSeeder
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed seeding loyalty memberships into master database");
+        }
+
+        // ── Enrich ByteCare (Company 2) & TechRevive (Company 3) operational data ──
+        try
+        {
+            await EnrichByteCareAndTechReviveDataAsync(master, factory, users, logger);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed enriching ByteCare and TechRevive data");
         }
 
         logger.LogInformation("Database seeding completed successfully.");
@@ -180,7 +194,7 @@ public static class DatabaseSeeder
         var allowedUsers = new[]
         {
             // Exactly ONE super admin account -> DB_MasterCRM
-            new { UserName = "superadmin", Email = "admin@fixorycrm.com", Password = "SuperAdmin@123", First = "Super", Last = "Admin", Role = "Super Admin", CompanyId = (int?)1 },
+            new { UserName = "superadmin", Email = "admin@fixorycrm.com", Password = "SuperAdmin@123", First = "Super", Last = "Admin", Role = "Super Admin", CompanyId = (int?)null },
 
             // Fixtech accounts (Company 1) -> DB_Fixtech
             new { UserName = "fixtech", Email = "admin@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Administrator", Role = "Admin", CompanyId = (int?)1 },
@@ -196,6 +210,10 @@ public static class DatabaseSeeder
             new { UserName = "techrevive", Email = "admin@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Administrator", Role = "Admin", CompanyId = (int?)3 },
             new { UserName = "techreviveManager", Email = "manager@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Manager", Role = "Manager", CompanyId = (int?)3 },
             new { UserName = "techreviveStaff", Email = "staff@techrevive.ph", Password = "Techrevive@123", First = "TechRevive", Last = "Staff", Role = "Staff", CompanyId = (int?)3 },
+            new { UserName = "techreviveMgrMakati", Email = "makati.mgr@techrevive.ph", Password = "Techrevive@123", First = "Makati", Last = "Branch Manager", Role = "Manager", CompanyId = (int?)3 },
+            new { UserName = "techreviveStaffMakati", Email = "makati.staff@techrevive.ph", Password = "Techrevive@123", First = "Makati", Last = "Lead Tech", Role = "Staff", CompanyId = (int?)3 },
+            new { UserName = "techreviveMgrCebu", Email = "cebu.mgr@techrevive.ph", Password = "Techrevive@123", First = "Cebu", Last = "Regional Manager", Role = "Manager", CompanyId = (int?)3 },
+            new { UserName = "techreviveStaffCebu", Email = "cebu.staff@techrevive.ph", Password = "Techrevive@123", First = "Cebu", Last = "Lead Tech", Role = "Staff", CompanyId = (int?)3 },
         };
 
         var allowedUsernames = allowedUsers.Select(x => x.UserName.ToLowerInvariant()).ToHashSet();
@@ -268,7 +286,7 @@ public static class DatabaseSeeder
 
         var demoUsers = new[]
         {
-            new { UserName = "superadmin", Email = "admin@fixorycrm.com", Password = "SuperAdmin@123", First = "Super", Last = "Admin", Role = "Super Admin", CompanyId = (int?)1 },
+            new { UserName = "superadmin", Email = "admin@fixorycrm.com", Password = "SuperAdmin@123", First = "Super", Last = "Admin", Role = "Super Admin", CompanyId = (int?)null },
             new { UserName = "fixtech", Email = "admin@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Administrator", Role = "Admin", CompanyId = (int?)1 },
             new { UserName = "fixtechManager", Email = "manager@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Manager", Role = "Manager", CompanyId = (int?)1 },
             new { UserName = "fixtechStaff", Email = "staff@fixtech.ph", Password = "Fixtech@123", First = "Fixtech", Last = "Staff", Role = "Staff", CompanyId = (int?)1 },
@@ -572,6 +590,234 @@ public static class DatabaseSeeder
         }
 
         await master.SaveChangesAsync();
+
+        // 5. Seed standard AppModules and company-specific subscription module allocations
+        await SeedAppModulesAndCompanySubscriptionsAsync(master);
+    }
+
+    private static async Task SeedAppModulesAndCompanySubscriptionsAsync(MasterCrmDbContext master)
+    {
+        // 1. Seed standard AppModules
+        var moduleDefs = new[]
+        {
+            new { Code = ModuleCodes.MainTransactions, Name = "Main Transactions", Price = 1000.00m, Desc = "Device repair intakes, diagnostic ticketing, status workflows, technician workbenches, parts, and payments." },
+            new { Code = ModuleCodes.DataCollection, Name = "Data Collection", Price = 750.00m, Desc = "Customer intake, comprehensive directory, device registration, and 360-degree service history." },
+            new { Code = ModuleCodes.BusinessIntelligence, Name = "Business Intelligence", Price = 1500.00m, Desc = "Executive analytics dashboards, revenue trends, SLA metrics, customer loyalty insights, and exportable PDF summaries." },
+            new { Code = ModuleCodes.Actions, Name = "Retention", Price = 800.00m, Desc = "Customer retention campaigns, automated outreach, loyalty programs, and callback follow-ups." },
+            new { Code = ModuleCodes.Branching, Name = "Branching", Price = 1200.00m, Desc = "Multi-branch store synchronization, branch routing, inventory transfers, and multi-location operations." },
+        };
+
+        foreach (var def in moduleDefs)
+        {
+            var mod = await master.AppModules.FirstOrDefaultAsync(m => m.ModuleCode == def.Code);
+            if (mod == null)
+            {
+                mod = new AppModule
+                {
+                    ModuleCode = def.Code,
+                    ModuleName = def.Name,
+                    Description = def.Desc,
+                    PricePerMonth = def.Price,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+                master.AppModules.Add(mod);
+            }
+            else
+            {
+                mod.ModuleName = def.Name;
+                mod.Description = def.Desc;
+                mod.PricePerMonth = def.Price;
+                mod.IsActive = true;
+            }
+        }
+        await master.SaveChangesAsync();
+
+        var allModules = await master.AppModules.ToListAsync();
+
+        // 2. Seed standard Subscription Plans
+        var planConfigs = new[]
+        {
+            new
+            {
+                Code = "ENTERPRISE",
+                Name = "Enterprise",
+                Desc = "Full access to all available modules",
+                Price = 5000.00m,
+                Modules = new[] { ModuleCodes.MainTransactions, ModuleCodes.DataCollection, ModuleCodes.BusinessIntelligence, ModuleCodes.Actions, ModuleCodes.Branching }
+            },
+            new
+            {
+                Code = "OPERATIONS",
+                Name = "Operations",
+                Desc = "Core operational functionality",
+                Price = 1750.00m,
+                Modules = new[] { ModuleCodes.MainTransactions, ModuleCodes.DataCollection }
+            },
+            new
+            {
+                Code = "INTELLIGENCE",
+                Name = "Intelligence",
+                Desc = "Business intelligence and customer retention management",
+                Price = 2300.00m,
+                Modules = new[] { ModuleCodes.BusinessIntelligence, ModuleCodes.Actions }
+            },
+            new
+            {
+                Code = "BRANCH",
+                Name = "Branch",
+                Desc = "Branch management, business intelligence, and customer retention",
+                Price = 3500.00m,
+                Modules = new[] { ModuleCodes.Branching, ModuleCodes.BusinessIntelligence, ModuleCodes.Actions }
+            }
+        };
+
+        var seededPlans = new Dictionary<string, SubscriptionPlan>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var cfg in planConfigs)
+        {
+            var plan = await master.SubscriptionPlans
+                .Include(p => p.PlanModules)
+                .FirstOrDefaultAsync(p => p.PlanCode == cfg.Code);
+
+            if (plan == null)
+            {
+                plan = new SubscriptionPlan
+                {
+                    PlanCode = cfg.Code,
+                    PlanName = cfg.Name,
+                    Description = cfg.Desc,
+                    PricePerMonth = cfg.Price,
+                    BillingCycle = "Monthly",
+                    Status = "Active",
+                    IsActive = true,
+                    IsArchived = false,
+                    MaxUsers = cfg.Code == "ENTERPRISE" ? 50 : 10,
+                    MaxBranches = cfg.Code == "ENTERPRISE" || cfg.Code == "BRANCH" ? 10 : 1,
+                    MaxDevices = cfg.Code == "ENTERPRISE" ? 5000 : 500,
+                    CreatedAt = DateTime.UtcNow
+                };
+                master.SubscriptionPlans.Add(plan);
+            }
+            else
+            {
+                plan.PlanName = cfg.Name;
+                plan.Description = cfg.Desc;
+                plan.PricePerMonth = cfg.Price;
+                plan.IsActive = true;
+                plan.Status = "Active";
+            }
+
+            // Sync PlanModules
+            var targetModules = allModules.Where(m => cfg.Modules.Contains(m.ModuleCode, StringComparer.OrdinalIgnoreCase)).ToList();
+            var toRemove = plan.PlanModules.Where(pm => !targetModules.Any(tm => tm.ModuleId == pm.ModuleId)).ToList();
+            foreach (var r in toRemove) plan.PlanModules.Remove(r);
+            foreach (var tm in targetModules)
+            {
+                if (!plan.PlanModules.Any(pm => pm.ModuleId == tm.ModuleId))
+                {
+                    plan.PlanModules.Add(new PlanModule
+                    {
+                        Plan = plan,
+                        ModuleId = tm.ModuleId
+                    });
+                }
+            }
+
+            seededPlans[cfg.Code] = plan;
+        }
+
+        await master.SaveChangesAsync();
+
+        // 3. Assign plans to initial 3 companies
+        // Company 1 (Fixtech): OPERATIONS
+        await AssignCompanyPlanAsync(master, 1, seededPlans["OPERATIONS"]);
+
+        // Company 2 (ByteCare): INTELLIGENCE
+        await AssignCompanyPlanAsync(master, 2, seededPlans["INTELLIGENCE"]);
+
+        // Company 3 (TechRevive): BRANCH
+        await AssignCompanyPlanAsync(master, 3, seededPlans["BRANCH"]);
+    }
+
+    private static async Task AssignCompanyPlanAsync(
+        MasterCrmDbContext master,
+        int companyId,
+        SubscriptionPlan plan)
+    {
+        var company = await master.Companies
+            .Include(c => c.Subscription)
+                .ThenInclude(s => s!.SubscriptionModules)
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId);
+
+        if (company == null) return;
+
+        var sub = company.Subscription;
+        if (sub == null)
+        {
+            sub = new Subscription
+            {
+                CompanyId = company.CompanyId,
+                SubscriptionPlanId = plan.SubscriptionPlanId,
+                SubscriptionName = plan.PlanName,
+                BillingCycle = "Monthly",
+                Duration = "Monthly",
+                DurationMonths = 1,
+                StartDate = DateTime.UtcNow.AddDays(-30),
+                EndDate = DateTime.UtcNow.AddDays(365),
+                IsActive = true,
+                Status = "Active",
+                CreatedAt = DateTime.UtcNow
+            };
+            master.Subscriptions.Add(sub);
+            await master.SaveChangesAsync();
+            company.SubscriptionId = sub.SubscriptionId;
+        }
+        else
+        {
+            sub.SubscriptionPlanId = plan.SubscriptionPlanId;
+            sub.SubscriptionName = plan.PlanName;
+            sub.IsActive = true;
+            sub.Status = "Active";
+            sub.BillingCycle = "Monthly";
+        }
+
+        // Clean up legacy non-addon subscription modules so the company's active modules strictly match the plan
+        var nonAddons = sub.SubscriptionModules.Where(m => !m.IsAddon).ToList();
+        foreach (var na in nonAddons)
+        {
+            sub.SubscriptionModules.Remove(na);
+        }
+
+        // Active add-on modules total
+        decimal addonTotal = sub.SubscriptionModules
+            .Where(m => m.IsActive && m.IsAddon)
+            .Sum(m => m.MonthlyPrice);
+
+        sub.PricePerMonth = plan.PricePerMonth + addonTotal;
+        sub.UpdatedAt = DateTime.UtcNow;
+
+        await master.SaveChangesAsync();
+
+        // Ensure initial history record exists for the company
+        bool hasHistory = await master.SubscriptionHistories.AnyAsync(h => h.CompanyId == companyId);
+        if (!hasHistory)
+        {
+            master.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                CompanyId = companyId,
+                PreviousPlanName = "None",
+                NewPlanName = plan.PlanName,
+                ChangeType = "INITIAL_SETUP",
+                PreviousPrice = 0m,
+                NewPrice = sub.PricePerMonth,
+                Notes = $"Initial subscription assigned: {plan.PlanName} Plan (₱{sub.PricePerMonth:N2}/mo)",
+                EffectiveDate = sub.StartDate,
+                ChangedBy = "System Seeder",
+                Timestamp = DateTime.UtcNow.AddDays(-30)
+            });
+            await master.SaveChangesAsync();
+        }
     }
 
     private static async Task SeedCompanyAsync(MasterCrmDbContext master)
@@ -1685,6 +1931,1240 @@ public static class DatabaseSeeder
             master.CustomerLoyaltyAccounts.AddRange(toAdd);
             await master.SaveChangesAsync();
             logger.LogInformation("Seeded {Count} loyalty memberships into master database.", toAdd.Count);
+        }
+    }
+
+    private static async Task EnsureTenantBranchSchemaAsync(TenantCrmDbContext tenant)
+    {
+        // Tenant DB schema
+        await tenant.Database.ExecuteSqlRawAsync(@"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Branches')
+BEGIN
+    CREATE TABLE Branches (
+        BranchId INT IDENTITY(1,1) PRIMARY KEY,
+        CompanyId INT NULL,
+        BranchCode NVARCHAR(50) NOT NULL,
+        BranchName NVARCHAR(200) NOT NULL,
+        Address NVARCHAR(500) NULL,
+        City NVARCHAR(100) NULL,
+        StateOrProvince NVARCHAR(100) NULL,
+        PostalCode NVARCHAR(20) NULL,
+        Phone NVARCHAR(50) NULL,
+        Email NVARCHAR(200) NULL,
+        ManagerUserId NVARCHAR(450) NULL,
+        ManagerName NVARCHAR(200) NULL,
+        IsActive BIT NOT NULL DEFAULT 1,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        UpdatedAt DATETIME2 NULL
+    );
+END
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Branches_BranchCode' AND object_id = OBJECT_ID('Branches'))
+BEGIN
+    CREATE UNIQUE INDEX IX_Branches_BranchCode ON Branches(BranchCode);
+END
+
+IF COL_LENGTH('Customers', 'BranchId') IS NULL ALTER TABLE Customers ADD BranchId INT NULL;
+IF COL_LENGTH('RepairRequests', 'BranchId') IS NULL ALTER TABLE RepairRequests ADD BranchId INT NULL;
+IF COL_LENGTH('Devices', 'BranchId') IS NULL ALTER TABLE Devices ADD BranchId INT NULL;
+IF COL_LENGTH('CustomerInteractions', 'BranchId') IS NULL ALTER TABLE CustomerInteractions ADD BranchId INT NULL;
+IF COL_LENGTH('FollowUps', 'BranchId') IS NULL ALTER TABLE FollowUps ADD BranchId INT NULL;
+IF COL_LENGTH('Payments', 'BranchId') IS NULL ALTER TABLE Payments ADD BranchId INT NULL;
+");
+    }
+
+    private static async Task EnsureMasterBranchSchemaAsync(MasterCrmDbContext master)
+    {
+        // Master DB schema
+        await master.Database.ExecuteSqlRawAsync(@"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Branches')
+BEGIN
+    CREATE TABLE Branches (
+        BranchId INT IDENTITY(1,1) PRIMARY KEY,
+        CompanyId INT NULL,
+        BranchCode NVARCHAR(50) NOT NULL,
+        BranchName NVARCHAR(200) NOT NULL,
+        Address NVARCHAR(500) NULL,
+        City NVARCHAR(100) NULL,
+        StateOrProvince NVARCHAR(100) NULL,
+        PostalCode NVARCHAR(20) NULL,
+        Phone NVARCHAR(50) NULL,
+        Email NVARCHAR(200) NULL,
+        ManagerUserId NVARCHAR(450) NULL,
+        ManagerName NVARCHAR(200) NULL,
+        IsActive BIT NOT NULL DEFAULT 1,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        UpdatedAt DATETIME2 NULL
+    );
+END
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Branches_BranchCode' AND object_id = OBJECT_ID('Branches'))
+BEGIN
+    CREATE INDEX IX_Branches_BranchCode ON Branches(BranchCode);
+END
+
+IF OBJECT_ID('Devices', 'U') IS NOT NULL AND COL_LENGTH('Devices', 'BranchId') IS NULL ALTER TABLE Devices ADD BranchId INT NULL;
+IF OBJECT_ID('Customers', 'U') IS NOT NULL AND COL_LENGTH('Customers', 'BranchId') IS NULL ALTER TABLE Customers ADD BranchId INT NULL;
+IF OBJECT_ID('RepairRequests', 'U') IS NOT NULL AND COL_LENGTH('RepairRequests', 'BranchId') IS NULL ALTER TABLE RepairRequests ADD BranchId INT NULL;
+IF OBJECT_ID('CustomerInteractions', 'U') IS NOT NULL AND COL_LENGTH('CustomerInteractions', 'BranchId') IS NULL ALTER TABLE CustomerInteractions ADD BranchId INT NULL;
+IF OBJECT_ID('FollowUps', 'U') IS NOT NULL AND COL_LENGTH('FollowUps', 'BranchId') IS NULL ALTER TABLE FollowUps ADD BranchId INT NULL;
+IF OBJECT_ID('Payments', 'U') IS NOT NULL AND COL_LENGTH('Payments', 'BranchId') IS NULL ALTER TABLE Payments ADD BranchId INT NULL;
+IF OBJECT_ID('AspNetUsers', 'U') IS NOT NULL AND COL_LENGTH('AspNetUsers', 'BranchId') IS NULL ALTER TABLE AspNetUsers ADD BranchId INT NULL;
+IF OBJECT_ID('AspNetUsers', 'U') IS NOT NULL AND COL_LENGTH('AspNetUsers', 'AssignedBranchName') IS NULL ALTER TABLE AspNetUsers ADD AssignedBranchName NVARCHAR(200) NULL;
+IF OBJECT_ID('AspNetUsers', 'U') IS NOT NULL UPDATE AspNetUsers SET CompanyId = NULL WHERE UserName = 'superadmin';
+");
+    }
+
+    private static async Task SeedTenantBranchesAsync(
+        TenantCrmDbContext tenant,
+        MasterCrmDbContext master,
+        UserManager<User> users,
+        int companyId,
+        ILogger logger)
+    {
+        await EnsureTenantBranchSchemaAsync(tenant);
+
+        int branchCount = await tenant.Branches.CountAsync();
+        if (branchCount == 0)
+        {
+            if (companyId == 3) // TechRevive (Branch Plan)
+            {
+                var mgr = await users.FindByNameAsync("techreviveManager");
+                var staff = await users.FindByNameAsync("techreviveStaff");
+
+                var b1 = new Branch
+                {
+                    CompanyId = 3,
+                    BranchCode = "BR-BGC-01",
+                    BranchName = "Main Flagship - BGC Taguig",
+                    Address = "G/F High Street South Corporate Plaza, 26th St",
+                    City = "Taguig",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1634",
+                    Phone = "+63 920 555 3031",
+                    Email = "bgc@techrevive.ph",
+                    ManagerUserId = mgr?.Id,
+                    ManagerName = mgr?.FullName,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-12)
+                };
+                var b2 = new Branch
+                {
+                    CompanyId = 3,
+                    BranchCode = "BR-MKT-02",
+                    BranchName = "Makati Central Branch",
+                    Address = "Level 3 Ayala Malls Circuit, Theater Drive",
+                    City = "Makati",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1207",
+                    Phone = "+63 920 555 3032",
+                    Email = "makati@techrevive.ph",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-10)
+                };
+                var b3 = new Branch
+                {
+                    CompanyId = 3,
+                    BranchCode = "BR-QC-03",
+                    BranchName = "Quezon City North Branch",
+                    Address = "Unit 102 Gilmore Tech Plaza, Aurora Blvd",
+                    City = "Quezon City",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1112",
+                    Phone = "+63 920 555 3033",
+                    Email = "qc@techrevive.ph",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-8)
+                };
+                var b4 = new Branch
+                {
+                    CompanyId = 3,
+                    BranchCode = "BR-ALB-04",
+                    BranchName = "Alabang South Branch",
+                    Address = "Unit 405 Filinvest Corporate Center, Alabang",
+                    City = "Muntinlupa",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1781",
+                    Phone = "+63 920 555 3034",
+                    Email = "alabang@techrevive.ph",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-6)
+                };
+                var b5 = new Branch
+                {
+                    CompanyId = 3,
+                    BranchCode = "BR-ORT-05",
+                    BranchName = "Ortigas Express Kiosk (Relocating)",
+                    Address = "Robinsons Galleria Level 1, EDSA",
+                    City = "Pasig",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1600",
+                    Phone = "+63 920 555 3035",
+                    Email = "ortigas@techrevive.ph",
+                    IsActive = false,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-4)
+                };
+
+                tenant.Branches.AddRange(b1, b2, b3, b4, b5);
+                await tenant.SaveChangesAsync();
+
+                if (mgr != null)
+                {
+                    mgr.BranchId = b1.BranchId;
+                    mgr.AssignedBranchName = b1.BranchName;
+                    await users.UpdateAsync(mgr);
+                }
+                if (staff != null)
+                {
+                    staff.BranchId = b1.BranchId;
+                    staff.AssignedBranchName = b1.BranchName;
+                    await users.UpdateAsync(staff);
+                }
+            }
+            else if (companyId == 1) // Fixtech
+            {
+                var mgr = await users.FindByNameAsync("fixtechManager");
+                var staff = await users.FindByNameAsync("fixtechStaff");
+
+                var b1 = new Branch
+                {
+                    CompanyId = 1,
+                    BranchCode = "HQ-FIX-01",
+                    BranchName = "Fixtech Operations Center",
+                    Address = "88 Rizal Avenue, Santa Cruz",
+                    City = "Manila",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1003",
+                    Phone = "+63 917 555 1010",
+                    Email = "hq@fixtech.ph",
+                    ManagerUserId = mgr?.Id,
+                    ManagerName = mgr?.FullName,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-12)
+                };
+                var b2 = new Branch
+                {
+                    CompanyId = 1,
+                    BranchCode = "FIX-NORTH-02",
+                    BranchName = "Fixtech North Satellite",
+                    Address = "14 Samson Road, Monumento",
+                    City = "Caloocan",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1400",
+                    Phone = "+63 917 555 1020",
+                    Email = "north@fixtech.ph",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-8)
+                };
+
+                tenant.Branches.AddRange(b1, b2);
+                await tenant.SaveChangesAsync();
+
+                if (mgr != null)
+                {
+                    mgr.BranchId = b1.BranchId;
+                    mgr.AssignedBranchName = b1.BranchName;
+                    await users.UpdateAsync(mgr);
+                }
+                if (staff != null)
+                {
+                    staff.BranchId = b1.BranchId;
+                    staff.AssignedBranchName = b1.BranchName;
+                    await users.UpdateAsync(staff);
+                }
+            }
+            else if (companyId == 2) // ByteCare
+            {
+                var mgr = await users.FindByNameAsync("bytecareManager");
+                var staff = await users.FindByNameAsync("bytecareStaff");
+
+                var b1 = new Branch
+                {
+                    CompanyId = 2,
+                    BranchCode = "BC-MAIN-01",
+                    BranchName = "ByteCare Corporate Hub",
+                    Address = "Emerald Avenue, Ortigas Center",
+                    City = "Pasig",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1605",
+                    Phone = "+63 918 555 2020",
+                    Email = "main@bytecare.ph",
+                    ManagerUserId = mgr?.Id,
+                    ManagerName = mgr?.FullName,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-12)
+                };
+                var b2 = new Branch
+                {
+                    CompanyId = 2,
+                    BranchCode = "BC-EAST-02",
+                    BranchName = "ByteCare East Diagnostics",
+                    Address = "Marcos Highway, San Roque",
+                    City = "Marikina",
+                    StateOrProvince = "Metro Manila",
+                    PostalCode = "1800",
+                    Phone = "+63 918 555 2030",
+                    Email = "east@bytecare.ph",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow.AddMonths(-6)
+                };
+
+                tenant.Branches.AddRange(b1, b2);
+                await tenant.SaveChangesAsync();
+
+                if (mgr != null)
+                {
+                    mgr.BranchId = b1.BranchId;
+                    mgr.AssignedBranchName = b1.BranchName;
+                    await users.UpdateAsync(mgr);
+                }
+                if (staff != null)
+                {
+                    staff.BranchId = b1.BranchId;
+                    staff.AssignedBranchName = b1.BranchName;
+                    await users.UpdateAsync(staff);
+                }
+            }
+        }
+
+        // Link any unassigned customers and repair requests to active branches
+        var activeBranches = await tenant.Branches.Where(b => b.IsActive).OrderBy(b => b.BranchId).ToListAsync();
+        if (activeBranches.Count > 0)
+        {
+            var unassignedCustomers = await tenant.Customers.Where(c => c.BranchId == null).ToListAsync();
+            for (int i = 0; i < unassignedCustomers.Count; i++)
+            {
+                unassignedCustomers[i].BranchId = activeBranches[i % activeBranches.Count].BranchId;
+            }
+
+            var unassignedRepairs = await tenant.RepairRequests.Where(r => r.BranchId == null).ToListAsync();
+            for (int i = 0; i < unassignedRepairs.Count; i++)
+            {
+                unassignedRepairs[i].BranchId = activeBranches[i % activeBranches.Count].BranchId;
+            }
+
+            var unassignedInteractions = await tenant.CustomerInteractions.Where(ci => ci.BranchId == null).ToListAsync();
+            for (int i = 0; i < unassignedInteractions.Count; i++)
+            {
+                unassignedInteractions[i].BranchId = activeBranches[i % activeBranches.Count].BranchId;
+            }
+
+            var unassignedFollowUps = await tenant.FollowUps.Where(f => f.BranchId == null).ToListAsync();
+            for (int i = 0; i < unassignedFollowUps.Count; i++)
+            {
+                unassignedFollowUps[i].BranchId = activeBranches[i % activeBranches.Count].BranchId;
+            }
+
+            var unassignedPayments = await tenant.Payments.Where(p => p.BranchId == null).ToListAsync();
+            for (int i = 0; i < unassignedPayments.Count; i++)
+            {
+                unassignedPayments[i].BranchId = activeBranches[i % activeBranches.Count].BranchId;
+            }
+
+            await tenant.SaveChangesAsync();
+        }
+    }
+
+    public static async Task EnrichByteCareAndTechReviveDataAsync(
+        MasterCrmDbContext master,
+        ITenantDbContextFactory factory,
+        UserManager<User> userManager,
+        ILogger logger)
+    {
+        try
+        {
+            await using var chk2 = await factory.CreateAsync(2);
+            await using var chk3 = await factory.CreateAsync(3);
+            if (await chk2.Customers.CountAsync() >= 200 && await chk3.Customers.CountAsync() >= 200)
+            {
+                logger.LogInformation("ByteCare and TechRevive datasets are already enriched. Skipping redundant generation.");
+                return;
+            }
+        }
+        catch
+        {
+        }
+
+        logger.LogInformation("Enriching ByteCare (Company 2) and TechRevive (Company 3) operational datasets...");
+
+        // ─── 1. Fix Loyalty Program Names in Master CRM ───
+        var c2Programs = await master.LoyaltyPrograms.Where(p => p.CompanyId == 2).ToListAsync();
+        if (c2Programs.Count > 0)
+        {
+            if (c2Programs.Count >= 1)
+            {
+                c2Programs[0].ProgramName = "ByteCare Rewards Tier";
+                c2Programs[0].Description = "Earn 1 loyalty point per ₱100 spent at ByteCare. Unlock 10% off your next repair after 3 completed visits and ₱1,500 total spending.";
+            }
+            if (c2Programs.Count >= 2)
+            {
+                c2Programs[1].ProgramName = "ByteCare VIP Care Tier";
+                c2Programs[1].Description = "Exclusive tier for enterprise and frequent clients (₱8,000+ lifetime spend). Entitled to a free annual maintenance diagnostic.";
+            }
+            await master.SaveChangesAsync();
+        }
+
+        var c3Programs = await master.LoyaltyPrograms.Where(p => p.CompanyId == 3).ToListAsync();
+        if (c3Programs.Count > 0)
+        {
+            if (c3Programs.Count >= 1)
+            {
+                c3Programs[0].ProgramName = "TechRevive Frequent Fix Club";
+                c3Programs[0].Description = "Earn 1 loyalty point per ₱100 spent across all TechRevive branches. Unlock 10% off service after 3 visits.";
+            }
+            if (c3Programs.Count >= 2)
+            {
+                c3Programs[1].ProgramName = "TechRevive Premier Partner Tier";
+                c3Programs[1].Description = "Exclusive premier partner program for multi-branch corporate accounts and VIP clients (₱8,000+ spend).";
+            }
+            await master.SaveChangesAsync();
+        }
+
+        // ─── 2. Enrich ByteCare (Company 2) ───
+        try
+        {
+            await using var t2 = await factory.CreateAsync(2);
+            await EnsureTenantBranchSchemaAsync(t2);
+
+            // Ensure 2 branches exist and are active
+            var b1 = await t2.Branches.FirstOrDefaultAsync(b => b.BranchId == 1 || b.BranchCode == "BC-MAIN-01");
+            if (b1 != null)
+            {
+                b1.BranchCode = "BC-MAIN-01";
+                b1.BranchName = "ByteCare Corporate Hub";
+                b1.Address = "Emerald Avenue, Ortigas Center";
+                b1.City = "Pasig";
+                b1.StateOrProvince = "Metro Manila";
+                b1.PostalCode = "1605";
+                b1.Phone = "+63 918 555 2020";
+                b1.Email = "main@bytecare.ph";
+                b1.IsActive = true;
+            }
+            var b2 = await t2.Branches.FirstOrDefaultAsync(b => b.BranchId == 2 || b.BranchCode == "BC-EAST-02");
+            if (b2 != null)
+            {
+                b2.BranchCode = "BC-EAST-02";
+                b2.BranchName = "ByteCare East Diagnostics";
+                b2.Address = "Marcos Highway, San Roque";
+                b2.City = "Marikina";
+                b2.StateOrProvince = "Metro Manila";
+                b2.PostalCode = "1800";
+                b2.Phone = "+63 918 555 2030";
+                b2.Email = "east@bytecare.ph";
+                b2.IsActive = true;
+            }
+            await t2.SaveChangesAsync();
+
+            var b1Id = b1?.BranchId ?? 1;
+            var b2Id = b2?.BranchId ?? 2;
+
+            // Update customers: assign 60% to Branch 1, 40% to Branch 2
+            var c2Customers = await t2.Customers.OrderBy(c => c.CustomerId).ToListAsync();
+            for (int i = 0; i < c2Customers.Count; i++)
+            {
+                c2Customers[i].BranchId = (i % 5 < 3) ? b1Id : b2Id;
+                c2Customers[i].City = (i % 5 < 3) ? "Pasig" : "Marikina";
+                c2Customers[i].StateOrProvince = "Metro Manila";
+                c2Customers[i].IsActive = true;
+            }
+            await t2.SaveChangesAsync();
+
+            // Devices for ByteCare
+            var existingDevs2 = await t2.Devices.ToListAsync();
+            var devModels = new (string Brand, string Model, string Type)[]
+            {
+                ("Apple", "MacBook Pro 16\" M2 Max", "Laptop"),
+                ("Apple", "MacBook Air 13\" M2", "Laptop"),
+                ("Apple", "Mac mini M2 Pro", "Desktop"),
+                ("Apple", "iMac 24\" M1", "Desktop"),
+                ("Apple", "iPad Pro 12.9\"", "Tablet"),
+                ("Dell", "XPS 15 9520", "Laptop"),
+                ("Dell", "Latitude 5430", "Laptop"),
+                ("Dell", "Precision 3650 Workstation", "Desktop"),
+                ("Dell", "OptiPlex 7090 Micro", "Desktop"),
+                ("Lenovo", "ThinkPad X1 Carbon Gen 10", "Laptop"),
+                ("Lenovo", "ThinkPad T14s AMD", "Laptop"),
+                ("Lenovo", "Legion Pro 7i Gaming", "Laptop"),
+                ("HP", "EliteBook 840 G9", "Laptop"),
+                ("HP", "Spectre x360 14", "Laptop"),
+                ("HP", "Z2 G9 Workstation", "Desktop"),
+                ("ASUS", "ROG Zephyrus G14", "Laptop"),
+                ("ASUS", "ZenBook 14 OLED", "Laptop"),
+                ("Microsoft", "Surface Laptop 5", "Laptop"),
+                ("Microsoft", "Surface Pro 9", "Tablet"),
+                ("MSI", "Prestige 14 Evo", "Laptop")
+            };
+
+            var rng = new Random(202602);
+            var now = DateTime.UtcNow;
+
+            int devSeq = 1;
+            foreach (var dev in existingDevs2)
+            {
+                if (dev.CustomerId == null && c2Customers.Count > 0)
+                {
+                    var cust = c2Customers[(devSeq - 1) % c2Customers.Count];
+                    var dm = devModels[rng.Next(devModels.Length)];
+                    dev.CustomerId = cust.CustomerId;
+                    dev.BranchId = cust.BranchId;
+                    dev.Brand = dm.Brand;
+                    dev.Model = dm.Model;
+                    dev.DeviceType = dm.Type;
+                    dev.DeviceName = $"{dm.Brand} {dm.Model}";
+                    dev.DeviceCode = $"BC-DEV-{devSeq:D4}";
+                    dev.SerialNumber = $"SN-BC-{dm.Brand.Substring(0, 2).ToUpper()}-{rng.Next(100000, 999999)}";
+                    dev.PurchasePrice = rng.Next(35000, 150000);
+                    dev.WarrantyStatus = rng.Next(0, 3) == 0 ? "Under Warranty" : "Out of Warranty";
+                    devSeq++;
+                }
+            }
+
+            while (devSeq <= c2Customers.Count)
+            {
+                var cust = c2Customers[devSeq - 1];
+                var dm = devModels[rng.Next(devModels.Length)];
+                var newDev = new Device
+                {
+                    CompanyId = 2,
+                    CustomerId = cust.CustomerId,
+                    BranchId = cust.BranchId,
+                    Brand = dm.Brand,
+                    Model = dm.Model,
+                    DeviceType = dm.Type,
+                    DeviceName = $"{dm.Brand} {dm.Model}",
+                    DeviceCode = $"BC-DEV-{devSeq:D4}",
+                    SerialNumber = $"SN-BC-{dm.Brand.Substring(0, 2).ToUpper()}-{rng.Next(100000, 999999)}",
+                    PurchasePrice = rng.Next(32000, 160000),
+                    PurchaseDate = now.AddMonths(-rng.Next(2, 36)),
+                    WarrantyStatus = rng.Next(0, 3) == 0 ? "Under Warranty" : "Out of Warranty",
+                    WarrantyExpiry = now.AddMonths(rng.Next(-6, 24)),
+                    Status = "Operational",
+                    IsActive = true,
+                    CreatedAt = cust.CreatedAt
+                };
+                t2.Devices.Add(newDev);
+                existingDevs2.Add(newDev);
+                devSeq++;
+            }
+            await t2.SaveChangesAsync();
+
+            // Link repair requests to devices and ensure realistic descriptions & dates
+            var c2Repairs = await t2.RepairRequests.OrderBy(r => r.RepairRequestId).ToListAsync();
+            var devicesByCust = existingDevs2.Where(d => d.CustomerId.HasValue)
+                .GroupBy(d => d.CustomerId!.Value)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var realisticIssues = new[]
+            {
+                "Retina display matrix failure; vertical magenta lines and flicker after chassis flex.",
+                "Logic board ultrasonic cleaning & micro-soldering: backlight boost capacitor replaced.",
+                "Battery health critical at 38% capacity with service warning; trackpad lifting from swelling.",
+                "Thermal throttling and extreme fan noise under video export; liquid metal repaste and vapor chamber service.",
+                "NVMe SSD unmountable boot volume error; successful data carve and filesystem clone to 1TB Gen4 drive.",
+                "Type-C Thunderbolt 4 port mechanically loose; replaced solder-down connector and tested 100W PD.",
+                "Intermittent blue screen (MEMORY_MANAGEMENT) resolved by replacing faulty DDR5 SODIMM.",
+                "Top case keyboard spilled with coffee; replaced full assembly and ultrasonic cleaned trackpad.",
+                "Preventative corporate maintenance: internal dust extraction, fan bearing lube, and thermal pad upgrade.",
+                "Water ingress diagnostic: board dried, corroded test points cleaned, power delivery rails restored."
+            };
+
+            for (int i = 0; i < c2Repairs.Count; i++)
+            {
+                var rep = c2Repairs[i];
+                if (devicesByCust.TryGetValue(rep.CustomerId, out var cdevs) && cdevs.Count > 0)
+                {
+                    var dev = cdevs[i % cdevs.Count];
+                    rep.DeviceId = dev.DeviceId;
+                    rep.DeviceModel = $"{dev.Brand} {dev.Model}";
+                    rep.SerialNumber = dev.SerialNumber;
+                    rep.BranchId = dev.BranchId;
+                }
+                else
+                {
+                    var dev = existingDevs2[i % existingDevs2.Count];
+                    rep.DeviceId = dev.DeviceId;
+                    rep.DeviceModel = $"{dev.Brand} {dev.Model}";
+                    rep.SerialNumber = dev.SerialNumber;
+                    rep.BranchId = dev.BranchId;
+                }
+
+                rep.IssueDescription = realisticIssues[i % realisticIssues.Length];
+                rep.AssignedToStaffId = "bytecareStaff";
+
+                if (i < 35)
+                {
+                    rep.RequestDate = now.AddDays(-rng.Next(1, 28));
+                    if (rep.Status == RepairStatus.Completed)
+                        rep.CompletionDate = rep.RequestDate.AddDays(rng.Next(1, 4));
+                }
+            }
+            await t2.SaveChangesAsync();
+
+            // Align payments with repairs
+            var c2Payments = await t2.Payments.ToListAsync();
+            var repairsById = c2Repairs.ToDictionary(r => r.RepairRequestId);
+            foreach (var pay in c2Payments)
+            {
+                if (repairsById.TryGetValue(pay.RepairRequestId, out var rep))
+                {
+                    pay.BranchId = rep.BranchId;
+                    if (rep.CompletionDate.HasValue)
+                        pay.PaymentDate = rep.CompletionDate.Value.AddHours(rng.Next(1, 24));
+                }
+            }
+            await t2.SaveChangesAsync();
+
+            // Enrich CustomerInteractions
+            var c2Interactions = await t2.CustomerInteractions.ToListAsync();
+            var interactionTemplates = new (InteractionType Type, string Subject, string Notes)[]
+            {
+                (InteractionType.Inquiry, "Inquiry: Turnaround time for logic board micro-soldering", "Customer inquired about turnaround time and diagnostic fee for motherboard repair."),
+                (InteractionType.Inquiry, "Inquiry: Corporate fleet preventative maintenance SLAs", "Inquired about SLA and volume discount for servicing 20 enterprise laptops."),
+                (InteractionType.Inquiry, "Inquiry: RAM upgrade compatibility on ThinkPad T14", "Customer asked if 32GB DDR4 module is in stock for immediate installation."),
+                (InteractionType.Inquiry, "Inquiry: Data extraction feasibility from clicking external drive", "Customer asked if damaged drive can be recovered without cleanroom fee."),
+                (InteractionType.Complaint, "Complaint: Delay in sourcing original OEM keyboard part", "Customer noted delay in part shipment from international distributor. Informed of updated ETA."),
+                (InteractionType.Complaint, "Complaint: Cooling fan noise audible under 4K rendering load", "Client reported fan audible under peak rendering; explained normal thermal curve behavior."),
+                (InteractionType.Feedback, "Feedback: Same-day screen replacement was outstanding", "Customer commended fast 3-hour turnaround and immaculate display calibration."),
+                (InteractionType.Feedback, "Feedback: Technician was exceptionally helpful and transparent", "Client praised detailed diagnostic report and transparent parts pricing breakdown."),
+                (InteractionType.Feedback, "Feedback: Pickup reminder SMS was timely and convenient", "Customer appreciated SMS updates throughout the repair stages.")
+            };
+
+            for (int i = 0; i < c2Interactions.Count; i++)
+            {
+                var inter = c2Interactions[i];
+                var tmpl = interactionTemplates[i % interactionTemplates.Length];
+                inter.InteractionType = tmpl.Type;
+                inter.Subject = tmpl.Subject;
+                inter.Notes = tmpl.Notes;
+                inter.InteractionByUserId = "bytecareStaff";
+                if (inter.CustomerId.HasValue)
+                {
+                    var cust = c2Customers.FirstOrDefault(c => c.CustomerId == inter.CustomerId.Value);
+                    if (cust != null) inter.BranchId = cust.BranchId;
+                }
+            }
+            await t2.SaveChangesAsync();
+
+            // Enrich FollowUps
+            var c2FollowUps = await t2.FollowUps.ToListAsync();
+            var followUpTemplates = new (FollowUpChannel Channel, string Subject, string Notes)[]
+            {
+                (FollowUpChannel.Call, "Post-Repair 7-Day Performance & Thermal Check", "Called customer to verify system boots quickly and runs at low temperatures."),
+                (FollowUpChannel.Email, "Preventative Maintenance Reminder — 6-Month Service", "Sent routine reminder for thermal fan de-dusting and battery cycle check."),
+                (FollowUpChannel.SMS, "Ready for Pickup Counter Notification", "SMS notification sent: Device completed quality check and ready for pickup."),
+                (FollowUpChannel.Call, "Diagnostic Findings & Part Approval Call", "Contacted client explaining motherboard capacitor test results and repair quotation."),
+                (FollowUpChannel.Email, "Warranty Courtesy Notice — 30 Days Remaining", "Courtesy email informing customer warranty on replaced battery expires in 30 days.")
+            };
+
+            for (int i = 0; i < c2FollowUps.Count; i++)
+            {
+                var f = c2FollowUps[i];
+                var tmpl = followUpTemplates[i % followUpTemplates.Length];
+                f.Channel = tmpl.Channel;
+                f.Subject = tmpl.Subject;
+                f.Notes = tmpl.Notes;
+                f.AssignedToUserId = "bytecareStaff";
+                if (f.CustomerId.HasValue)
+                {
+                    var cust = c2Customers.FirstOrDefault(c => c.CustomerId == f.CustomerId.Value);
+                    if (cust != null) f.BranchId = cust.BranchId;
+                }
+            }
+            await t2.SaveChangesAsync();
+
+            // Retention Settings & Templates
+            var retSettings = await t2.RetentionSettings.FirstOrDefaultAsync();
+            if (retSettings != null)
+            {
+                retSettings.SmtpFromName = "ByteCare Diagnostics";
+                retSettings.SmtpFromEmail = "retention@bytecare.ph";
+            }
+            var templates = await t2.RetentionEmailTemplates.ToListAsync();
+            foreach (var t in templates)
+            {
+                t.Subject = t.Subject.Replace("Fixory", "ByteCare");
+                t.Body = t.Body.Replace("Fixory", "ByteCare");
+            }
+            await t2.SaveChangesAsync();
+
+            // Retention Requests
+            int retReqCount = await t2.RetentionRequests.CountAsync();
+            if (retReqCount < 20)
+            {
+                var reqs = new List<RetentionRequest>();
+                var segments = new[] { RetentionSegment.New, RetentionSegment.Returning, RetentionSegment.Loyal, RetentionSegment.AtRisk, RetentionSegment.Inactive };
+                for (int i = 0; i < 24; i++)
+                {
+                    var cust = c2Customers[i % c2Customers.Count];
+                    var seg = segments[i % segments.Length];
+                    var isAppr = i % 4 != 3;
+                    var isRej = i % 8 == 7;
+                    reqs.Add(new RetentionRequest
+                    {
+                        CustomerId = cust.CustomerId,
+                        TargetSegment = seg,
+                        ActionType = "Discount",
+                        ProposedDiscountPercent = seg switch { RetentionSegment.Inactive => 15m, RetentionSegment.AtRisk => 12m, RetentionSegment.Loyal => 10m, _ => 5m },
+                        RetentionDetails = $"Targeted retention outreach for {seg} customer {cust.FullName}.",
+                        ReasonCategory = seg switch { RetentionSegment.Inactive => "Re-engage Inactive Customer", RetentionSegment.AtRisk => "Prevent Customer Churn", RetentionSegment.Loyal => "VIP Appreciation", _ => "Improve Retention" },
+                        ReasonNote = "Customer has completed multiple services; offering discount on next diagnostic or hardware upgrade.",
+                        Status = isRej ? RetentionRequestStatus.Rejected : (isAppr ? RetentionRequestStatus.Approved : RetentionRequestStatus.Pending),
+                        SubmittedByUserId = "bytecareStaff",
+                        SubmittedByFirstName = "ByteCare",
+                        SubmittedByLastName = "Staff",
+                        SubmittedAt = now.AddDays(-rng.Next(3, 45)),
+                        ReviewedByUserId = (isAppr || isRej) ? "bytecareManager" : null,
+                        ReviewedByFirstName = (isAppr || isRej) ? "ByteCare" : null,
+                        ReviewedByLastName = (isAppr || isRej) ? "Manager" : null,
+                        ReviewedAt = (isAppr || isRej) ? now.AddDays(-rng.Next(1, 15)) : null,
+                        ReviewRemarks = isAppr ? "Approved for customer retention campaign." : (isRej ? "Discount percent exceeds policy limit." : null),
+                        RejectionReason = isRej ? "Requested discount above authorized threshold." : null,
+                        AddedToCampaign = isAppr,
+                        CampaignAddedAt = isAppr ? now.AddDays(-rng.Next(1, 10)) : null
+                    });
+                }
+                t2.RetentionRequests.AddRange(reqs);
+                await t2.SaveChangesAsync();
+            }
+
+            // Retention Email Logs
+            int retLogCount = await t2.RetentionEmailLogs.CountAsync();
+            if (retLogCount < 25)
+            {
+                var logs = new List<RetentionEmailLog>();
+                var tmplList = await t2.RetentionEmailTemplates.ToListAsync();
+                for (int i = 0; i < 30; i++)
+                {
+                    var cust = c2Customers[(i + 5) % c2Customers.Count];
+                    var tmpl = tmplList[i % tmplList.Count];
+                    var sentAt = now.AddDays(-rng.Next(2, 60));
+                    logs.Add(new RetentionEmailLog
+                    {
+                        CustomerId = cust.CustomerId,
+                        RecipientName = $"{cust.FirstName} {cust.LastName}".Trim(),
+                        RecipientEmail = cust.Email ?? $"customer{cust.CustomerId}@bytecare.ph",
+                        Subject = tmpl.Subject,
+                        FormattedBody = tmpl.Body,
+                        Segment = tmpl.Segment,
+                        DiscountPercent = tmpl.DefaultDiscountPercent,
+                        PromoCode = $"BC-{cust.CustomerId:D4}-{rng.Next(100, 999)}",
+                        ValidUntil = sentAt.AddDays(tmpl.ValidityDays),
+                        IsDispatched = true,
+                        DispatchedAt = sentAt,
+                        IsAutomated = true,
+                        CreatedAt = sentAt,
+                        DeliveryStatus = "Sent"
+                    });
+                }
+                t2.RetentionEmailLogs.AddRange(logs);
+                await t2.SaveChangesAsync();
+            }
+
+            logger.LogInformation("Enriched ByteCare (Company 2) data successfully.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed enriching ByteCare (Company 2) data.");
+        }
+
+        // ─── 3. Enrich TechRevive (Company 3) ───
+        try
+        {
+            await using var t3 = await factory.CreateAsync(3);
+            await EnsureTenantBranchSchemaAsync(t3);
+
+            // TechRevive 8 Branches: clean names and codes
+            var branchDefs = new (string Code, string Name, string Addr, string City, string Prov, string Zip, string Phone, string Email)[]
+            {
+                ("BR-BGC-01", "BGC Flagship Operations", "G/F High Street South Corporate Plaza, 26th St", "Taguig", "Metro Manila", "1634", "+63 920 555 3031", "bgc@techrevive.ph"),
+                ("BR-MKT-02", "Makati Central Hub", "Level 3 Ayala Malls Circuit, Theater Drive", "Makati", "Metro Manila", "1207", "+63 920 555 3032", "makati@techrevive.ph"),
+                ("BR-QC-03",  "Quezon City North Center", "Unit 102 Gilmore Tech Plaza, Aurora Blvd", "Quezon City", "Metro Manila", "1112", "+63 920 555 3033", "qc@techrevive.ph"),
+                ("BR-ALB-04", "Alabang South Center", "Unit 405 Filinvest Corporate Center, Alabang", "Muntinlupa", "Metro Manila", "1781", "+63 920 555 3034", "alabang@techrevive.ph"),
+                ("BR-ORT-05", "Ortigas Business District", "Robinsons Galleria Level 1, EDSA", "Pasig", "Metro Manila", "1600", "+63 920 555 3035", "ortigas@techrevive.ph"),
+                ("BR-CEB-06", "Cebu IT Park Regional Flagship", "Tower 2 Cebu IT Park, Salinas Drive, Lahug", "Cebu City", "Cebu", "6000", "+63 920 555 3036", "cebu@techrevive.ph"),
+                ("BR-DAV-07", "Davao Matina Service Hub", "Ecoland Drive, Matina", "Davao City", "Davao del Sur", "8000", "+63 920 555 3037", "davao@techrevive.ph"),
+                ("BR-ILO-08", "Iloilo Regional Center", "Benigno Aquino Jr. Ave, Mandurriao", "Iloilo City", "Iloilo", "5000", "+63 920 555 3038", "iloilo@techrevive.ph")
+            };
+
+            var existingBranches = await t3.Branches.OrderBy(b => b.BranchId).ToListAsync();
+            for (int i = 0; i < branchDefs.Length; i++)
+            {
+                var def = branchDefs[i];
+                if (i < existingBranches.Count)
+                {
+                    var b = existingBranches[i];
+                    b.BranchCode = def.Code;
+                    b.BranchName = def.Name;
+                    b.Address = def.Addr;
+                    b.City = def.City;
+                    b.StateOrProvince = def.Prov;
+                    b.PostalCode = def.Zip;
+                    b.Phone = def.Phone;
+                    b.Email = def.Email;
+                    b.IsActive = true;
+                    b.CompanyId = 3;
+                }
+                else
+                {
+                    var b = new Branch
+                    {
+                        CompanyId = 3,
+                        BranchCode = def.Code,
+                        BranchName = def.Name,
+                        Address = def.Addr,
+                        City = def.City,
+                        StateOrProvince = def.Prov,
+                        PostalCode = def.Zip,
+                        Phone = def.Phone,
+                        Email = def.Email,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow.AddMonths(-12)
+                    };
+                    t3.Branches.Add(b);
+                    existingBranches.Add(b);
+                }
+            }
+            await t3.SaveChangesAsync();
+
+            var activeBranchIds = existingBranches.Where(b => b.IsActive).Select(b => b.BranchId).ToList();
+
+            // Assign branch managers
+            var bgcMgr = await userManager.FindByNameAsync("techreviveManager");
+            var makatiMgr = await userManager.FindByNameAsync("techreviveMgrMakati");
+            var cebuMgr = await userManager.FindByNameAsync("techreviveMgrCebu");
+
+            if (existingBranches.Count >= 1 && bgcMgr != null)
+            {
+                existingBranches[0].ManagerUserId = bgcMgr.Id;
+                existingBranches[0].ManagerName = bgcMgr.FullName;
+                bgcMgr.BranchId = existingBranches[0].BranchId;
+                bgcMgr.AssignedBranchName = existingBranches[0].BranchName;
+                await userManager.UpdateAsync(bgcMgr);
+            }
+            if (existingBranches.Count >= 2 && makatiMgr != null)
+            {
+                existingBranches[1].ManagerUserId = makatiMgr.Id;
+                existingBranches[1].ManagerName = makatiMgr.FullName;
+                makatiMgr.BranchId = existingBranches[1].BranchId;
+                makatiMgr.AssignedBranchName = existingBranches[1].BranchName;
+                await userManager.UpdateAsync(makatiMgr);
+            }
+            if (existingBranches.Count >= 6 && cebuMgr != null)
+            {
+                existingBranches[5].ManagerUserId = cebuMgr.Id;
+                existingBranches[5].ManagerName = cebuMgr.FullName;
+                cebuMgr.BranchId = existingBranches[5].BranchId;
+                cebuMgr.AssignedBranchName = existingBranches[5].BranchName;
+                await userManager.UpdateAsync(cebuMgr);
+            }
+            await t3.SaveChangesAsync();
+
+            // Distribute ALL customers across ALL 8 branches
+            var c3Customers = await t3.Customers.OrderBy(c => c.CustomerId).ToListAsync();
+            for (int i = 0; i < c3Customers.Count; i++)
+            {
+                var targetBranch = existingBranches[i % activeBranchIds.Count];
+                c3Customers[i].BranchId = targetBranch.BranchId;
+                c3Customers[i].City = targetBranch.City;
+                c3Customers[i].StateOrProvince = targetBranch.StateOrProvince;
+                c3Customers[i].IsActive = true;
+            }
+            await t3.SaveChangesAsync();
+
+            // Devices for TechRevive
+            var existingDevs3 = await t3.Devices.ToListAsync();
+            var devModels3 = new (string Brand, string Model, string Type)[]
+            {
+                ("Apple", "MacBook Pro 14\" M3 Pro", "Laptop"),
+                ("Apple", "MacBook Air 15\" M2", "Laptop"),
+                ("Apple", "Mac Studio M2 Max", "Desktop"),
+                ("Apple", "iPad Air 5th Gen", "Tablet"),
+                ("Dell", "XPS 17 9720", "Laptop"),
+                ("Dell", "Latitude 5540", "Laptop"),
+                ("Dell", "Precision 5820 Tower", "Desktop"),
+                ("Lenovo", "ThinkPad P16 Gen 1", "Laptop"),
+                ("Lenovo", "ThinkPad T16 Gen 2", "Laptop"),
+                ("Lenovo", "ThinkStation P360 Tiny", "Desktop"),
+                ("HP", "ZBook Studio G9", "Laptop"),
+                ("HP", "ProBook 450 G10", "Laptop"),
+                ("HP", "Omen 45L Gaming Desktop", "Desktop"),
+                ("ASUS", "TUF Gaming A15", "Laptop"),
+                ("ASUS", "ProArt StudioBook 16", "Laptop"),
+                ("Microsoft", "Surface Pro 9 5G", "Tablet"),
+                ("Microsoft", "Surface Studio 2+", "Desktop"),
+                ("Acer", "Predator Helios 300", "Laptop")
+            };
+
+            var rng3 = new Random(202603);
+            var now3 = DateTime.UtcNow;
+
+            int devSeq3 = 1;
+            foreach (var dev in existingDevs3)
+            {
+                if (dev.CustomerId == null && c3Customers.Count > 0)
+                {
+                    var cust = c3Customers[(devSeq3 - 1) % c3Customers.Count];
+                    var dm = devModels3[rng3.Next(devModels3.Length)];
+                    dev.CustomerId = cust.CustomerId;
+                    dev.BranchId = cust.BranchId;
+                    dev.Brand = dm.Brand;
+                    dev.Model = dm.Model;
+                    dev.DeviceType = dm.Type;
+                    dev.DeviceName = $"{dm.Brand} {dm.Model}";
+                    dev.DeviceCode = $"TR-DEV-{devSeq3:D4}";
+                    dev.SerialNumber = $"SN-TR-{dm.Brand.Substring(0, 2).ToUpper()}-{rng3.Next(100000, 999999)}";
+                    dev.PurchasePrice = rng3.Next(30000, 160000);
+                    dev.WarrantyStatus = rng3.Next(0, 3) == 0 ? "Under Warranty" : "Out of Warranty";
+                    devSeq3++;
+                }
+            }
+
+            while (devSeq3 <= c3Customers.Count)
+            {
+                var cust = c3Customers[devSeq3 - 1];
+                var dm = devModels3[rng3.Next(devModels3.Length)];
+                var newDev = new Device
+                {
+                    CompanyId = 3,
+                    CustomerId = cust.CustomerId,
+                    BranchId = cust.BranchId,
+                    Brand = dm.Brand,
+                    Model = dm.Model,
+                    DeviceType = dm.Type,
+                    DeviceName = $"{dm.Brand} {dm.Model}",
+                    DeviceCode = $"TR-DEV-{devSeq3:D4}",
+                    SerialNumber = $"SN-TR-{dm.Brand.Substring(0, 2).ToUpper()}-{rng3.Next(100000, 999999)}",
+                    PurchasePrice = rng3.Next(28000, 155000),
+                    PurchaseDate = now3.AddMonths(-rng3.Next(2, 36)),
+                    WarrantyStatus = rng3.Next(0, 3) == 0 ? "Under Warranty" : "Out of Warranty",
+                    WarrantyExpiry = now3.AddMonths(rng3.Next(-6, 24)),
+                    Status = "Operational",
+                    IsActive = true,
+                    CreatedAt = cust.CreatedAt
+                };
+                t3.Devices.Add(newDev);
+                existingDevs3.Add(newDev);
+                devSeq3++;
+            }
+            await t3.SaveChangesAsync();
+
+            // Link Repair Requests to Devices and distribute across branches
+            var c3Repairs = await t3.RepairRequests.OrderBy(r => r.RepairRequestId).ToListAsync();
+            var devicesByCust3 = existingDevs3.Where(d => d.CustomerId.HasValue)
+                .GroupBy(d => d.CustomerId!.Value)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var realisticIssues3 = new[]
+            {
+                "Screen replacement: Broken IPS panel following drop, frame realignment needed.",
+                "Motherboard diagnostic: Blown charging MOSFET on 19V DC power rail replaced.",
+                "Thermal overhaul: CPU reaching 95°C throttle point, renewed thermal paste & cleaned blowers.",
+                "Swollen lithium polymer battery pack; safe extraction and OEM replacement.",
+                "Data recovery: Corrupted partition table on NVMe drive, extracted all user documents.",
+                "Keyboard & trackpad erratic behavior after minor soda splash; replaced palmrest assembly.",
+                "BIOS recovery following interrupted automatic Windows update; reflashed SPI chip.",
+                "Loose DC charging port; resoldered jack pins to motherboard with reinforcing adhesive.",
+                "RAM upgrade & benchmark verification: Added 16GB DDR5 SODIMM, passed MemTest86.",
+                "Preventative corporate maintenance: ultrasonic dust extraction and thermal pad replacement."
+            };
+
+            for (int i = 0; i < c3Repairs.Count; i++)
+            {
+                var rep = c3Repairs[i];
+                if (devicesByCust3.TryGetValue(rep.CustomerId, out var cdevs) && cdevs.Count > 0)
+                {
+                    var dev = cdevs[i % cdevs.Count];
+                    rep.DeviceId = dev.DeviceId;
+                    rep.DeviceModel = $"{dev.Brand} {dev.Model}";
+                    rep.SerialNumber = dev.SerialNumber;
+                    rep.BranchId = dev.BranchId;
+                }
+                else
+                {
+                    var targetBranch = existingBranches[i % activeBranchIds.Count];
+                    rep.BranchId = targetBranch.BranchId;
+                }
+
+                rep.IssueDescription = realisticIssues3[i % realisticIssues3.Length];
+                rep.AssignedToStaffId = "techreviveStaff";
+
+                if (i < 35)
+                {
+                    rep.RequestDate = now3.AddDays(-rng3.Next(1, 28));
+                    if (rep.Status == RepairStatus.Completed)
+                        rep.CompletionDate = rep.RequestDate.AddDays(rng3.Next(1, 4));
+                }
+            }
+            await t3.SaveChangesAsync();
+
+            // Payments alignment
+            var c3Payments = await t3.Payments.ToListAsync();
+            var repairsById3 = c3Repairs.ToDictionary(r => r.RepairRequestId);
+            foreach (var pay in c3Payments)
+            {
+                if (repairsById3.TryGetValue(pay.RepairRequestId, out var rep))
+                {
+                    pay.BranchId = rep.BranchId;
+                    if (rep.CompletionDate.HasValue)
+                        pay.PaymentDate = rep.CompletionDate.Value.AddHours(rng3.Next(1, 24));
+                }
+            }
+            await t3.SaveChangesAsync();
+
+            // CustomerInteractions distribution
+            var c3Interactions = await t3.CustomerInteractions.ToListAsync();
+            for (int i = 0; i < c3Interactions.Count; i++)
+            {
+                var inter = c3Interactions[i];
+                if (inter.CustomerId.HasValue)
+                {
+                    var cust = c3Customers.FirstOrDefault(c => c.CustomerId == inter.CustomerId.Value);
+                    if (cust != null) inter.BranchId = cust.BranchId;
+                }
+                else
+                {
+                    inter.BranchId = existingBranches[i % activeBranchIds.Count].BranchId;
+                }
+                inter.InteractionByUserId = "techreviveStaff";
+            }
+            await t3.SaveChangesAsync();
+
+            // FollowUps distribution
+            var c3FollowUps = await t3.FollowUps.ToListAsync();
+            for (int i = 0; i < c3FollowUps.Count; i++)
+            {
+                var f = c3FollowUps[i];
+                if (f.CustomerId.HasValue)
+                {
+                    var cust = c3Customers.FirstOrDefault(c => c.CustomerId == f.CustomerId.Value);
+                    if (cust != null) f.BranchId = cust.BranchId;
+                }
+                else
+                {
+                    f.BranchId = existingBranches[i % activeBranchIds.Count].BranchId;
+                }
+                f.AssignedToUserId = "techreviveStaff";
+            }
+            await t3.SaveChangesAsync();
+
+            // Retention Settings & Templates
+            var retSettings3 = await t3.RetentionSettings.FirstOrDefaultAsync();
+            if (retSettings3 != null)
+            {
+                retSettings3.SmtpFromName = "TechRevive Regional Network";
+                retSettings3.SmtpFromEmail = "retention@techrevive.ph";
+            }
+            var templates3 = await t3.RetentionEmailTemplates.ToListAsync();
+            foreach (var t in templates3)
+            {
+                t.Subject = t.Subject.Replace("Fixory", "TechRevive");
+                t.Body = t.Body.Replace("Fixory", "TechRevive");
+            }
+            await t3.SaveChangesAsync();
+
+            // Retention Requests
+            int retReqCount3 = await t3.RetentionRequests.CountAsync();
+            if (retReqCount3 < 20)
+            {
+                var reqs = new List<RetentionRequest>();
+                var segments = new[] { RetentionSegment.New, RetentionSegment.Returning, RetentionSegment.Loyal, RetentionSegment.AtRisk, RetentionSegment.Inactive };
+                for (int i = 0; i < 24; i++)
+                {
+                    var cust = c3Customers[i % c3Customers.Count];
+                    var seg = segments[i % segments.Length];
+                    var isAppr = i % 4 != 3;
+                    var isRej = i % 8 == 7;
+                    reqs.Add(new RetentionRequest
+                    {
+                        CustomerId = cust.CustomerId,
+                        TargetSegment = seg,
+                        ActionType = "Discount",
+                        ProposedDiscountPercent = seg switch { RetentionSegment.Inactive => 15m, RetentionSegment.AtRisk => 12m, RetentionSegment.Loyal => 10m, _ => 5m },
+                        RetentionDetails = $"Regional customer retention incentive for {seg} customer {cust.FullName}.",
+                        ReasonCategory = seg switch { RetentionSegment.Inactive => "Re-engage Inactive Customer", RetentionSegment.AtRisk => "Prevent Customer Churn", RetentionSegment.Loyal => "VIP Appreciation", _ => "Improve Retention" },
+                        ReasonNote = "Multi-branch service history client; offering promotion on next hardware service.",
+                        Status = isRej ? RetentionRequestStatus.Rejected : (isAppr ? RetentionRequestStatus.Approved : RetentionRequestStatus.Pending),
+                        SubmittedByUserId = "techreviveStaff",
+                        SubmittedByFirstName = "TechRevive",
+                        SubmittedByLastName = "Staff",
+                        SubmittedAt = now3.AddDays(-rng3.Next(3, 45)),
+                        ReviewedByUserId = (isAppr || isRej) ? "techreviveManager" : null,
+                        ReviewedByFirstName = (isAppr || isRej) ? "TechRevive" : null,
+                        ReviewedByLastName = (isAppr || isRej) ? "Manager" : null,
+                        ReviewedAt = (isAppr || isRej) ? now3.AddDays(-rng3.Next(1, 15)) : null,
+                        ReviewRemarks = isAppr ? "Approved for regional retention campaign." : (isRej ? "Discount percent exceeds policy limit." : null),
+                        RejectionReason = isRej ? "Requested discount above authorized threshold." : null,
+                        AddedToCampaign = isAppr,
+                        CampaignAddedAt = isAppr ? now3.AddDays(-rng3.Next(1, 10)) : null
+                    });
+                }
+                t3.RetentionRequests.AddRange(reqs);
+                await t3.SaveChangesAsync();
+            }
+
+            // Retention Email Logs
+            int retLogCount3 = await t3.RetentionEmailLogs.CountAsync();
+            if (retLogCount3 < 25)
+            {
+                var logs = new List<RetentionEmailLog>();
+                var tmplList = await t3.RetentionEmailTemplates.ToListAsync();
+                for (int i = 0; i < 30; i++)
+                {
+                    var cust = c3Customers[(i + 5) % c3Customers.Count];
+                    var tmpl = tmplList[i % tmplList.Count];
+                    var sentAt = now3.AddDays(-rng3.Next(2, 60));
+                    logs.Add(new RetentionEmailLog
+                    {
+                        CustomerId = cust.CustomerId,
+                        RecipientName = $"{cust.FirstName} {cust.LastName}".Trim(),
+                        RecipientEmail = cust.Email ?? $"customer{cust.CustomerId}@techrevive.ph",
+                        Subject = tmpl.Subject,
+                        FormattedBody = tmpl.Body,
+                        Segment = tmpl.Segment,
+                        DiscountPercent = tmpl.DefaultDiscountPercent,
+                        PromoCode = $"TR-{cust.CustomerId:D4}-{rng3.Next(100, 999)}",
+                        ValidUntil = sentAt.AddDays(tmpl.ValidityDays),
+                        IsDispatched = true,
+                        DispatchedAt = sentAt,
+                        IsAutomated = true,
+                        CreatedAt = sentAt,
+                        DeliveryStatus = "Sent"
+                    });
+                }
+                t3.RetentionEmailLogs.AddRange(logs);
+                await t3.SaveChangesAsync();
+            }
+
+            logger.LogInformation("Enriched TechRevive (Company 3) data across all 8 branches successfully.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed enriching TechRevive (Company 3) data.");
+        }
+
+        // ─── 4. Sync Master CRM Devices & Branches ───
+        try
+        {
+            var masterBranches = await master.Branches.ToListAsync();
+            // Company 1
+            await using (var t1 = await factory.CreateAsync(1))
+            {
+                var t1Branches = await t1.Branches.AsNoTracking().ToListAsync();
+                foreach (var b in t1Branches)
+                {
+                    if (!masterBranches.Any(mb => mb.CompanyId == 1 && mb.BranchCode == b.BranchCode))
+                    {
+                        master.Branches.Add(new Branch
+                        {
+                            CompanyId = 1,
+                            BranchCode = b.BranchCode,
+                            BranchName = b.BranchName,
+                            City = b.City,
+                            IsActive = b.IsActive,
+                            CreatedAt = b.CreatedAt
+                        });
+                    }
+                }
+            }
+            // Company 2
+            await using (var t2 = await factory.CreateAsync(2))
+            {
+                var t2Branches = await t2.Branches.AsNoTracking().ToListAsync();
+                foreach (var b in t2Branches)
+                {
+                    if (!masterBranches.Any(mb => mb.CompanyId == 2 && mb.BranchCode == b.BranchCode))
+                    {
+                        master.Branches.Add(new Branch
+                        {
+                            CompanyId = 2,
+                            BranchCode = b.BranchCode,
+                            BranchName = b.BranchName,
+                            City = b.City,
+                            IsActive = b.IsActive,
+                            CreatedAt = b.CreatedAt
+                        });
+                    }
+                }
+            }
+            // Company 3
+            await using (var t3 = await factory.CreateAsync(3))
+            {
+                var t3Branches = await t3.Branches.AsNoTracking().ToListAsync();
+                foreach (var b in t3Branches)
+                {
+                    var existingMb = masterBranches.FirstOrDefault(mb => mb.CompanyId == 3 && mb.BranchCode == b.BranchCode);
+                    if (existingMb == null)
+                    {
+                        master.Branches.Add(new Branch
+                        {
+                            CompanyId = 3,
+                            BranchCode = b.BranchCode,
+                            BranchName = b.BranchName,
+                            City = b.City,
+                            IsActive = b.IsActive,
+                            CreatedAt = b.CreatedAt
+                        });
+                    }
+                    else
+                    {
+                        existingMb.BranchName = b.BranchName;
+                        existingMb.City = b.City;
+                        existingMb.IsActive = b.IsActive;
+                    }
+                }
+            }
+            await master.SaveChangesAsync();
+
+            // Sync Devices into master.Devices
+            int masterDevCount = await master.Devices.CountAsync();
+            if (masterDevCount < 50)
+            {
+                master.Devices.RemoveRange(master.Devices);
+                await master.SaveChangesAsync();
+
+                var allMasterDevs = new List<Device>();
+                for (int cid = 1; cid <= 3; cid++)
+                {
+                    try
+                    {
+                        await using var t = await factory.CreateAsync(cid);
+                        var tenantDevs = await t.Devices.AsNoTracking().ToListAsync();
+                        foreach (var td in tenantDevs)
+                        {
+                            allMasterDevs.Add(new Device
+                            {
+                                CompanyId = cid,
+                                DeviceCode = td.DeviceCode,
+                                DeviceName = td.DeviceName,
+                                DeviceType = td.DeviceType,
+                                Brand = td.Brand,
+                                Model = td.Model,
+                                SerialNumber = td.SerialNumber,
+                                PurchasePrice = td.PurchasePrice,
+                                PurchaseDate = td.PurchaseDate,
+                                WarrantyStatus = td.WarrantyStatus,
+                                WarrantyExpiry = td.WarrantyExpiry,
+                                Status = td.Status,
+                                IsActive = td.IsActive,
+                                CreatedAt = td.CreatedAt,
+                                CustomerId = null,
+                                BranchId = td.BranchId
+                            });
+                        }
+                    }
+                    catch { }
+                }
+                if (allMasterDevs.Count > 0)
+                {
+                    master.Devices.AddRange(allMasterDevs);
+                    await master.SaveChangesAsync();
+                    logger.LogInformation("Synced {Count} devices into Master CRM database.", allMasterDevs.Count);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed syncing Master CRM devices and branches.");
         }
     }
 }

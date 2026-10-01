@@ -12,5 +12,8 @@ namespace CRM.winforms
         public bool HasAcceptedTerms { get; set; }
         public System.DateTime? TermsAcceptedAt { get; set; }
         public string Token { get; set; } = "";
+        public System.Collections.Generic.List<string> SubscribedModules { get; set; } = new();
+        public int? BranchId { get; set; }
+        public string? BranchName { get; set; }
     }
 }

@@ -4,6 +4,7 @@ using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Data;
 using CRM_ComputerRepair.infrastructure.Services;
+using CRM_ComputerRepair.api.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,15 +13,21 @@ namespace CRM_ComputerRepair.api.Controllers;
 [ApiController]
 [Route("tenant/{companyId:int}/payments")]
 [Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
+[RequireSubscribedModule(ModuleCodes.MainTransactions)]
 public class PaymentsController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
     private readonly IAuditWriter _audit;
+    private readonly Microsoft.AspNetCore.Identity.UserManager<User> _userManager;
 
-    public PaymentsController(ITenantDbContextFactory factory, IAuditWriter audit)
+    public PaymentsController(
+        ITenantDbContextFactory factory,
+        IAuditWriter audit,
+        Microsoft.AspNetCore.Identity.UserManager<User> userManager)
     {
         _factory = factory;
         _audit = audit;
+        _userManager = userManager;
     }
 
     [HttpGet]
@@ -30,8 +37,13 @@ public class PaymentsController : ControllerBase
         [FromQuery] DateTime? to,
         [FromQuery] int? customerId,
         [FromQuery] bool? paidOnly = null,
-        [FromQuery] bool? includeVoid = false)
+        [FromQuery] bool? includeVoid = false,
+        [FromQuery] int? branchId = null)
     {
+        var (scopedBranchId, isAllowed) = await BranchScopeHelper.ResolveBranchScopeAsync(HttpContext, _userManager, branchId);
+        if (!isAllowed)
+            return Forbid();
+
         await using var db = await _factory.CreateAsync(companyId);
 
         var query = db.Payments.AsNoTracking();
@@ -40,6 +52,7 @@ public class PaymentsController : ControllerBase
         if (to.HasValue) query = query.Where(p => p.PaymentDate <= to.Value.ToUniversalTime());
         if (paidOnly == true) query = query.Where(p => p.IsPaid);
         if (includeVoid != true) query = query.Where(p => !p.IsVoid);
+        if (scopedBranchId.HasValue) query = query.Where(p => p.BranchId == scopedBranchId.Value);
 
         if (customerId.HasValue)
         {

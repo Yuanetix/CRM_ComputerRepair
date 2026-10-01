@@ -4,6 +4,7 @@ using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Data;
 using CRM_ComputerRepair.infrastructure.Services;
+using CRM_ComputerRepair.api.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,15 +13,21 @@ namespace CRM_ComputerRepair.api.Controllers;
 [ApiController]
 [Route("tenant/{companyId:int}/repair-requests")]
 [Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
+[RequireSubscribedModule(ModuleCodes.MainTransactions, ModuleCodes.BusinessIntelligence)]
 public class RepairRequestsController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
     private readonly IAuditWriter _audit;
+    private readonly Microsoft.AspNetCore.Identity.UserManager<User> _userManager;
 
-    public RepairRequestsController(ITenantDbContextFactory factory, IAuditWriter audit)
+    public RepairRequestsController(
+        ITenantDbContextFactory factory,
+        IAuditWriter audit,
+        Microsoft.AspNetCore.Identity.UserManager<User> userManager)
     {
         _factory = factory;
         _audit = audit;
+        _userManager = userManager;
     }
 
     private static async Task<RepairRequestResponseDto?> LoadResponseDtoAsync(
@@ -30,6 +37,7 @@ public class RepairRequestsController : ControllerBase
         return await db.RepairRequests.AsNoTracking()
             .Where(r => r.RepairRequestId == repairRequestId)
             .Include(r => r.Customer)
+            .Include(r => r.Branch)
             .Select(r => new RepairRequestResponseDto
             {
                 RepairRequestId = r.RepairRequestId,
@@ -52,7 +60,9 @@ public class RepairRequestsController : ControllerBase
                 LaborCost = r.LaborCost,
                 TechnicianNotes = r.TechnicianNotes,
                 AssignedToStaffId = r.AssignedToStaffId,
-                AssignedToManagerId = r.AssignedToManagerId
+                AssignedToManagerId = r.AssignedToManagerId,
+                BranchId = r.BranchId,
+                BranchName = r.Branch != null ? r.Branch.BranchName : null
             })
             .FirstOrDefaultAsync();
     }
@@ -60,13 +70,27 @@ public class RepairRequestsController : ControllerBase
     // --- GET ALL ---
     [HttpGet]
     public async Task<IActionResult> GetAll(
-        int companyId, [FromQuery] RepairStatus? status, [FromQuery] string? search = null)
+        int companyId,
+        [FromQuery] RepairStatus? status,
+        [FromQuery] string? search = null,
+        [FromQuery] int? branchId = null)
     {
+        var (scopedBranchId, isAllowed) = await BranchScopeHelper.ResolveBranchScopeAsync(HttpContext, _userManager, branchId);
+        if (!isAllowed)
+            return Forbid();
+
         await using var db = await _factory.CreateAsync(companyId);
 
-        var query = db.RepairRequests.AsNoTracking().Include(r => r.Customer).AsQueryable();
+        var query = db.RepairRequests.AsNoTracking()
+            .Include(r => r.Customer)
+            .Include(r => r.Branch)
+            .AsQueryable();
+
         if (status.HasValue)
             query = query.Where(x => x.Status == status.Value);
+
+        if (scopedBranchId.HasValue)
+            query = query.Where(x => x.BranchId == scopedBranchId.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -102,7 +126,9 @@ public class RepairRequestsController : ControllerBase
                 LaborCost = r.LaborCost,
                 TechnicianNotes = r.TechnicianNotes,
                 AssignedToStaffId = r.AssignedToStaffId,
-                AssignedToManagerId = r.AssignedToManagerId
+                AssignedToManagerId = r.AssignedToManagerId,
+                BranchId = r.BranchId,
+                BranchName = r.Branch != null ? r.Branch.BranchName : null
             })
             .ToListAsync();
 
@@ -125,6 +151,8 @@ public class RepairRequestsController : ControllerBase
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
+        var (scopedBranchId, _) = await BranchScopeHelper.ResolveBranchScopeAsync(HttpContext, _userManager, request.BranchId);
+
         await using var db = await _factory.CreateAsync(companyId);
 
         var rr = new RepairRequest
@@ -138,6 +166,7 @@ public class RepairRequestsController : ControllerBase
             Priority = (Priority)request.Priority,
             Status = RepairStatus.Pending,
             EstimatedCost = request.EstimatedCost,
+            BranchId = request.BranchId ?? scopedBranchId,
             RequestDate = DateTime.UtcNow
         };
 
@@ -186,6 +215,8 @@ public class RepairRequestsController : ControllerBase
         item.TechnicianNotes = request.TechnicianNotes?.Trim();
         item.AssignedToStaffId = request.AssignedToStaffId;
         item.AssignedToManagerId = request.AssignedToManagerId;
+        if (request.BranchId.HasValue)
+            item.BranchId = request.BranchId.Value;
 
         if (item.Status == RepairStatus.Completed && item.CompletionDate is null)
             item.CompletionDate = DateTime.UtcNow;

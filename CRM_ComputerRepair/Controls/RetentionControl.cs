@@ -2496,13 +2496,22 @@ namespace CRM.winforms.Controls
         {
             try
             {
-                _cachedRecommendations = await _api.GetRetentionRecommendationsAsync();
-                _cachedRequests = await _api.GetRetentionRequestsAsync();
-                _cachedCampaigns = await _api.GetRetentionCampaignsAsync();
-                _cachedCustomers = await _api.GetCustomersAsync();
-                _cachedTemplates = await _api.GetRetentionTemplatesAsync();
+                var recTask = SafeFetchAsync(() => _api.GetRetentionRecommendationsAsync(), new List<RetentionRecommendationDto>());
+                var reqTask = SafeFetchAsync(() => _api.GetRetentionRequestsAsync(), new List<RetentionRequestDto>());
+                var campTask = SafeFetchAsync(() => _api.GetRetentionCampaignsAsync(), new List<RetentionCampaignDto>());
+                var custTask = SafeFetchAsync(() => _api.GetCustomersAsync(), new List<CustomerDto>());
+                var tempTask = SafeFetchAsync(() => _api.GetRetentionTemplatesAsync(), new List<RetentionTemplateDto>());
+                var setTask = SafeFetchAsync(() => _api.GetRetentionSettingsAsync(), (RetentionSettingsDto?)null);
 
-                var set = await _api.GetRetentionSettingsAsync();
+                await Task.WhenAll(recTask, reqTask, campTask, custTask, tempTask, setTask);
+
+                _cachedRecommendations = await recTask;
+                _cachedRequests = await reqTask;
+                _cachedCampaigns = await campTask;
+                _cachedCustomers = await custTask;
+                _cachedTemplates = await tempTask;
+
+                var set = await setTask;
                 if (set != null) _cachedSettings = set;
 
                 UpdateMetricTiles();
@@ -2525,6 +2534,19 @@ namespace CRM.winforms.Controls
             catch (Exception ex)
             {
                 MessageBox.Show($"Failed to load customer retention data:\n\n{ex.Message}", "Connection Problem", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private static async Task<T> SafeFetchAsync<T>(Func<Task<T>> action, T fallback)
+        {
+            try
+            {
+                var res = await action();
+                return res ?? fallback;
+            }
+            catch
+            {
+                return fallback;
             }
         }
 

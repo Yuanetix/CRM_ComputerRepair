@@ -24,6 +24,12 @@ public class MasterCrmDbContext : IdentityDbContext<User>
     public DbSet<RepairStatusHistory> RepairStatusHistories => Set<RepairStatusHistory>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
+    public DbSet<PlanModule> PlanModules => Set<PlanModule>();
+    public DbSet<AppModule> AppModules => Set<AppModule>();
+    public DbSet<CompanySubscriptionModule> CompanySubscriptionModules => Set<CompanySubscriptionModule>();
+    public DbSet<SubscriptionHistory> SubscriptionHistories => Set<SubscriptionHistory>();
+    public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<TermsAndConditions> TermsAndConditionsSet => Set<TermsAndConditions>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
@@ -259,6 +265,39 @@ public class MasterCrmDbContext : IdentityDbContext<User>
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<SubscriptionPlan>(entity =>
+        {
+            entity.HasKey(x => x.SubscriptionPlanId);
+            entity.Property(x => x.PlanCode).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.PlanName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(1000);
+            entity.Property(x => x.PricePerMonth).HasPrecision(18, 2);
+            entity.Property(x => x.BillingCycle).HasMaxLength(50);
+            entity.Property(x => x.Status).HasMaxLength(50);
+            entity.Ignore(x => x.PlanId);
+            entity.Ignore(x => x.Price);
+            entity.Ignore(x => x.BillingInterval);
+            entity.HasIndex(x => x.PlanCode).IsUnique();
+        });
+
+        builder.Entity<PlanModule>(entity =>
+        {
+            entity.HasKey(x => x.PlanModuleId);
+            entity.Ignore(x => x.PlanId);
+
+            entity.HasOne(x => x.Plan)
+                .WithMany(p => p.PlanModules)
+                .HasForeignKey(x => x.SubscriptionPlanId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(x => x.Module)
+                .WithMany(m => m.PlanModules)
+                .HasForeignKey(x => x.ModuleId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => new { x.SubscriptionPlanId, x.ModuleId }).IsUnique();
+        });
+
         builder.Entity<Subscription>(entity =>
         {
             entity.HasKey(x => x.SubscriptionId);
@@ -267,11 +306,66 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.BillingCycle).HasMaxLength(50);
             entity.Property(x => x.Duration).HasMaxLength(100);
             entity.Property(x => x.Description).HasMaxLength(1000);
+            entity.Property(x => x.Status).HasMaxLength(50);
+            entity.Ignore(x => x.PlanId);
 
             entity.HasOne(x => x.Company)
                 .WithMany(c => c.Subscriptions)
                 .HasForeignKey(x => x.CompanyId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(x => x.Plan)
+                .WithMany(p => p.Subscriptions)
+                .HasForeignKey(x => x.SubscriptionPlanId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<SubscriptionHistory>(entity =>
+        {
+            entity.HasKey(x => x.SubscriptionHistoryId);
+            entity.Property(x => x.PreviousPlanName).HasMaxLength(200);
+            entity.Property(x => x.NewPlanName).HasMaxLength(200);
+            entity.Property(x => x.ChangeType).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.PreviousPrice).HasPrecision(18, 2);
+            entity.Property(x => x.NewPrice).HasPrecision(18, 2);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.Property(x => x.ChangedBy).HasMaxLength(200);
+
+            entity.HasOne(x => x.Company)
+                .WithMany()
+                .HasForeignKey(x => x.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => x.CompanyId);
+            entity.HasIndex(x => x.Timestamp);
+        });
+
+        builder.Entity<AppModule>(entity =>
+        {
+            entity.HasKey(x => x.ModuleId);
+            entity.Property(x => x.ModuleCode).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.ModuleName).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(500);
+            entity.Property(x => x.PricePerMonth).HasPrecision(18, 2);
+            entity.HasIndex(x => x.ModuleCode).IsUnique();
+        });
+
+        builder.Entity<CompanySubscriptionModule>(entity =>
+        {
+            entity.HasKey(x => x.CompanySubscriptionModuleId);
+            entity.Property(x => x.MonthlyPrice).HasPrecision(18, 2);
+
+            entity.HasOne(x => x.Subscription)
+                .WithMany(s => s.SubscriptionModules)
+                .HasForeignKey(x => x.SubscriptionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(x => x.Module)
+                .WithMany(m => m.SubscriptionModules)
+                .HasForeignKey(x => x.ModuleId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(x => new { x.SubscriptionId, x.ModuleId }).IsUnique();
         });
 
         builder.Entity<TermsAndConditions>(entity =>
@@ -290,9 +384,27 @@ public class MasterCrmDbContext : IdentityDbContext<User>
             entity.Property(x => x.UserId).HasMaxLength(450);
         });
 
+        builder.Entity<Branch>(entity =>
+        {
+            entity.HasKey(x => x.BranchId);
+            entity.Property(x => x.BranchCode).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.BranchName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.City).HasMaxLength(100);
+            entity.Property(x => x.StateOrProvince).HasMaxLength(100);
+            entity.Property(x => x.PostalCode).HasMaxLength(20);
+            entity.Property(x => x.Phone).HasMaxLength(50);
+            entity.Property(x => x.Email).HasMaxLength(200);
+            entity.Property(x => x.ManagerUserId).HasMaxLength(450);
+            entity.Property(x => x.ManagerName).HasMaxLength(200);
+            entity.HasIndex(x => x.BranchCode);
+            entity.HasIndex(x => x.CompanyId);
+        });
+
         builder.Entity<User>(entity =>
         {
             entity.Ignore(x => x.FullName);
+            entity.HasIndex(x => x.BranchId);
         });
 
         // Ignore tenant-specific retention entities in Master DB

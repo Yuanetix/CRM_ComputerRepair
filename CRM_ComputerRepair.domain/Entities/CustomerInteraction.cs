@@ -1,4 +1,4 @@
-﻿namespace CRM_ComputerRepair.domain.Entities;
+namespace CRM_ComputerRepair.domain.Entities;
 
 public enum InteractionType
 {
@@ -48,6 +48,10 @@ public class CustomerInteraction
 
     // Soft delete
     public bool IsActive { get; set; } = true;
+
+    // Branch reference
+    public int? BranchId { get; set; }
+    public Branch? Branch { get; set; }
 
     // Navigation
     public Customer? Customer { get; set; }

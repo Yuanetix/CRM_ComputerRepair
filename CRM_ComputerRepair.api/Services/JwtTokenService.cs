@@ -40,6 +40,11 @@ public class JwtTokenService
             new("CompanyId", companyId.ToString())
         };
 
+        if (user.BranchId.HasValue && user.BranchId.Value > 0)
+        {
+            claims.Add(new Claim("BranchId", user.BranchId.Value.ToString()));
+        }
+
         foreach (var role in roles.Distinct())
             claims.Add(new Claim(ClaimTypes.Role, role));
 

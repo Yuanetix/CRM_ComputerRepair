@@ -39,23 +39,95 @@ public class CompaniesController : ControllerBase
         _logger = logger;
     }
 
+    private static volatile bool _masterBranchSchemaEnsured = false;
+
+    private async Task EnsureMasterBranchColumnsAsync()
+    {
+        if (_masterBranchSchemaEnsured) return;
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID('Devices', 'U') IS NOT NULL AND COL_LENGTH('Devices', 'BranchId') IS NULL ALTER TABLE Devices ADD BranchId INT NULL;
+IF OBJECT_ID('Customers', 'U') IS NOT NULL AND COL_LENGTH('Customers', 'BranchId') IS NULL ALTER TABLE Customers ADD BranchId INT NULL;
+IF OBJECT_ID('RepairRequests', 'U') IS NOT NULL AND COL_LENGTH('RepairRequests', 'BranchId') IS NULL ALTER TABLE RepairRequests ADD BranchId INT NULL;
+IF OBJECT_ID('CustomerInteractions', 'U') IS NOT NULL AND COL_LENGTH('CustomerInteractions', 'BranchId') IS NULL ALTER TABLE CustomerInteractions ADD BranchId INT NULL;
+IF OBJECT_ID('FollowUps', 'U') IS NOT NULL AND COL_LENGTH('FollowUps', 'BranchId') IS NULL ALTER TABLE FollowUps ADD BranchId INT NULL;
+IF OBJECT_ID('Payments', 'U') IS NOT NULL AND COL_LENGTH('Payments', 'BranchId') IS NULL ALTER TABLE Payments ADD BranchId INT NULL;
+IF OBJECT_ID('AspNetUsers', 'U') IS NOT NULL AND COL_LENGTH('AspNetUsers', 'BranchId') IS NULL ALTER TABLE AspNetUsers ADD BranchId INT NULL;
+IF OBJECT_ID('AspNetUsers', 'U') IS NOT NULL AND COL_LENGTH('AspNetUsers', 'AssignedBranchName') IS NULL ALTER TABLE AspNetUsers ADD AssignedBranchName NVARCHAR(200) NULL;
+IF OBJECT_ID('AspNetUsers', 'U') IS NOT NULL UPDATE AspNetUsers SET CompanyId = NULL WHERE UserName = 'superadmin';
+");
+            _masterBranchSchemaEnsured = true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not verify/add BranchId on Master database tables.");
+        }
+    }
+
+    private sealed record CompanyUserItem
+    {
+        public string Id { get; init; } = string.Empty;
+        public int? CompanyId { get; init; }
+        public string? FirstName { get; init; }
+        public string? LastName { get; init; }
+        public string? Email { get; init; }
+        public string? UserName { get; init; }
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
+        await EnsureMasterBranchColumnsAsync();
+
         var companies = await _db.Companies
             .Include(c => c.Subscription)
             .Include(c => c.CompanyDatabases)
-            .Include(c => c.Devices)
             .AsNoTracking()
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync();
 
-        var allUsers = await _users.Users.AsNoTracking().ToListAsync();
+        List<CompanyUserItem> allUsers;
+        try
+        {
+            allUsers = await _users.Users.AsNoTracking()
+                .Where(u => u.CompanyId != null && u.UserName != "superadmin")
+                .Select(u => new CompanyUserItem
+                {
+                    Id = u.Id,
+                    CompanyId = u.CompanyId,
+                    FirstName = u.FirstName,
+                    LastName = u.LastName,
+                    Email = u.Email,
+                    UserName = u.UserName
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load users for company overview. Proceeding with empty user list.");
+            allUsers = new List<CompanyUserItem>();
+        }
+
+        Dictionary<int, int> deviceCounts = new();
+        try
+        {
+            deviceCounts = await _db.Devices.AsNoTracking()
+                .Select(d => d.CompanyId)
+                .GroupBy(cid => cid)
+                .Select(g => new { CompanyId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.CompanyId, x => x.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load device counts by company.");
+        }
 
         var result = companies.Select(c =>
         {
             var dbRow = c.CompanyDatabases.FirstOrDefault(d => d.IsActive) ?? c.CompanyDatabases.FirstOrDefault();
-            var adminUser = allUsers.FirstOrDefault(u => u.CompanyId == c.CompanyId);
+            var adminUser = allUsers.FirstOrDefault(u => u.CompanyId == c.CompanyId && (u.UserName == c.CompanyCode.ToLowerInvariant() || (u.UserName != null && u.UserName.EndsWith("admin", StringComparison.OrdinalIgnoreCase))))
+                         ?? allUsers.FirstOrDefault(u => u.CompanyId == c.CompanyId);
 
             return new CompanyDetailDto
             {
@@ -93,7 +165,7 @@ public class CompaniesController : ControllerBase
                 AdminUsername = adminUser?.UserName,
 
                 TotalUsersCount = allUsers.Count(u => u.CompanyId == c.CompanyId),
-                TotalDevicesCount = c.Devices.Count
+                TotalDevicesCount = deviceCounts.TryGetValue(c.CompanyId, out int devCount) ? devCount : 0
             };
         }).ToList();
 
@@ -138,18 +210,51 @@ public class CompaniesController : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
+        await EnsureMasterBranchColumnsAsync();
+
         var c = await _db.Companies
             .Include(c => c.Subscription)
             .Include(c => c.CompanyDatabases)
-            .Include(c => c.Devices)
             .AsNoTracking()
             .FirstOrDefaultAsync(c => c.CompanyId == id);
 
         if (c is null) return NotFound(new { error = $"Company ID {id} not found." });
 
-        var allUsers = await _users.Users.AsNoTracking().Where(u => u.CompanyId == id).ToListAsync();
+        List<CompanyUserItem> allUsers;
+        try
+        {
+            allUsers = await _users.Users.AsNoTracking()
+                .Where(u => u.CompanyId == id && u.UserName != "superadmin")
+                .Select(u => new CompanyUserItem
+                {
+                    Id = u.Id,
+                    CompanyId = u.CompanyId,
+                    FirstName = u.FirstName,
+                    LastName = u.LastName,
+                    Email = u.Email,
+                    UserName = u.UserName
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load users for Company ID {CompanyId}.", id);
+            allUsers = new List<CompanyUserItem>();
+        }
+
+        int totalDevices = 0;
+        try
+        {
+            totalDevices = await _db.Devices.AsNoTracking().CountAsync(d => d.CompanyId == id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to count devices for Company ID {CompanyId}.", id);
+        }
+
         var dbRow = c.CompanyDatabases.FirstOrDefault(d => d.IsActive) ?? c.CompanyDatabases.FirstOrDefault();
-        var adminUser = allUsers.FirstOrDefault();
+        var adminUser = allUsers.FirstOrDefault(u => u.UserName == c.CompanyCode.ToLowerInvariant() || (u.UserName != null && u.UserName.EndsWith("admin", StringComparison.OrdinalIgnoreCase)))
+                     ?? allUsers.FirstOrDefault();
 
         var dto = new CompanyDetailDto
         {
@@ -187,7 +292,7 @@ public class CompaniesController : ControllerBase
             AdminUsername = adminUser?.UserName,
 
             TotalUsersCount = allUsers.Count,
-            TotalDevicesCount = c.Devices.Count
+            TotalDevicesCount = totalDevices
         };
 
         return Ok(dto);

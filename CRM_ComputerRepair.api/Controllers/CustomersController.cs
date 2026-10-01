@@ -3,6 +3,7 @@ using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.api.Services;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
+using CRM_ComputerRepair.api.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,27 +12,43 @@ namespace CRM_ComputerRepair.api.Controllers;
 [ApiController]
 [Route("tenant/{companyId:int}/customers")]
 [Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
+[RequireSubscribedModule(ModuleCodes.DataCollection, ModuleCodes.Actions, ModuleCodes.BusinessIntelligence, ModuleCodes.MainTransactions)]
 public class CustomersController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
     private readonly IAuditWriter _audit;
+    private readonly Microsoft.AspNetCore.Identity.UserManager<User> _userManager;
 
-    public CustomersController(ITenantDbContextFactory factory, IAuditWriter audit)
+    public CustomersController(
+        ITenantDbContextFactory factory,
+        IAuditWriter audit,
+        Microsoft.AspNetCore.Identity.UserManager<User> userManager)
     {
         _factory = factory;
         _audit = audit;
+        _userManager = userManager;
     }
 
     // --- GET ALL ---
     [HttpGet]
     public async Task<IActionResult> GetAll(
-        int companyId, [FromQuery] bool? includeArchived, [FromQuery] string? search = null)
+        int companyId,
+        [FromQuery] bool? includeArchived,
+        [FromQuery] string? search = null,
+        [FromQuery] int? branchId = null)
     {
+        var (scopedBranchId, isAllowed) = await BranchScopeHelper.ResolveBranchScopeAsync(HttpContext, _userManager, branchId);
+        if (!isAllowed)
+            return Forbid();
+
         await using var db = await _factory.CreateAsync(companyId);
 
         var query = db.Customers.AsNoTracking();
         if (includeArchived != true)
             query = query.Where(c => c.IsActive);
+
+        if (scopedBranchId.HasValue)
+            query = query.Where(c => c.BranchId == scopedBranchId.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -70,6 +87,8 @@ public class CustomersController : ControllerBase
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
+        var (scopedBranchId, _) = await BranchScopeHelper.ResolveBranchScopeAsync(HttpContext, _userManager, request.BranchId);
+
         await using var db = await _factory.CreateAsync(companyId);
 
         var customer = new Customer
@@ -84,6 +103,7 @@ public class CustomersController : ControllerBase
             PostalCode = request.PostalCode?.Trim() ?? "",
             Country = string.IsNullOrWhiteSpace(request.Country) ? "Philippines" : request.Country.Trim(),
             LoyaltyPoints = request.LoyaltyPoints ?? 0,
+            BranchId = request.BranchId ?? scopedBranchId,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -123,6 +143,8 @@ public class CustomersController : ControllerBase
         customer.City = request.City?.Trim() ?? "";
         customer.StateOrProvince = request.StateOrProvince?.Trim() ?? "";
         customer.PostalCode = request.PostalCode?.Trim() ?? "";
+        if (request.BranchId.HasValue)
+            customer.BranchId = request.BranchId.Value;
         if (!string.IsNullOrWhiteSpace(request.Country))
             customer.Country = request.Country.Trim();
 

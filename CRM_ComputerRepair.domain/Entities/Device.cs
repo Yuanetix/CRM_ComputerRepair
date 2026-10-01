@@ -20,8 +20,10 @@ public class Device
     public DateTime? UpdatedAt { get; set; }
 
     public int? CustomerId { get; set; }
+    public int? BranchId { get; set; }
 
     // Navigation
+    public Branch? Branch { get; set; }
     public Company? Company { get; set; }
     public Customer? Customer { get; set; }
     public ICollection<RepairRequest> RepairRequests { get; set; } = new List<RepairRequest>();

@@ -11,6 +11,7 @@ public class TenantCrmDbContext : DbContext
     }
 
     // Tenant-scoped entities
+    public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<RepairRequest> RepairRequests => Set<RepairRequest>();
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Device> Devices => Set<Device>();
@@ -144,6 +145,23 @@ public class TenantCrmDbContext : DbContext
     {
         base.OnModelCreating(builder);
 
+        // ═══════════ Branch ═══════════
+        builder.Entity<Branch>(entity =>
+        {
+            entity.HasKey(x => x.BranchId);
+            entity.Property(x => x.BranchCode).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.BranchName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.City).HasMaxLength(100);
+            entity.Property(x => x.StateOrProvince).HasMaxLength(100);
+            entity.Property(x => x.PostalCode).HasMaxLength(20);
+            entity.Property(x => x.Phone).HasMaxLength(50);
+            entity.Property(x => x.Email).HasMaxLength(200);
+            entity.Property(x => x.ManagerUserId).HasMaxLength(450);
+            entity.Property(x => x.ManagerName).HasMaxLength(200);
+            entity.HasIndex(x => x.BranchCode).IsUnique();
+        });
+
         // ═══════════ RepairRequest ═══════════
         builder.Entity<RepairRequest>(entity =>
         {
@@ -169,9 +187,15 @@ public class TenantCrmDbContext : DbContext
                 .HasForeignKey(x => x.DeviceId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            entity.HasOne(x => x.Branch)
+                .WithMany(b => b.RepairRequests)
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(x => x.CustomerId);
             entity.HasIndex(x => x.Status);
             entity.HasIndex(x => x.RequestDate);
+            entity.HasIndex(x => x.BranchId);
         });
 
         // ═══════════ Customer ═══════════
@@ -191,10 +215,16 @@ public class TenantCrmDbContext : DbContext
             entity.Ignore(x => x.FullName);
             entity.Ignore(x => x.FullAddress);
 
+            entity.HasOne(x => x.Branch)
+                .WithMany(b => b.Customers)
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(x => x.Email);
             entity.HasIndex(x => x.Phone);
             entity.HasIndex(x => x.LastName);
             entity.HasIndex(x => x.City);
+            entity.HasIndex(x => x.BranchId);
         });
 
         // ═══════════ Device ═══════════
@@ -216,7 +246,13 @@ public class TenantCrmDbContext : DbContext
                 .HasForeignKey(x => x.CustomerId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            entity.HasOne(x => x.Branch)
+                .WithMany()
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.BranchId);
         });
 
         // ═══════════ CustomerInteraction (Inquiry / Complaint / Feedback) ═══════════
@@ -240,8 +276,14 @@ public class TenantCrmDbContext : DbContext
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            entity.HasOne(x => x.Branch)
+                .WithMany()
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(x => x.CustomerId);
             entity.HasIndex(x => x.RepairRequestId);
+            entity.HasIndex(x => x.BranchId);
         });
 
         // ═══════════ FollowUp (NEW) ═══════════
@@ -265,9 +307,15 @@ public class TenantCrmDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
 
+            entity.HasOne(x => x.Branch)
+                .WithMany()
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(x => x.CustomerId);
             entity.HasIndex(x => x.RepairRequestId);
             entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => x.BranchId);
         });
 
         // ═══════════ RepairStatusHistory ═══════════
@@ -297,8 +345,14 @@ public class TenantCrmDbContext : DbContext
                 .HasForeignKey(x => x.RepairRequestId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            entity.HasOne(x => x.Branch)
+                .WithMany()
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(x => x.RepairRequestId);
             entity.HasIndex(x => x.PaymentDate);
+            entity.HasIndex(x => x.BranchId);
         });
 
         // ═══════════ Supplier (Lab 5) ═══════════

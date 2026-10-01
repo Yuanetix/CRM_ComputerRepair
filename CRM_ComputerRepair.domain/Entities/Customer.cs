@@ -33,6 +33,10 @@ public class Customer
         }
     }
 
+    // Branch reference
+    public int? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+
     // Navigation
     public ICollection<RepairRequest> RepairRequests { get; set; } = new List<RepairRequest>();
     public ICollection<CustomerInteraction> CustomerInteractions { get; set; } = new List<CustomerInteraction>();

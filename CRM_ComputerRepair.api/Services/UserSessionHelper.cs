@@ -9,6 +9,10 @@ public static class UserSessionHelper
 {
     public static string? GetUserId(HttpContext context)
     {
+        var sub = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+               ?? context.User.FindFirst("sub")?.Value;
+        if (!string.IsNullOrWhiteSpace(sub)) return sub;
+
         if (context.Request.Headers.TryGetValue("X-User-Id", out var val))
         {
             var id = val.ToString();

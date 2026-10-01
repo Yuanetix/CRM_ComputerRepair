@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
+using CRM_ComputerRepair.api.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,6 +11,7 @@ namespace CRM_ComputerRepair.api.Controllers;
 [ApiController]
 [Route("tenant/{companyId:int}/suppliers")]
 [Authorize(Roles = "Manager,Admin,Super Admin")]
+[RequireSubscribedModule(ModuleCodes.MainTransactions)]
 public class SuppliersController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;

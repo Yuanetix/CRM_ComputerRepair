@@ -345,23 +345,23 @@ namespace CRM.winforms.Controls
                 var from = dateRangeBar.From;
                 var to = dateRangeBar.To;
 
-                var custTask = _api.GetCustomersAsync(includeArchived: true);
-                var repairsTask = _api.GetRepairRequestsAsync();
-                var interTask = _api.GetInteractionsAsync(null, includeArchived: true);
-                var salesTask = _api.GetAnalyticsDetailsAsync("sales", from, to);
-                var servicesTask = _api.GetAnalyticsDetailsAsync("services");
-                var loyaltyTask = _api.GetLoyaltyMembersAsync();
-                var retentionTask = _api.GetRetentionRecommendationsAsync();
+                var custTask = SafeFetchAsync(() => _api.GetCustomersAsync(includeArchived: true), new List<CustomerDto>());
+                var repairsTask = SafeFetchAsync(() => _api.GetRepairRequestsAsync(), new List<RepairRequestDto>());
+                var interTask = SafeFetchAsync(() => _api.GetInteractionsAsync(null, includeArchived: true), new List<InteractionDto>());
+                var salesTask = SafeFetchAsync(() => _api.GetAnalyticsDetailsAsync("sales", from, to), new AnalyticsDetailsDto());
+                var servicesTask = SafeFetchAsync(() => _api.GetAnalyticsDetailsAsync("services"), new AnalyticsDetailsDto());
+                var loyaltyTask = SafeFetchAsync(() => _api.GetLoyaltyMembersAsync(), new List<LoyaltyMemberDetailDto>());
+                var retentionTask = SafeFetchAsync(() => _api.GetRetentionRecommendationsAsync(), new List<RetentionRecommendationDto>());
 
                 await Task.WhenAll(custTask, repairsTask, interTask, salesTask, servicesTask, loyaltyTask, retentionTask);
 
-                var custResult = await custTask ?? new();
-                var repResult = await repairsTask ?? new();
-                var interResult = await interTask ?? new();
+                var custResult = await custTask;
+                var repResult = await repairsTask;
+                var interResult = await interTask;
                 var salesResult = await salesTask;
                 var servicesResult = await servicesTask;
-                var loyaltyResult = await loyaltyTask ?? new();
-                var retentionResult = await retentionTask ?? new();
+                var loyaltyResult = await loyaltyTask;
+                var retentionResult = await retentionTask;
 
                 _rawCustomers = custResult.Where(c => c.CreatedAt >= from && c.CreatedAt <= to).ToList();
                 _rawRepairs = repResult.Where(r => r.RequestDate >= from && r.RequestDate <= to).ToList();
@@ -399,6 +399,19 @@ namespace CRM.winforms.Controls
             {
                 state.Show("\uE711", "Failed to load report", ex.Message);
                 SaasToast.Show(FindForm(), $"Couldn't load report data: {ex.Message}", ToastKind.Danger);
+            }
+        }
+
+        private static async Task<T> SafeFetchAsync<T>(Func<Task<T>> action, T fallback)
+        {
+            try
+            {
+                var res = await action();
+                return res ?? fallback;
+            }
+            catch
+            {
+                return fallback;
             }
         }
 

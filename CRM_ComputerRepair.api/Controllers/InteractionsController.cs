@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using CRM_ComputerRepair.api.Dtos;
 using CRM_ComputerRepair.domain.Entities;
 using CRM_ComputerRepair.infrastructure.Services;
+using CRM_ComputerRepair.api.Middleware;
+using CRM_ComputerRepair.api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,19 +12,32 @@ namespace CRM_ComputerRepair.api.Controllers;
 [ApiController]
 [Route("tenant/{companyId:int}/interactions")]
 [Authorize(Roles = "Staff,Manager,Admin,Super Admin")]
+[RequireSubscribedModule(ModuleCodes.Actions, ModuleCodes.BusinessIntelligence, ModuleCodes.DataCollection)]
 public class InteractionsController : ControllerBase
 {
     private readonly ITenantDbContextFactory _factory;
+    private readonly Microsoft.AspNetCore.Identity.UserManager<User> _userManager;
 
-    public InteractionsController(ITenantDbContextFactory factory) => _factory = factory;
+    public InteractionsController(
+        ITenantDbContextFactory factory,
+        Microsoft.AspNetCore.Identity.UserManager<User> userManager)
+    {
+        _factory = factory;
+        _userManager = userManager;
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(
         int companyId,
         [FromQuery] InteractionType? type,
         [FromQuery] bool? includeArchived,
-        [FromQuery] string? search = null)
+        [FromQuery] string? search = null,
+        [FromQuery] int? branchId = null)
     {
+        var (scopedBranchId, isAllowed) = await BranchScopeHelper.ResolveBranchScopeAsync(HttpContext, _userManager, branchId);
+        if (!isAllowed)
+            return Forbid();
+
         await using var db = await _factory.CreateAsync(companyId);
 
         var query = db.CustomerInteractions.AsNoTracking();
@@ -30,6 +45,9 @@ public class InteractionsController : ControllerBase
             query = query.Where(x => x.IsActive);
         if (type.HasValue)
             query = query.Where(x => x.InteractionType == type.Value);
+
+        if (scopedBranchId.HasValue)
+            query = query.Where(x => x.BranchId == scopedBranchId.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
